@@ -30,6 +30,86 @@ function rateKey(category: string, locationId: string | null) {
   return `${category}::${locationId ?? 'online'}`;
 }
 
+// ── RateCell: inline editable rate cell ──────────────────────────────────────
+interface RateCellProps {
+  rate: LessonRate | undefined;
+  onSave: (value: number) => Promise<void>;
+  onDelete: () => Promise<void>;
+}
+
+function RateCell({ rate, onSave, onDelete }: RateCellProps) {
+  const [editing, setEditing] = useState(false);
+  const [inputVal, setInputVal] = useState('');
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  function startEdit() {
+    setInputVal(rate ? String(rate.rate_per_lesson) : '');
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  }
+
+  async function commit() {
+    setEditing(false);
+    const trimmed = inputVal.trim();
+    if (trimmed === '') {
+      await onDelete();
+    } else {
+      const num = parseFloat(trimmed);
+      if (!isNaN(num) && num > 0) await onSave(num);
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      setEditing(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="px-2 py-1.5">
+        <input
+          ref={inputRef}
+          autoFocus
+          type="number"
+          min={0}
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={handleKeyDown}
+          className="w-full border border-teal rounded-lg px-2 py-1.5 text-sm font-semibold text-navy text-center focus:outline-none focus:ring-2 focus:ring-teal/40"
+          placeholder="e.g. 1750"
+        />
+      </div>
+    );
+  }
+
+  if (rate) {
+    return (
+      <div
+        onClick={startEdit}
+        className="mx-2 my-1.5 rounded-lg px-2 py-1.5 text-sm font-bold text-center cursor-pointer select-none"
+        style={{ background: '#ecfdf5', border: '1.5px solid #6ee7b7', color: '#065f46' }}
+      >
+        ₹{Number(rate.rate_per_lesson).toLocaleString('en-IN')}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onClick={startEdit}
+      className="mx-2 my-1.5 rounded-lg px-2 py-1.5 text-xs text-center cursor-pointer select-none text-gray-400"
+      style={{ border: '1.5px dashed #cbd5e1', background: '#fafafa' }}
+    >
+      + Set rate
+    </div>
+  );
+}
+
 export function LessonRatesPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
