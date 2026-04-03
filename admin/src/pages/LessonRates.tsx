@@ -195,9 +195,110 @@ export function LessonRatesPage() {
 
   return (
     <div>
-      <p>Teachers loaded: {teachers.length}</p>
-      <p>Locations loaded: {locations.length}</p>
-      <p>Rates loaded: {Object.keys(rateMap).length}</p>
+      {/* ── Page header ── */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-navy">Lesson Rates</h1>
+          <p className="text-gray-500 text-sm mt-1">Click any cell to set or edit a rate</p>
+        </div>
+        <select
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy"
+        >
+          {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      {/* ── Teacher tabs ── */}
+      <div className="flex gap-2 flex-wrap mb-6">
+        {teachers.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSelectedTeacherId(t.id)}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+              selectedTeacherId === t.id
+                ? 'bg-teal text-white'
+                : 'bg-white border border-gray-200 text-gray-600 hover:border-teal hover:text-teal'
+            }`}
+          >
+            {t.full_name}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Rate grid ── */}
+      {loading ? (
+        <p className="text-gray-400 text-center py-12">Loading...</p>
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          {/* Column headers */}
+          <div
+            className="grid text-xs font-semibold uppercase text-gray-500 bg-gray-50 border-b border-gray-100"
+            style={{ gridTemplateColumns: `180px repeat(${locations.length + 1}, 1fr)` }}
+          >
+            <div className="px-4 py-3">Lesson Type</div>
+            {locations.map((loc) => (
+              <div key={loc.id} className="px-2 py-3 text-center">{loc.name}</div>
+            ))}
+            <div className="px-2 py-3 text-center">Online</div>
+          </div>
+
+          {/* 1:1 group */}
+          <div className="px-4 py-2 bg-gray-50/60 border-b border-gray-100">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">1:1 Lessons</span>
+          </div>
+          {CATEGORIES.filter((c) => c.group === '1:1').map((cat) => (
+            <div
+              key={cat.value}
+              className="grid border-b border-gray-50 hover:bg-gray-50/40 items-center"
+              style={{ gridTemplateColumns: `180px repeat(${locations.length + 1}, 1fr)` }}
+            >
+              <div className="px-4 py-1 text-sm text-gray-700">{cat.label}</div>
+              {locations.map((loc) => (
+                <RateCell
+                  key={loc.id}
+                  rate={rateMap[rateKey(cat.value, loc.id)]}
+                  onSave={(v) => saveCell(cat.value, loc.id, v)}
+                  onDelete={() => deleteCell(cat.value, loc.id)}
+                />
+              ))}
+              <RateCell
+                rate={rateMap[rateKey(cat.value, null)]}
+                onSave={(v) => saveCell(cat.value, null, v)}
+                onDelete={() => deleteCell(cat.value, null)}
+              />
+            </div>
+          ))}
+
+          {/* Group lessons group */}
+          <div className="px-4 py-2 bg-gray-50/60 border-b border-gray-100 border-t border-t-gray-100">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Group Lessons</span>
+          </div>
+          {CATEGORIES.filter((c) => c.group === 'group').map((cat, idx, arr) => (
+            <div
+              key={cat.value}
+              className={`grid items-center hover:bg-gray-50/40 ${idx < arr.length - 1 ? 'border-b border-gray-50' : ''}`}
+              style={{ gridTemplateColumns: `180px repeat(${locations.length + 1}, 1fr)` }}
+            >
+              <div className="px-4 py-1 text-sm text-gray-700">{cat.label}</div>
+              {locations.map((loc) => (
+                <RateCell
+                  key={loc.id}
+                  rate={rateMap[rateKey(cat.value, loc.id)]}
+                  onSave={(v) => saveCell(cat.value, loc.id, v)}
+                  onDelete={() => deleteCell(cat.value, loc.id)}
+                />
+              ))}
+              <RateCell
+                rate={rateMap[rateKey(cat.value, null)]}
+                onSave={(v) => saveCell(cat.value, null, v)}
+                onDelete={() => deleteCell(cat.value, null)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
