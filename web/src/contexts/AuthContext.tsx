@@ -18,13 +18,51 @@ interface AuthContextValue {
   refreshProfile: () => Promise<void>;
 }
 
+const PROFILE_CACHE_KEY = 'troika_profile_cache';
+
+function loadCachedProfile(): { profile: Profile | null; approvalStatus: ApprovalStatus } {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { profile: null, approvalStatus: null };
+}
+
+function saveProfileCache(profile: Profile | null, approvalStatus: ApprovalStatus) {
+  try {
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ profile, approvalStatus }));
+  } catch {}
+}
+
+function clearProfileCache() {
+  try {
+    localStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch {}
+}
+
+function resolveProfile(p: Profile): { profile: Profile | null; approvalStatus: ApprovalStatus } {
+  if (p.role === 'coordinator') {
+    return { profile: p, approvalStatus: 'approved' };
+  }
+  if (p.role === 'teacher' || p.role === 'student') {
+    if (!p.full_name || p.full_name.trim() === '') {
+      return { profile: null, approvalStatus: null };
+    }
+    if (p.approved === true) return { profile: p, approvalStatus: 'approved' };
+    if (p.approved === false) return { profile: null, approvalStatus: 'denied' };
+    return { profile: null, approvalStatus: 'pending' };
+  }
+  return { profile: null, approvalStatus: null };
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const cached = loadCachedProfile();
   const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>(null);
+  const [profile, setProfile] = useState<Profile | null>(cached.profile);
+  const [loading, setLoading] = useState(!cached.profile);
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>(cached.approvalStatus);
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
@@ -38,41 +76,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('Profile fetch error:', error);
         setProfile(null);
         setApprovalStatus(null);
+        clearProfileCache();
       } else if (data) {
-        const p = data as Profile;
-
-        // Coordinator always gets through
-        if (p.role === 'coordinator') {
-          setProfile(p);
-          setApprovalStatus('approved');
-        } else if (p.role === 'teacher' || p.role === 'student') {
-          // Need full_name set via RoleSetup first
-          if (!p.full_name || p.full_name.trim() === '') {
-            setProfile(null);
-            setApprovalStatus(null);
-          } else if (p.approved === true) {
-            setProfile(p);
-            setApprovalStatus('approved');
-          } else if (p.approved === false) {
-            setProfile(null);
-            setApprovalStatus('denied');
-          } else {
-            // approved is null → pending
-            setProfile(null);
-            setApprovalStatus('pending');
-          }
-        } else {
-          setProfile(null);
-          setApprovalStatus(null);
-        }
+        const { profile: p, approvalStatus: s } = resolveProfile(data as Profile);
+        setProfile(p);
+        setApprovalStatus(s);
+        saveProfileCache(p, s);
       } else {
         setProfile(null);
         setApprovalStatus(null);
+        clearProfileCache();
       }
     } catch (err) {
       console.error('Error fetching profile:', err);
       setProfile(null);
       setApprovalStatus(null);
+      clearProfileCache();
     } finally {
       setLoading(false);
     }
@@ -94,8 +113,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(async ({ data: { session: existing } }) => {
       setSession(existing);
       if (existing?.user) {
-        await fetchProfile(existing.user.id);
+        // If we have a cached profile, render immediately and re-fetch in background
+        if (cached.profile) {
+          fetchProfile(existing.user.id);
+        } else {
+          await fetchProfile(existing.user.id);
+        }
       } else {
+        clearProfileCache();
+        setProfile(null);
+        setApprovalStatus(null);
         setLoading(false);
       }
     });
@@ -107,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSession(null);
           setProfile(null);
           setApprovalStatus(null);
+          clearProfileCache();
           setLoading(false);
           return;
         }
@@ -121,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
 
     return () => subscription.unsubscribe();
-  }, [fetchProfile]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -149,6 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
     setSession(null);
     setApprovalStatus(null);
+    clearProfileCache();
     await supabase.auth.signOut();
   }
 
@@ -182,4 +211,8 @@ export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
+}
+/** Strip characters that could be used for PostgREST filter injection */
+export function sanitizeForPostgrest(input: string): string {
+  return input.replace(/[,.()"'\\]/g, '');
 }
