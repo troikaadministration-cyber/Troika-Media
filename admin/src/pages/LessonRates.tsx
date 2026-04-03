@@ -38,6 +38,7 @@ export function LessonRatesPage() {
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
   const [year, setYear] = useState(CURRENT_YEAR);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   // Load teachers and locations once
   useEffect(() => {
@@ -75,32 +76,40 @@ export function LessonRatesPage() {
 
   // Upsert a rate for the currently selected teacher
   async function saveCell(category: string, locationId: string | null, value: number) {
-    if (!selectedTeacherId) return;
-    const isOnline = locationId === null;
-    const existing = rateMap[rateKey(category, locationId)];
-    if (existing) {
-      await supabase
-        .from('lesson_rates')
-        .update({ rate_per_lesson: value })
-        .eq('id', existing.id);
-    } else {
-      await supabase.from('lesson_rates').insert({
-        teacher_id: selectedTeacherId,
-        location_id: isOnline ? null : locationId,
-        category,
-        rate_per_lesson: value,
-        is_online: isOnline,
-        academic_year: year,
-      });
+    if (!selectedTeacherId || saving) return;
+    setSaving(true);
+    try {
+      const isOnline = locationId === null;
+      const existing = rateMap[rateKey(category, locationId)];
+      if (existing) {
+        const { error } = await supabase
+          .from('lesson_rates')
+          .update({ rate_per_lesson: value })
+          .eq('id', existing.id);
+        if (error) { alert(`Update failed: ${error.message}`); return; }
+      } else {
+        const { error } = await supabase.from('lesson_rates').insert({
+          teacher_id: selectedTeacherId,
+          location_id: isOnline ? null : locationId,
+          category,
+          rate_per_lesson: value,
+          is_online: isOnline,
+          academic_year: year,
+        });
+        if (error) { alert(`Save failed: ${error.message}`); return; }
+      }
+      await loadRates();
+    } finally {
+      setSaving(false);
     }
-    await loadRates();
   }
 
   // Delete a rate (called when cell is cleared)
   async function deleteCell(category: string, locationId: string | null) {
     const existing = rateMap[rateKey(category, locationId)];
     if (!existing) return;
-    await supabase.from('lesson_rates').delete().eq('id', existing.id);
+    const { error } = await supabase.from('lesson_rates').delete().eq('id', existing.id);
+    if (error) { alert(`Delete failed: ${error.message}`); return; }
     await loadRates();
   }
 
