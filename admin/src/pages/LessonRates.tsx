@@ -31,5 +31,53 @@ function rateKey(category: string, locationId: string | null) {
 }
 
 export function LessonRatesPage() {
-  return <div>TODO</div>;
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  // rateMap: rateKey → LessonRate record
+  const [rateMap, setRateMap] = useState<Record<string, LessonRate>>({});
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [loading, setLoading] = useState(true);
+
+  // Load teachers and locations once
+  useEffect(() => {
+    async function loadMeta() {
+      const [teachersRes, locationsRes] = await Promise.all([
+        supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
+        supabase.from('locations').select('*').order('name'),
+      ]);
+      const ts = teachersRes.data ?? [];
+      setTeachers(ts);
+      setLocations(locationsRes.data ?? []);
+      if (ts.length > 0) setSelectedTeacherId(ts[0].id);
+    }
+    loadMeta();
+  }, []);
+
+  // Load rates whenever teacher or year changes
+  const loadRates = useCallback(async () => {
+    if (!selectedTeacherId) return;
+    setLoading(true);
+    const { data } = await supabase
+      .from('lesson_rates')
+      .select('*')
+      .eq('teacher_id', selectedTeacherId)
+      .eq('academic_year', year);
+    const map: Record<string, LessonRate> = {};
+    for (const r of data ?? []) {
+      map[rateKey(r.category, r.is_online ? null : r.location_id)] = r as LessonRate;
+    }
+    setRateMap(map);
+    setLoading(false);
+  }, [selectedTeacherId, year]);
+
+  useEffect(() => { loadRates(); }, [loadRates]);
+
+  return (
+    <div>
+      <p>Teachers loaded: {teachers.length}</p>
+      <p>Locations loaded: {locations.length}</p>
+      <p>Rates loaded: {Object.keys(rateMap).length}</p>
+    </div>
+  );
 }
