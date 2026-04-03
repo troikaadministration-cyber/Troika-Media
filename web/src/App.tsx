@@ -21,6 +21,7 @@ const StudentLessonsPage = lazy(() => import('./pages/StudentLessons').then(m =>
 const EnrolmentsPage = lazy(() => import('./pages/Enrolments').then(m => ({ default: m.EnrolmentsPage })));
 const TeacherScheduleAdminPage = lazy(() => import('./pages/TeacherScheduleAdmin').then(m => ({ default: m.TeacherScheduleAdminPage })));
 const TeacherCalendarPage = lazy(() => import('./pages/TeacherCalendar').then(m => ({ default: m.TeacherCalendarPage })));
+const BreaksPage = lazy(() => import('./pages/Breaks').then(m => ({ default: m.BreaksPage })));
 
 function PageLoader() {
   return (
@@ -193,6 +194,7 @@ export default function App() {
               <Route path="/curriculum" element={<CurriculumAdminPage />} />
               <Route path="/enrolments" element={<EnrolmentsPage />} />
               <Route path="/teacher-schedules" element={<TeacherScheduleAdminPage />} />
+              <Route path="/breaks" element={<BreaksPage />} />
             </>
           ) : profile.role === 'teacher' ? (
             <>

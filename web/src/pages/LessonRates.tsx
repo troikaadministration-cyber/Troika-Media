@@ -1,298 +1,302 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Plus, Pencil, Trash2, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { LessonRate } from '../types';
+import type { LessonRate, Location } from '../types';
 
-const CATEGORIES = [
-  { value: '1:1_instrumental', label: '1:1 Instrumental' },
-  { value: '1:1_theory', label: '1:1 Theory' },
-  { value: '1:1_vocals', label: '1:1 Vocals' },
-  { value: 'group_strings', label: 'Group: Cello/Violin' },
-  { value: 'group_guitar', label: 'Group: Guitar' },
-  { value: 'group_vocals', label: 'Group: Vocals' },
-  { value: 'group_theory', label: 'Group: Theory' },
-  { value: 'demo', label: 'Demo' },
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const CURRENT_YEAR = new Date().getFullYear().toString();
+const YEARS = [CURRENT_YEAR, (Number(CURRENT_YEAR) - 1).toString()];
+
+interface CategoryRow {
+  value: string;   // matches LessonCategory enum values
+  label: string;
+  group: '1:1' | 'group';
+}
+
+const CATEGORIES: CategoryRow[] = [
+  { value: '1:1_instrumental', label: 'Instrumental',   group: '1:1' },
+  { value: '1:1_theory',       label: 'Theory',         group: '1:1' },
+  { value: '1:1_vocals',       label: 'Vocals',         group: '1:1' },
+  { value: 'group_strings',    label: 'Cello / Violin', group: 'group' },
+  { value: 'group_guitar',     label: 'Guitar',         group: 'group' },
+  { value: 'group_vocals',     label: 'Vocals',         group: 'group' },
+  { value: 'group_theory',     label: 'Theory',         group: 'group' },
 ];
 
 interface Teacher { id: string; full_name: string; }
-interface Location { id: string; name: string; }
+
+// ── RateKey: unique key for a (category, locationId|'online') cell ──────────
+function rateKey(category: string, locationId: string | null) {
+  return `${category}::${locationId ?? 'online'}`;
+}
+
+// ── RateCell: inline editable rate cell ──────────────────────────────────────
+interface RateCellProps {
+  rate: LessonRate | undefined;
+  onSave: (value: number) => Promise<void>;
+  onDelete: () => Promise<void>;
+}
+
+function RateCell({ rate, onSave, onDelete }: RateCellProps) {
+  const [editing, setEditing] = useState(false);
+  const [inputVal, setInputVal] = useState('');
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  function startEdit() {
+    setInputVal(rate ? String(rate.rate_per_lesson) : '');
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  }
+
+  async function commit() {
+    setEditing(false);
+    const trimmed = inputVal.trim();
+    if (trimmed === '') {
+      await onDelete();
+    } else {
+      const num = parseFloat(trimmed);
+      if (!isNaN(num) && num > 0) await onSave(num);
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      setEditing(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="px-2 py-1.5">
+        <input
+          ref={inputRef}
+          autoFocus
+          type="number"
+          min={0}
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={handleKeyDown}
+          className="w-full border border-teal rounded-lg px-2 py-1.5 text-sm font-semibold text-navy text-center focus:outline-none focus:ring-2 focus:ring-teal/40"
+          placeholder="e.g. 1750"
+        />
+      </div>
+    );
+  }
+
+  if (rate) {
+    return (
+      <div
+        onClick={startEdit}
+        className="mx-2 my-1.5 rounded-lg px-2 py-1.5 text-sm font-bold text-center cursor-pointer select-none"
+        style={{ background: '#ecfdf5', border: '1.5px solid #6ee7b7', color: '#065f46' }}
+      >
+        ₹{Number(rate.rate_per_lesson).toLocaleString('en-IN')}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onClick={startEdit}
+      className="mx-2 my-1.5 rounded-lg px-2 py-1.5 text-xs text-center cursor-pointer select-none text-gray-400"
+      style={{ border: '1.5px dashed #cbd5e1', background: '#fafafa' }}
+    >
+      + Set rate
+    </div>
+  );
+}
 
 export function LessonRatesPage() {
-  const [rates, setRates] = useState<(LessonRate & { teacher?: Teacher; location?: Location })[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
+  // rateMap: rateKey → LessonRate record
+  const [rateMap, setRateMap] = useState<Record<string, LessonRate>>({});
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
+  const [year, setYear] = useState(CURRENT_YEAR);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<Partial<LessonRate> | null>(null);
   const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    const [ratesRes, teachersRes, locationsRes] = await Promise.all([
-      supabase.from('lesson_rates').select('*, teacher:profiles(id, full_name), location:locations(id, name)').order('category'),
-      supabase.from('profiles').select('id, full_name').eq('role', 'teacher'),
-      supabase.from('locations').select('id, name'),
-    ]);
-    setRates((ratesRes.data || []) as any);
-    setTeachers(teachersRes.data || []);
-    setLocations(locationsRes.data || []);
-    setLoading(false);
+  // Load teachers and locations once
+  useEffect(() => {
+    async function loadMeta() {
+      const [teachersRes, locationsRes] = await Promise.all([
+        supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
+        supabase.from('locations').select('*').order('name'),
+      ]);
+      const ts = teachersRes.data ?? [];
+      setTeachers(ts);
+      setLocations(locationsRes.data ?? []);
+      if (ts.length > 0) setSelectedTeacherId(ts[0].id);
+    }
+    loadMeta();
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  async function handleSave() {
-    if (!modal) return;
-    if (!modal.rate_per_lesson || Number(modal.rate_per_lesson) <= 0) {
-      setError('Rate must be greater than 0');
-      return;
+  // Load rates whenever teacher or year changes
+  const loadRates = useCallback(async () => {
+    if (!selectedTeacherId) return;
+    setLoading(true);
+    const { data } = await supabase
+      .from('lesson_rates')
+      .select('*')
+      .eq('teacher_id', selectedTeacherId)
+      .eq('academic_year', year);
+    const map: Record<string, LessonRate> = {};
+    for (const r of data ?? []) {
+      map[rateKey(r.category, r.is_online ? null : r.location_id)] = r as LessonRate;
     }
-    setSaving(true);
-    setError(null);
-    try {
-      const payload = {
-        teacher_id: modal.teacher_id || null,
-        location_id: modal.location_id || null,
-        category: modal.category,
-        rate_per_lesson: Number(modal.rate_per_lesson),
-        is_online: modal.is_online || false,
-        academic_year: modal.academic_year || '2025',
-      };
+    setRateMap(map);
+    setLoading(false);
+  }, [selectedTeacherId, year]);
 
-      if (modal.id) {
-        const { error: err } = await supabase.from('lesson_rates').update(payload).eq('id', modal.id);
-        if (err) throw err;
+  useEffect(() => { loadRates(); }, [loadRates]);
+
+  // Upsert a rate for the currently selected teacher
+  async function saveCell(category: string, locationId: string | null, value: number) {
+    if (!selectedTeacherId || saving) return;
+    setSaving(true);
+    try {
+      const isOnline = locationId === null;
+      const existing = rateMap[rateKey(category, locationId)];
+      if (existing) {
+        const { error } = await supabase
+          .from('lesson_rates')
+          .update({ rate_per_lesson: value })
+          .eq('id', existing.id);
+        if (error) { alert(`Update failed: ${error.message}`); return; }
       } else {
-        const { error: err } = await supabase.from('lesson_rates').insert(payload);
-        if (err) throw err;
+        const { error } = await supabase.from('lesson_rates').insert({
+          teacher_id: selectedTeacherId,
+          location_id: isOnline ? null : locationId,
+          category,
+          rate_per_lesson: value,
+          is_online: isOnline,
+          academic_year: year,
+        });
+        if (error) { alert(`Save failed: ${error.message}`); return; }
       }
-      setModal(null);
-      fetchAll();
-    } catch (err: any) {
-      setError(err.message || 'Failed to save rate');
+      await loadRates();
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(id: string) {
-    try {
-      const { error: err } = await supabase.from('lesson_rates').delete().eq('id', id);
-      if (err) throw err;
-      setConfirmDelete(null);
-      fetchAll();
-    } catch (err: any) {
-      setError(err.message || 'Failed to delete rate');
-      setConfirmDelete(null);
-    }
+  // Delete a rate (called when cell is cleared)
+  async function deleteCell(category: string, locationId: string | null) {
+    const existing = rateMap[rateKey(category, locationId)];
+    if (!existing) return;
+    const { error } = await supabase.from('lesson_rates').delete().eq('id', existing.id);
+    if (error) { alert(`Delete failed: ${error.message}`); return; }
+    await loadRates();
   }
 
-  const categoryLabel = (cat: string) => CATEGORIES.find((c) => c.value === cat)?.label || cat;
-
-  const grouped = CATEGORIES.map((cat) => ({
-    ...cat,
-    rates: rates.filter((r) => r.category === cat.value),
-  })).filter((g) => g.rates.length > 0);
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div>
+      {/* ── Page header ── */}
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-navy">Lesson Rates</h1>
-          <p className="text-gray-500 text-sm mt-1">Per-lesson fees by teacher, location & category</p>
+          <p className="text-gray-500 text-sm mt-1">Click any cell to set or edit a rate</p>
         </div>
-        <button
-          onClick={() => setModal({ category: '1:1_instrumental', is_online: false, academic_year: '2025' })}
-          className="flex items-center gap-2 bg-teal text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal/80"
+        <select
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy"
         >
-          <Plus size={16} /> Add Rate
-        </button>
+          {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
       </div>
 
+      {/* ── Teacher tabs ── */}
+      <div className="flex gap-2 flex-wrap mb-6">
+        {teachers.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSelectedTeacherId(t.id)}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+              selectedTeacherId === t.id
+                ? 'bg-teal text-white'
+                : 'bg-white border border-gray-200 text-gray-600 hover:border-teal hover:text-teal'
+            }`}
+          >
+            {t.full_name}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Rate grid ── */}
       {loading ? (
         <p className="text-gray-400 text-center py-12">Loading...</p>
-      ) : grouped.length === 0 ? (
-        <p className="text-gray-400 text-center py-12">No rates configured yet</p>
       ) : (
-        <div className="space-y-6">
-          {grouped.map((group) => (
-            <div key={group.value} className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-              <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100">
-                <h2 className="font-semibold text-navy text-sm">{group.label}</h2>
-              </div>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          {/* Column headers */}
+          <div
+            className="grid text-xs font-semibold uppercase text-gray-500 bg-gray-50 border-b border-gray-100"
+            style={{ gridTemplateColumns: `180px repeat(${locations.length + 1}, 1fr)` }}
+          >
+            <div className="px-4 py-3">Lesson Type</div>
+            {locations.map((loc) => (
+              <div key={loc.id} className="px-2 py-3 text-center">{loc.name}</div>
+            ))}
+            <div className="px-2 py-3 text-center">Online</div>
+          </div>
 
-              {/* Desktop table */}
-              <div className="hidden sm:block">
-                <table className="w-full">
-                  <thead>
-                    <tr className="text-left text-xs text-gray-500 uppercase">
-                      <th className="px-5 py-2.5 font-medium">Teacher</th>
-                      <th className="px-5 py-2.5 font-medium">Location</th>
-                      <th className="px-5 py-2.5 font-medium">Rate (₹)</th>
-                      <th className="px-5 py-2.5 font-medium">Online</th>
-                      <th className="px-5 py-2.5 font-medium">Year</th>
-                      <th className="px-5 py-2.5 font-medium w-24"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {group.rates.map((rate) => (
-                      <tr key={rate.id} className="hover:bg-gray-50">
-                        <td className="px-5 py-3 text-sm text-navy">{(rate as any).teacher?.full_name || '—'}</td>
-                        <td className="px-5 py-3 text-sm text-gray-600">{(rate as any).location?.name || '—'}</td>
-                        <td className="px-5 py-3 text-sm font-semibold text-navy">₹{Number(rate.rate_per_lesson).toLocaleString('en-IN')}</td>
-                        <td className="px-5 py-3 text-sm">
-                          {rate.is_online ? (
-                            <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">Online</span>
-                          ) : (
-                            <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Offline</span>
-                          )}
-                        </td>
-                        <td className="px-5 py-3 text-sm text-gray-500">{rate.academic_year}</td>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => setModal(rate)} className="text-gray-400 hover:text-navy"><Pencil size={14} /></button>
-                            <button onClick={() => setConfirmDelete(rate.id)} className="text-gray-400 hover:text-coral"><Trash2 size={14} /></button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Mobile cards */}
-              <div className="sm:hidden divide-y divide-gray-50">
-                {group.rates.map((rate) => (
-                  <div key={rate.id} className="p-4 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-navy">₹{Number(rate.rate_per_lesson).toLocaleString('en-IN')}</p>
-                      <p className="text-xs text-gray-500">
-                        {(rate as any).teacher?.full_name || 'General'} · {(rate as any).location?.name || (rate.is_online ? 'Online' : '—')}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => setModal(rate)} className="text-gray-400 hover:text-navy"><Pencil size={14} /></button>
-                      <button onClick={() => setConfirmDelete(rate.id)} className="text-gray-400 hover:text-coral"><Trash2 size={14} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* 1:1 group */}
+          <div className="px-4 py-2 bg-gray-50/60 border-b border-gray-100">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">1:1 Lessons</span>
+          </div>
+          {CATEGORIES.filter((c) => c.group === '1:1').map((cat) => (
+            <div
+              key={cat.value}
+              className="grid border-b border-gray-50 hover:bg-gray-50/40 items-center"
+              style={{ gridTemplateColumns: `180px repeat(${locations.length + 1}, 1fr)` }}
+            >
+              <div className="px-4 py-1 text-sm text-gray-700">{cat.label}</div>
+              {locations.map((loc) => (
+                <RateCell
+                  key={loc.id}
+                  rate={rateMap[rateKey(cat.value, loc.id)]}
+                  onSave={(v) => saveCell(cat.value, loc.id, v)}
+                  onDelete={() => deleteCell(cat.value, loc.id)}
+                />
+              ))}
+              <RateCell
+                rate={rateMap[rateKey(cat.value, null)]}
+                onSave={(v) => saveCell(cat.value, null, v)}
+                onDelete={() => deleteCell(cat.value, null)}
+              />
             </div>
           ))}
-        </div>
-      )}
 
-      {error && (
-        <div className="bg-coral/10 border border-coral/20 rounded-xl p-3 flex items-center justify-between">
-          <p className="text-coral text-sm">{error}</p>
-          <button onClick={() => setError(null)} className="text-coral text-xs font-medium">Dismiss</button>
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={!!confirmDelete}
-        title="Delete Rate"
-        message="Are you sure you want to delete this lesson rate?"
-        onConfirm={() => confirmDelete && handleDelete(confirmDelete)}
-        onCancel={() => setConfirmDelete(null)}
-      />
-
-      {/* Add/Edit Modal */}
-      {modal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-navy text-lg">{modal.id ? 'Edit Rate' : 'Add Rate'}</h3>
-              <button onClick={() => setModal(null)} className="text-gray-400 hover:text-navy"><X size={20} /></button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Category</label>
-                <select
-                  value={modal.category || ''}
-                  onChange={(e) => setModal({ ...modal, category: e.target.value as any })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Teacher (optional)</label>
-                <select
-                  value={modal.teacher_id || ''}
-                  onChange={(e) => setModal({ ...modal, teacher_id: e.target.value || null as any })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="">— None (group rate) —</option>
-                  {teachers.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Location (optional)</label>
-                <select
-                  value={modal.location_id || ''}
-                  onChange={(e) => setModal({ ...modal, location_id: e.target.value || null as any })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="">— None —</option>
-                  {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Rate per Lesson (₹)</label>
-                <input
-                  type="number"
-                  value={modal.rate_per_lesson || ''}
-                  onChange={(e) => setModal({ ...modal, rate_per_lesson: Number(e.target.value) })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="e.g. 1750"
-                />
-              </div>
-
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={modal.is_online || false}
-                  onChange={(e) => setModal({ ...modal, is_online: e.target.checked })}
-                  className="accent-teal"
-                />
-                Online
-              </label>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Academic Year</label>
-                <input
-                  type="text"
-                  value={modal.academic_year || '2025'}
-                  onChange={(e) => setModal({ ...modal, academic_year: e.target.value })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="2025"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={handleSave}
-                disabled={saving || !modal.category || !modal.rate_per_lesson}
-                className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
-              >
-                {saving ? 'Saving...' : modal.id ? 'Update' : 'Create'}
-              </button>
-              <button
-                onClick={() => setModal(null)}
-                className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-            </div>
+          {/* Group lessons group */}
+          <div className="px-4 py-2 bg-gray-50/60 border-b border-gray-100 border-t border-t-gray-100">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Group Lessons</span>
           </div>
+          {CATEGORIES.filter((c) => c.group === 'group').map((cat, idx, arr) => (
+            <div
+              key={cat.value}
+              className={`grid items-center hover:bg-gray-50/40 ${idx < arr.length - 1 ? 'border-b border-gray-50' : ''}`}
+              style={{ gridTemplateColumns: `180px repeat(${locations.length + 1}, 1fr)` }}
+            >
+              <div className="px-4 py-1 text-sm text-gray-700">{cat.label}</div>
+              {locations.map((loc) => (
+                <RateCell
+                  key={loc.id}
+                  rate={rateMap[rateKey(cat.value, loc.id)]}
+                  onSave={(v) => saveCell(cat.value, loc.id, v)}
+                  onDelete={() => deleteCell(cat.value, loc.id)}
+                />
+              ))}
+              <RateCell
+                rate={rateMap[rateKey(cat.value, null)]}
+                onSave={(v) => saveCell(cat.value, null, v)}
+                onDelete={() => deleteCell(cat.value, null)}
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>
