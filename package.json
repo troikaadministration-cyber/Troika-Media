@@ -1,0 +1,13 @@
+{
+  "name": "troika-music-lessons",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter troika-web dev",
+    "build": "pnpm --filter troika-web build",
+    "admin": "pnpm --filter admin dev",
+    "shared:build": "pnpm --filter @troika/shared build"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

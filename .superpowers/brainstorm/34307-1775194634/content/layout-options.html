@@ -1,0 +1,128 @@
+<h2>Lesson Rates — Layout Approaches</h2>
+<p class="subtitle">How should the rate configuration page be structured? Pick the one that feels most intuitive.</p>
+
+<div class="cards">
+
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8fafc;padding:16px;border-radius:8px;font-family:sans-serif;">
+      <div style="margin-bottom:10px;">
+        <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Select Teacher</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <span style="background:#0d9488;color:white;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:600;">Sarah M.</span>
+          <span style="background:#e2e8f0;color:#475569;border-radius:20px;padding:4px 12px;font-size:12px;">James K.</span>
+          <span style="background:#e2e8f0;color:#475569;border-radius:20px;padding:4px 12px;font-size:12px;">Priya R.</span>
+        </div>
+      </div>
+      <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 80px;font-size:11px;font-weight:600;color:#64748b;background:#f1f5f9;padding:6px 10px;">
+          <span>Lesson Type</span><span>Location</span><span style="text-align:right;">Rate ₹</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 80px;font-size:12px;padding:6px 10px;border-top:1px solid #f1f5f9;align-items:center;">
+          <span>1:1 Instrumental</span><span style="color:#64748b">Koramangala</span>
+          <span style="text-align:right;font-weight:700;color:#0f172a">1,750</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 80px;font-size:12px;padding:6px 10px;border-top:1px solid #f1f5f9;background:#f8fafc;align-items:center;">
+          <span>1:1 Theory</span><span style="color:#64748b">Online</span>
+          <span style="text-align:right;font-weight:700;color:#0f172a">1,200</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 80px;font-size:12px;padding:6px 10px;border-top:1px solid #f1f5f9;align-items:center;">
+          <span>Group: Vocals</span><span style="color:#64748b">HSR Layout</span>
+          <span style="text-align:right;font-weight:700;color:#0f172a">900</span>
+        </div>
+      </div>
+      <div style="margin-top:8px;text-align:right;">
+        <span style="font-size:11px;color:#0d9488;font-weight:600;cursor:pointer;">+ Add rate for Sarah</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Teacher-first view</h3>
+      <p>Pick a teacher from pill tabs at the top, see all their rates in a clean table below. Adding a rate pre-fills the teacher. Natural for "configure one teacher at a time."</p>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8fafc;padding:16px;border-radius:8px;font-family:sans-serif;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:10px;">
+          <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:6px;">1:1 Instrumental</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;border-bottom:1px solid #f1f5f9;">
+            <span>Sarah M.</span><span style="font-weight:700">₹1,750</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;">
+            <span>James K.</span><span style="font-weight:700">₹1,500</span>
+          </div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:10px;">
+          <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:6px;">1:1 Vocals</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;border-bottom:1px solid #f1f5f9;">
+            <span>Sarah M.</span><span style="font-weight:700">₹1,800</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;color:#94a3b8;">
+            <span>James K.</span><span>—</span>
+          </div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:10px;">
+          <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:6px;">Group: Guitar</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;color:#94a3b8;">
+            <span>Sarah M.</span><span>—</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;">
+            <span>James K.</span><span style="font-weight:700">₹900</span>
+          </div>
+        </div>
+        <div style="background:#f1f5f9;border:1.5px dashed #cbd5e1;border-radius:8px;padding:10px;display:flex;align-items:center;justify-content:center;">
+          <span style="font-size:12px;color:#94a3b8;">+ Add category</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Category grid cards</h3>
+      <p>Each lesson category gets its own card showing all teacher rates side by side. Missing rates show as "—" so gaps are obvious. Good for seeing who covers what.</p>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8fafc;padding:16px;border-radius:8px;font-family:sans-serif;">
+      <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <div style="display:grid;grid-template-columns:140px repeat(3, 1fr);font-size:11px;font-weight:700;color:#64748b;background:#f1f5f9;padding:7px 10px;text-transform:uppercase;">
+          <span>Category</span><span style="text-align:center">Sarah M.</span><span style="text-align:center">James K.</span><span style="text-align:center">Priya R.</span>
+        </div>
+        <div style="display:grid;grid-template-columns:140px repeat(3, 1fr);font-size:12px;padding:7px 10px;border-top:1px solid #f1f5f9;align-items:center;">
+          <span style="color:#475569;font-size:11px;">1:1 Instrumental</span>
+          <span style="text-align:center;font-weight:700">₹1,750</span>
+          <span style="text-align:center;font-weight:700">₹1,500</span>
+          <span style="text-align:center;color:#94a3b8">—</span>
+        </div>
+        <div style="display:grid;grid-template-columns:140px repeat(3, 1fr);font-size:12px;padding:7px 10px;border-top:1px solid #f1f5f9;background:#f8fafc;align-items:center;">
+          <span style="color:#475569;font-size:11px;">1:1 Theory</span>
+          <span style="text-align:center;font-weight:700">₹1,200</span>
+          <span style="text-align:center;color:#94a3b8">—</span>
+          <span style="text-align:center;font-weight:700">₹1,100</span>
+        </div>
+        <div style="display:grid;grid-template-columns:140px repeat(3, 1fr);font-size:12px;padding:7px 10px;border-top:1px solid #f1f5f9;align-items:center;">
+          <span style="color:#475569;font-size:11px;">Group: Guitar</span>
+          <span style="text-align:center;color:#94a3b8">—</span>
+          <span style="text-align:center;font-weight:700">₹900</span>
+          <span style="text-align:center;color:#94a3b8">—</span>
+        </div>
+        <div style="display:grid;grid-template-columns:140px repeat(3, 1fr);font-size:12px;padding:7px 10px;border-top:1px solid #f1f5f9;background:#f8fafc;align-items:center;">
+          <span style="color:#475569;font-size:11px;">Group: Vocals</span>
+          <span style="text-align:center;color:#94a3b8">—</span>
+          <span style="text-align:center;color:#94a3b8">—</span>
+          <span style="text-align:center;font-weight:700">₹850</span>
+        </div>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:#64748b;">Click any cell to set or edit a rate inline</div>
+    </div>
+    <div class="card-body">
+      <h3>C — Spreadsheet grid (category × teacher)</h3>
+      <p>Rows = lesson categories, columns = teachers. Click a cell to set a rate inline. Immediately shows the full picture and missing entries. Most compact, most powerful.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px;">Click your preferred layout, then let me know in the terminal.</p>

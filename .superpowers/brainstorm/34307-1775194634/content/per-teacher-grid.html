@@ -1,0 +1,121 @@
+<h2>Per-Teacher Spreadsheet</h2>
+<p class="subtitle">Select a teacher — their full rate sheet appears below. Click any cell to edit inline.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Lesson Rates — Admin</div>
+  <div class="mockup-body" style="font-family:sans-serif;padding:20px;background:#f8fafc;min-height:420px;">
+
+    <!-- Teacher tabs -->
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+      <button style="background:#0d9488;color:white;border:none;border-radius:20px;padding:6px 16px;font-size:13px;font-weight:600;cursor:pointer;">Sarah M.</button>
+      <button style="background:white;color:#475569;border:1px solid #e2e8f0;border-radius:20px;padding:6px 16px;font-size:13px;cursor:pointer;">James K.</button>
+      <button style="background:white;color:#475569;border:1px solid #e2e8f0;border-radius:20px;padding:6px 16px;font-size:13px;cursor:pointer;">Priya R.</button>
+      <button style="background:white;color:#0d9488;border:1.5px dashed #0d9488;border-radius:20px;padding:6px 16px;font-size:13px;cursor:pointer;">+ Add Teacher</button>
+    </div>
+
+    <!-- Sarah's rate grid -->
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+
+      <!-- Header -->
+      <div style="display:grid;grid-template-columns:180px 1fr 1fr 1fr;background:#f1f5f9;border-bottom:1px solid #e2e8f0;">
+        <div style="padding:10px 14px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Lesson Type</div>
+        <div style="padding:10px 14px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;text-align:center;">Koramangala</div>
+        <div style="padding:10px 14px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;text-align:center;">HSR Layout</div>
+        <div style="padding:10px 14px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;text-align:center;">Online</div>
+      </div>
+
+      <!-- Section: 1:1 Lessons -->
+      <div style="padding:6px 14px;background:#fafafa;border-bottom:1px solid #f1f5f9;">
+        <span style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;">1:1 Lessons</span>
+      </div>
+
+      <!-- Row -->
+      <div style="display:grid;grid-template-columns:180px 1fr 1fr 1fr;border-bottom:1px solid #f8fafc;align-items:center;">
+        <div style="padding:11px 14px;font-size:13px;color:#334155;">Instrumental</div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹1,750</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹1,600</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹1,400</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:180px 1fr 1fr 1fr;border-bottom:1px solid #f8fafc;align-items:center;">
+        <div style="padding:11px 14px;font-size:13px;color:#334155;">Theory</div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹1,200</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹1,100</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:180px 1fr 1fr 1fr;border-bottom:1px solid #f8fafc;align-items:center;">
+        <div style="padding:11px 14px;font-size:13px;color:#334155;">Vocals</div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹1,800</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹1,600</div>
+        </div>
+      </div>
+
+      <!-- Section: Group Lessons -->
+      <div style="padding:6px 14px;background:#fafafa;border-bottom:1px solid #f1f5f9;border-top:1px solid #e2e8f0;">
+        <span style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;">Group Lessons</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:180px 1fr 1fr 1fr;border-bottom:1px solid #f8fafc;align-items:center;">
+        <div style="padding:11px 14px;font-size:13px;color:#334155;">Cello / Violin</div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹950</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:180px 1fr 1fr 1fr;border-bottom:1px solid #f8fafc;align-items:center;">
+        <div style="padding:11px 14px;font-size:13px;color:#334155;">Guitar</div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:180px 1fr 1fr 1fr;align-items:center;">
+        <div style="padding:11px 14px;font-size:13px;color:#334155;">Vocals</div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹850</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:6px 10px;font-size:14px;font-weight:700;color:#065f46;cursor:text;">₹850</div>
+        </div>
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="border:1.5px dashed #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;color:#94a3b8;cursor:pointer;background:#fafafa;">+ Set rate</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div style="margin-top:10px;font-size:12px;color:#94a3b8;">Green cells = rate set · Dashed cells = not configured · Click any cell to edit</div>
+
+  </div>
+</div>
