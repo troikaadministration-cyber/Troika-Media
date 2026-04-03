@@ -73,6 +73,37 @@ export function LessonRatesPage() {
 
   useEffect(() => { loadRates(); }, [loadRates]);
 
+  // Upsert a rate for the currently selected teacher
+  async function saveCell(category: string, locationId: string | null, value: number) {
+    if (!selectedTeacherId) return;
+    const isOnline = locationId === null;
+    const existing = rateMap[rateKey(category, locationId)];
+    if (existing) {
+      await supabase
+        .from('lesson_rates')
+        .update({ rate_per_lesson: value })
+        .eq('id', existing.id);
+    } else {
+      await supabase.from('lesson_rates').insert({
+        teacher_id: selectedTeacherId,
+        location_id: isOnline ? null : locationId,
+        category,
+        rate_per_lesson: value,
+        is_online: isOnline,
+        academic_year: year,
+      });
+    }
+    await loadRates();
+  }
+
+  // Delete a rate (called when cell is cleared)
+  async function deleteCell(category: string, locationId: string | null) {
+    const existing = rateMap[rateKey(category, locationId)];
+    if (!existing) return;
+    await supabase.from('lesson_rates').delete().eq('id', existing.id);
+    await loadRates();
+  }
+
   return (
     <div>
       <p>Teachers loaded: {teachers.length}</p>
