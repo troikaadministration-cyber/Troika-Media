@@ -75,10 +75,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   const [allRates, setAllRates] = useState<LessonRate[]>([]);
   const [categories, setCategories] = useState<LessonCategory[]>([]);
 
-  // Inline new instrument
-  const [showNewInstrument, setShowNewInstrument] = useState(false);
-  const [newInstrumentName, setNewInstrumentName] = useState('');
-  const [addingInstrument, setAddingInstrument] = useState(false);
 
   // Step 1 state
   const [s1, setS1] = useState({
@@ -103,8 +99,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setStep(0);
       setError(null);
       setStudentId(null);
-      setShowNewInstrument(false);
-      setNewInstrumentName('');
       setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', instrument_id: '', location_id: '' });
       setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0' });
       setClasses([emptyClass()]);
@@ -130,18 +124,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
 
   if (!open) return null;
 
-  async function addInstrumentInline() {
-    const name = newInstrumentName.trim();
-    if (!name) return;
-    setAddingInstrument(true);
-    const { data, error: err } = await supabase.from('instruments').insert({ name }).select('id, name').single();
-    setAddingInstrument(false);
-    if (err) { setError(err.message); return; }
-    setInstruments(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
-    setS1(prev => ({ ...prev, instrument_id: data.id }));
-    setShowNewInstrument(false);
-    setNewInstrumentName('');
-  }
 
   // Step 1 → create student + approve profile (parallel)
   async function handleStep1Next() {
@@ -300,28 +282,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Instrument</label>
-                <div className="flex items-center gap-2">
-                  <select value={s1.instrument_id} onChange={e => setS1(p => ({ ...p, instrument_id: e.target.value }))}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
-                    <option value="">Select instrument</option>
-                    {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                  </select>
-                  <button onClick={() => setShowNewInstrument(v => !v)}
-                    className="text-xs text-teal font-semibold hover:underline whitespace-nowrap">+ New</button>
-                </div>
-                {showNewInstrument && (
-                  <div className="flex items-center gap-2 mt-2">
-                    <input autoFocus type="text" value={newInstrumentName}
-                      onChange={e => setNewInstrumentName(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && addInstrumentInline()}
-                      placeholder="Instrument name"
-                      className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:border-teal focus:outline-none" />
-                    <button onClick={addInstrumentInline} disabled={addingInstrument || !newInstrumentName.trim()}
-                      className="text-xs text-white bg-teal px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
-                      {addingInstrument ? '…' : 'Add'}
-                    </button>
-                  </div>
-                )}
+                <select value={s1.instrument_id} onChange={e => setS1(p => ({ ...p, instrument_id: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                  <option value="">Select instrument</option>
+                  {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
