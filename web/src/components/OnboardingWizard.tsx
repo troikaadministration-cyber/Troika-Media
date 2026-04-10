@@ -149,19 +149,59 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     setSaving(true);
     setError(null);
     try {
-      const { data, error: studentErr } = await supabase.from('students').insert({
-        user_id: pendingProfile?.id ?? null,
-        full_name: s1.full_name.trim(),
-        phone: s1.phone.trim() || null,
-        email: s1.email.trim() || null,
-        instrument_id: s1.instrument_id || null,
-        location_id: s1.location_id || null,
-        is_active: true,
-        payment_plan: '3_instalments',
-      }).select('id').single();
-      if (studentErr) throw studentErr;
+      // Check if a student record already exists for this profile to avoid duplicates
+      let existingId: string | null = null;
+      if (pendingProfile) {
+        const { data: existing } = await supabase
+          .from('students')
+          .select('id')
+          .eq('user_id', pendingProfile.id)
+          .maybeSingle();
+        if (existing) existingId = existing.id;
+      }
+      if (!existingId && s1.email.trim()) {
+        const { data: existing } = await supabase
+          .from('students')
+          .select('id')
+          .eq('email', s1.email.trim())
+          .maybeSingle();
+        if (existing) existingId = existing.id;
+      }
+
+      let studentData: { id: string };
+      if (existingId) {
+        // Update the existing record instead of creating a duplicate
+        const { data, error: updateErr } = await supabase
+          .from('students')
+          .update({
+            full_name: s1.full_name.trim(),
+            phone: s1.phone.trim() || null,
+            email: s1.email.trim() || null,
+            instrument_id: s1.instrument_id || null,
+            location_id: s1.location_id || null,
+            user_id: pendingProfile?.id ?? null,
+          })
+          .eq('id', existingId)
+          .select('id')
+          .single();
+        if (updateErr) throw updateErr;
+        studentData = data;
+      } else {
+        const { data, error: studentErr } = await supabase.from('students').insert({
+          user_id: pendingProfile?.id ?? null,
+          full_name: s1.full_name.trim(),
+          phone: s1.phone.trim() || null,
+          email: s1.email.trim() || null,
+          instrument_id: s1.instrument_id || null,
+          location_id: s1.location_id || null,
+          is_active: true,
+          payment_plan: '3_instalments',
+        }).select('id').single();
+        if (studentErr) throw studentErr;
+        studentData = data;
+      }
       // NOTE: profile approval happens only on Confirm & Finish — not here
-      setStudentId(data.id);
+      setStudentId(studentData.id);
       setStep(1);
     } catch (err: any) {
       setError(err.message);
