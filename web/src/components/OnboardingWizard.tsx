@@ -149,7 +149,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     setSaving(true);
     setError(null);
     try {
-      const studentPromise = supabase.from('students').insert({
+      const { data, error: studentErr } = await supabase.from('students').insert({
         user_id: pendingProfile?.id ?? null,
         full_name: s1.full_name.trim(),
         phone: s1.phone.trim() || null,
@@ -159,14 +159,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         is_active: true,
         payment_plan: '3_instalments',
       }).select('id').single();
-
-      const approvePromise = pendingProfile
-        ? supabase.from('profiles').update({ approved: true }).eq('id', pendingProfile.id)
-        : Promise.resolve({ error: null });
-
-      const [{ data, error: studentErr }, { error: approveErr }] = await Promise.all([studentPromise, approvePromise]);
       if (studentErr) throw studentErr;
-      if (approveErr) throw approveErr;
+      // NOTE: profile approval happens only on Confirm & Finish — not here
       setStudentId(data.id);
       setStep(1);
     } catch (err: any) {
@@ -250,6 +244,12 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
           );
           if (schedErr) throw schedErr;
         }
+      }
+
+      // Approve the student's profile only after the full wizard is completed
+      if (pendingProfile) {
+        const { error: approveErr } = await supabase.from('profiles').update({ approved: true }).eq('id', pendingProfile.id);
+        if (approveErr) throw approveErr;
       }
 
       onComplete();

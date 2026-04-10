@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, AlertTriangle, CheckCircle, Music, X, BookOpen, BookmarkPlus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Calendar, AlertTriangle, CheckCircle, Music, X, BookOpen, BookmarkPlus, Trash2, Clock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Student, StudentStats, AbsenceCategory, StudentEnrolment } from '../types';
@@ -51,12 +51,43 @@ export function StudentDetailPage() {
   // Delete confirm
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
+  // Schedule templates
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [teachers, setTeachers] = useState<{ id: string; full_name: string }[]>([]);
+  const [scheduleEditOpen, setScheduleEditOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<any | null>(null);
+  const [scheduleForm, setScheduleForm] = useState<any>({});
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+
+  // Multiple instruments
+  const [studentInstruments, setStudentInstruments] = useState<string[]>([]);
+
+  const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
   useEffect(() => {
     if (!id) return;
     fetchData();
     supabase.from('instruments').select('id, name').order('name').then(({ data }) => setInstruments(data || []));
     supabase.from('locations').select('id, name').order('name').then(({ data }) => setLocations(data || []));
+    supabase.from('profiles').select('id, full_name').eq('role', 'teacher').eq('approved', true).order('full_name').then(({ data }) => setTeachers(data || []));
+    fetchSchedules();
+    fetchStudentInstruments();
   }, [id]);
+
+  function fetchSchedules() {
+    if (!id) return;
+    supabase.from('teacher_schedule_templates')
+      .select('*, teacher:profiles!teacher_schedule_templates_teacher_id_fkey(full_name), instrument:instruments(name), location:locations(name)')
+      .contains('student_ids', [id])
+      .order('day_of_week').order('start_time')
+      .then(({ data }) => setSchedules(data || []));
+  }
+
+  function fetchStudentInstruments() {
+    if (!id) return;
+    supabase.from('student_instruments').select('instrument_id').eq('student_id', id)
+      .then(({ data }) => setStudentInstruments((data || []).map((r: any) => r.instrument_id)));
+  }
 
   function fetchData() {
     if (!id) return;
@@ -175,6 +206,69 @@ export function StudentDetailPage() {
     const { error } = await supabase.from('students').delete().eq('id', id!);
     if (error) { alert(error.message); return; }
     navigate('/students');
+  }
+
+  function openScheduleEdit(sched: any | null) {
+    setEditingSchedule(sched);
+    setScheduleForm(sched ? {
+      teacher_id: sched.teacher_id,
+      day_of_week: sched.day_of_week,
+      start_time: sched.start_time,
+      end_time: sched.end_time || '',
+      instrument_id: sched.instrument_id || '',
+      location_id: sched.location_id || '',
+    } : {
+      teacher_id: '',
+      day_of_week: 1,
+      start_time: '09:00',
+      end_time: '10:00',
+      instrument_id: '',
+      location_id: student?.location_id || '',
+    });
+    setScheduleEditOpen(true);
+  }
+
+  async function saveSchedule() {
+    setScheduleSaving(true);
+    try {
+      const payload = {
+        teacher_id: scheduleForm.teacher_id,
+        day_of_week: Number(scheduleForm.day_of_week),
+        start_time: scheduleForm.start_time,
+        end_time: scheduleForm.end_time || null,
+        instrument_id: scheduleForm.instrument_id || null,
+        location_id: scheduleForm.location_id || null,
+        title: `${student.full_name} – ${instruments.find(i => i.id === scheduleForm.instrument_id)?.name ?? ''}`,
+        student_ids: [id],
+        is_active: true,
+      };
+      if (editingSchedule) {
+        await supabase.from('teacher_schedule_templates').update(payload).eq('id', editingSchedule.id);
+      } else {
+        await supabase.from('teacher_schedule_templates').insert(payload);
+      }
+      setScheduleEditOpen(false);
+      fetchSchedules();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setScheduleSaving(false);
+    }
+  }
+
+  async function deleteSchedule(schedId: string) {
+    if (!confirm('Remove this class slot?')) return;
+    await supabase.from('teacher_schedule_templates').delete().eq('id', schedId);
+    fetchSchedules();
+  }
+
+  async function toggleStudentInstrument(instrId: string) {
+    if (studentInstruments.includes(instrId)) {
+      await supabase.from('student_instruments').delete().eq('student_id', id!).eq('instrument_id', instrId);
+    } else {
+      await supabase.from('student_instruments').insert({ student_id: id, instrument_id: instrId });
+    }
+    fetchStudentInstruments();
   }
 
   async function saveEdit() {
@@ -324,6 +418,42 @@ export function StudentDetailPage() {
         );
       })}
 
+      {/* Class Schedule */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-6">
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock size={18} className="text-teal" />
+            <h2 className="font-semibold text-navy">Class Schedule</h2>
+          </div>
+          <button onClick={() => openScheduleEdit(null)}
+            className="text-xs font-semibold text-teal border border-teal/30 px-3 py-1.5 rounded-lg hover:bg-teal-light">
+            + Add Class
+          </button>
+        </div>
+        {schedules.length === 0 ? (
+          <p className="text-center text-gray-400 py-6 text-sm">No class slots set up</p>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {schedules.map((s: any) => (
+              <div key={s.id} className="flex items-center gap-4 px-4 py-3">
+                <div className="w-20 text-center flex-shrink-0">
+                  <p className="text-xs font-bold text-navy">{DAYS[s.day_of_week]}</p>
+                  <p className="text-xs text-gray-400">{s.start_time?.slice(0,5)}{s.end_time ? `–${s.end_time.slice(0,5)}` : ''}</p>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-navy truncate">{s.teacher?.full_name || '—'}</p>
+                  <p className="text-xs text-gray-400">{[s.instrument?.name, s.location?.name].filter(Boolean).join(' · ') || '—'}</p>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button onClick={() => openScheduleEdit(s)} className="text-xs text-gray-400 hover:text-navy px-2 py-1 rounded hover:bg-gray-100">Edit</button>
+                  <button onClick={() => deleteSchedule(s.id)} className="text-xs text-coral hover:text-coral/70 px-2 py-1 rounded hover:bg-coral-light">Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Lesson History */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100">
         <div className="p-4 border-b border-gray-100"><h2 className="font-semibold text-navy">Lesson History</h2></div>
@@ -411,13 +541,21 @@ export function StudentDetailPage() {
                   <input type="email" value={editForm.email} onChange={e => setEditForm((p: any) => ({ ...p, email: e.target.value }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 mb-1">Instrument</label>
-                  <select value={editForm.instrument_id} onChange={e => setEditForm((p: any) => ({ ...p, instrument_id: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
-                    <option value="">None</option>
-                    {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                  </select>
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-gray-500 mb-2">Instruments / Subjects</label>
+                  <div className="flex flex-wrap gap-2">
+                    {instruments.map(i => (
+                      <button key={i.id} type="button"
+                        onClick={() => toggleStudentInstrument(i.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                          studentInstruments.includes(i.id)
+                            ? 'bg-teal text-white border-teal'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-teal'
+                        }`}>
+                        {i.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
@@ -528,6 +666,71 @@ export function StudentDetailPage() {
                 {reEnrolSaving ? 'Saving...' : 'Create Enrolment'}
               </button>
               <button onClick={() => setReEnrolOpen(false)}
+                className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule edit modal */}
+      {scheduleEditOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-navy text-lg">{editingSchedule ? 'Edit Class' : 'Add Class'}</h3>
+              <button onClick={() => setScheduleEditOpen(false)} className="text-gray-400 hover:text-navy"><X size={20} /></button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Teacher</label>
+                <select value={scheduleForm.teacher_id} onChange={e => setScheduleForm((p: any) => ({ ...p, teacher_id: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                  <option value="">Select teacher</option>
+                  {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Day</label>
+                <select value={scheduleForm.day_of_week} onChange={e => setScheduleForm((p: any) => ({ ...p, day_of_week: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                  {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Instrument</label>
+                <select value={scheduleForm.instrument_id} onChange={e => setScheduleForm((p: any) => ({ ...p, instrument_id: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                  <option value="">None</option>
+                  {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Start Time</label>
+                <input type="time" value={scheduleForm.start_time} onChange={e => setScheduleForm((p: any) => ({ ...p, start_time: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">End Time</label>
+                <input type="time" value={scheduleForm.end_time} onChange={e => setScheduleForm((p: any) => ({ ...p, end_time: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
+                <select value={scheduleForm.location_id} onChange={e => setScheduleForm((p: any) => ({ ...p, location_id: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                  <option value="">None</option>
+                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button onClick={saveSchedule} disabled={scheduleSaving || !scheduleForm.teacher_id}
+                className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
+                {scheduleSaving ? 'Saving...' : 'Save'}
+              </button>
+              <button onClick={() => setScheduleEditOpen(false)}
                 className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200">
                 Cancel
               </button>
