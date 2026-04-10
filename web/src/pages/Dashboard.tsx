@@ -32,42 +32,33 @@ export function DashboardPage() {
   const today = new Date().toISOString().split('T')[0];
 
   useEffect(() => {
-    // Fast: counts only — no row data fetched
+    // Fetch everything in one parallel batch (was 5 separate round-trips)
     Promise.all([
-      supabase.from('students').select('*', { count: 'exact', head: true }).eq('is_active', true),
-      supabase.from('students').select('*', { count: 'exact', head: true }),
-      supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'teacher').eq('approved', true),
-      supabase.from('payment_records').select('*', { count: 'exact', head: true }).is('paid_date', null),
-    ]).then(([activeRes, totalRes, teachersRes, paymentsRes]) => {
+      supabase.from('students').select('id, is_active'),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'teacher').eq('approved', true),
+      supabase.from('payment_records').select('id', { count: 'exact', head: true }).is('paid_date', null),
+      supabase.from('lessons').select(`
+        id, title, start_time, status,
+        teacher:profiles!lessons_teacher_id_fkey(full_name),
+        location:locations(name),
+        instrument:instruments(name, icon),
+        students:lesson_students(student:students(full_name))
+      `).eq('date', today).order('start_time'),
+    ]).then(([studentsRes, teachersRes, paymentsRes, lessonsRes]) => {
+      const allStudents = studentsRes.data || [];
+      const lessons = (lessonsRes.data || []) as unknown as TodayLesson[];
+      if (lessonsRes.error) { setError(lessonsRes.error.message); }
+      setTodayLessons(lessons);
       setStats({
-        activeStudents: activeRes.count || 0,
-        totalStudents: totalRes.count || 0,
-        completedToday: 0,
-        totalToday: 0,
+        activeStudents: allStudents.filter(s => s.is_active).length,
+        totalStudents: allStudents.length,
+        completedToday: lessons.filter(l => l.status === 'completed').length,
+        totalToday: lessons.length,
         totalTeachers: teachersRes.count || 0,
         pendingPayments: paymentsRes.count || 0,
       });
+      setLessonsLoading(false);
     });
-
-    // Slower: full join query for today's lessons
-    supabase.from('lessons').select(`
-      id, title, start_time, status,
-      teacher:profiles!lessons_teacher_id_fkey(full_name),
-      location:locations(name),
-      instrument:instruments(name, icon),
-      students:lesson_students(student:students(full_name))
-    `).eq('date', today).order('start_time')
-      .then(({ data, error: err }) => {
-        if (err) { setError(err.message); return; }
-        const lessons = (data || []) as unknown as TodayLesson[];
-        setTodayLessons(lessons);
-        setStats(prev => prev ? {
-          ...prev,
-          completedToday: lessons.filter(l => l.status === 'completed').length,
-          totalToday: lessons.length,
-        } : prev);
-      })
-      .finally(() => setLessonsLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const statCards = [

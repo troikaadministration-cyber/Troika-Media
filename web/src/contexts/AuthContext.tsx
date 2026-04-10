@@ -64,7 +64,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(!cached.profile);
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>(cached.approvalStatus);
 
+  // Prevent double profile fetch (getSession + onAuthStateChange both fire on OAuth callback)
+  const fetchingRef = { current: false };
+
   const fetchProfile = useCallback(async (userId: string) => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -93,12 +98,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setApprovalStatus(null);
       clearProfileCache();
     } finally {
+      fetchingRef.current = false;
       setLoading(false);
     }
   }, []);
 
   const refreshProfile = useCallback(async () => {
     if (session?.user) {
+      fetchingRef.current = false; // allow explicit refresh
       await fetchProfile(session.user.id);
     }
   }, [session, fetchProfile]);
@@ -109,25 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Get initial session
-    supabase.auth.getSession().then(async ({ data: { session: existing } }) => {
-      setSession(existing);
-      if (existing?.user) {
-        // If we have a cached profile, render immediately and re-fetch in background
-        if (cached.profile) {
-          fetchProfile(existing.user.id);
-        } else {
-          await fetchProfile(existing.user.id);
-        }
-      } else {
-        clearProfileCache();
-        setProfile(null);
-        setApprovalStatus(null);
-        setLoading(false);
-      }
-    });
-
-    // Listen for auth changes
+    // Listen for auth changes — single source of truth for profile fetch
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
         if (event === 'SIGNED_OUT') {
@@ -139,11 +128,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          setSession(newSession);
-          if (newSession?.user) {
+        setSession(newSession);
+        if (newSession?.user) {
+          if (cached.profile) {
+            // Render immediately with cache, refresh in background
+            fetchProfile(newSession.user.id);
+          } else {
             await fetchProfile(newSession.user.id);
           }
+        } else {
+          clearProfileCache();
+          setProfile(null);
+          setApprovalStatus(null);
+          setLoading(false);
         }
       }
     );
