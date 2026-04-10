@@ -25,6 +25,7 @@ interface ClassRow {
   end_time: string;
   rate: string;
   instrument_id: string;
+  is_online: boolean;
 }
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -41,7 +42,7 @@ const PAYMENT_PLANS = [
 const TOTAL_LESSONS = (plan: string) => plan === 'trial' ? 1 : 39;
 
 function emptyClass(): ClassRow {
-  return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '', instrument_id: '' };
+  return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '', instrument_id: '', is_online: false };
 }
 
 function StepBar({ step }: { step: number }) {
@@ -155,23 +156,25 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   }
 
   // Step 2 helpers
-  function autoRate(teacherId: string, category: string): string {
-    const isOnline = s1.location_id === '';
-    const match = allRates.find(r =>
-      r.teacher_id === teacherId && r.category === category &&
-      (isOnline ? r.is_online : r.location_id === s1.location_id)
+  function autoRate(teacherId: string, category: string, isOnline: boolean): string {
+    const exact = allRates.find(r =>
+      r.teacher_id === teacherId && r.category === category && r.is_online === isOnline
     );
-    return match ? String(match.rate_per_lesson) : '';
+    if (exact) return String(exact.rate_per_lesson);
+    // fallback: any rate for this teacher+category regardless of online flag
+    const fallback = allRates.find(r => r.teacher_id === teacherId && r.category === category);
+    return fallback ? String(fallback.rate_per_lesson) : '';
   }
 
   function updateClass(idx: number, patch: Partial<ClassRow>) {
     setClasses(prev => prev.map((c, i) => {
       if (i !== idx) return c;
       const updated = { ...c, ...patch };
-      if (patch.teacher_id !== undefined || patch.category !== undefined) {
+      if (patch.teacher_id !== undefined || patch.category !== undefined || patch.is_online !== undefined) {
         const tId = patch.teacher_id ?? c.teacher_id;
         const cat = patch.category ?? c.category;
-        if (tId && cat) updated.rate = autoRate(tId, cat);
+        const online = patch.is_online ?? c.is_online;
+        if (tId && cat) updated.rate = autoRate(tId, cat, online);
       }
       return updated;
     }));
@@ -268,18 +271,21 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               is_active: true,
             };
           });
+          // is_online is not stored in templates table — track separately for lesson generation
+          const templateIsOnline = validClasses.map(cls => cls.is_online);
           const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(templateRows);
           if (schedErr) throw schedErr;
 
-          // Auto-generate lessons from today → end of academic year
+          // Auto-generate lessons from today → May 31 of academic year
           const startDate = new Date();
           const endDate = new Date(`${s2.academic_year}-05-31T00:00:00`);
           const current = new Date(startDate);
           while (current <= endDate) {
             const dayOfWeek = current.getDay();
             const dateStr = current.toISOString().split('T')[0];
-            const dayTemplates = templateRows.filter(t => t.day_of_week === dayOfWeek);
-            for (const tpl of dayTemplates) {
+            for (let ti = 0; ti < templateRows.length; ti++) {
+              const tpl = templateRows[ti];
+              if (tpl.day_of_week !== dayOfWeek) continue;
               const { data: existing } = await supabase
                 .from('lessons').select('id')
                 .eq('teacher_id', tpl.teacher_id).eq('date', dateStr).eq('start_time', tpl.start_time)
@@ -289,7 +295,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 teacher_id: tpl.teacher_id,
                 location_id: tpl.location_id,
                 instrument_id: tpl.instrument_id,
-                lesson_type: 'regular',
+                lesson_type: templateIsOnline[ti] ? 'regular' : 'regular',
                 date: dateStr,
                 start_time: tpl.start_time,
                 end_time: tpl.end_time,
@@ -487,7 +493,12 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                       </div>
                     </div>
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                          <input type="checkbox" checked={cls.is_online} onChange={e => updateClass(idx, { is_online: e.target.checked })}
+                            className="accent-teal w-3.5 h-3.5" />
+                          <span className="text-xs font-semibold text-gray-500">Online</span>
+                        </label>
                         <label className="text-xs font-semibold text-gray-500">Rate per lesson (₹)</label>
                         <input type="number" min={0} value={cls.rate} onChange={e => updateClass(idx, { rate: e.target.value })}
                           className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white focus:border-teal focus:outline-none"
