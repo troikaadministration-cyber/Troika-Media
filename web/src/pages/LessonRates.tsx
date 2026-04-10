@@ -6,6 +6,8 @@ import type { LessonRate, Location } from '../types';
 const CURRENT_YEAR = new Date().getFullYear().toString();
 const YEARS = [CURRENT_YEAR, (Number(CURRENT_YEAR) - 1).toString()];
 
+const ALLOWED_INSTRUMENTS = ['Cello', 'Piano', 'Voice', 'Guitar', 'Violin', 'Viola', 'IGCSE Music', 'Music Theory'];
+
 interface Teacher { id: string; full_name: string; }
 interface LessonCategory { id: string; name: string; sort_order: number; }
 interface Instrument { id: string; name: string; }
@@ -300,15 +302,31 @@ export function LessonRatesPage() {
       </div>
 
       {/* Instruments admin panel */}
-      <AdminPanel title="Instruments" count={instruments.length}>
-        {instruments.map(inst => (
-          <EditableRow key={inst.id} name={inst.name}
-            onRename={name => renameInstrument(inst.id, name)}
-            onDelete={() => deleteInstrument(inst.id)}
-            deleteDisabled={instrumentsInUse.has(inst.id)} />
-        ))}
-        <InlineAdder placeholder="New instrument name..." onAdd={addInstrument} />
-      </AdminPanel>
+      {(() => {
+        const allowedInstruments = instruments.filter(i => ALLOWED_INSTRUMENTS.includes(i.name));
+        const missingInstruments = ALLOWED_INSTRUMENTS.filter(name => !instruments.some(i => i.name === name));
+        return (
+          <AdminPanel title="Instruments" count={allowedInstruments.length}>
+            {allowedInstruments.map(inst => (
+              <EditableRow key={inst.id} name={inst.name}
+                onRename={name => renameInstrument(inst.id, name)}
+                onDelete={() => deleteInstrument(inst.id)}
+                deleteDisabled={instrumentsInUse.has(inst.id)} />
+            ))}
+            {missingInstruments.length > 0 && (
+              <div className="px-4 py-2 border-t border-gray-100">
+                <select
+                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none mr-2"
+                  defaultValue=""
+                  onChange={async e => { if (e.target.value) { await addInstrument(e.target.value); e.target.value = ''; } }}>
+                  <option value="">+ Add missing instrument…</option>
+                  {missingInstruments.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
+            )}
+          </AdminPanel>
+        );
+      })()}
 
       {/* Lesson categories admin panel */}
       <AdminPanel title="Lesson Categories" count={categories.length}>
