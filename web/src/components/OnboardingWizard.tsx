@@ -253,20 +253,50 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         const instrName = instruments.find(i => i.id === s1.instrument_id)?.name ?? '';
         const validClasses = classes.filter(cls => cls.teacher_id);
         if (validClasses.length > 0) {
-          const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(
-            validClasses.map(cls => ({
-              teacher_id: cls.teacher_id,
-              day_of_week: Number(cls.day_of_week),
-              start_time: cls.start_time,
-              end_time: cls.end_time || null,
-              location_id: s1.location_id || null,
-              instrument_id: s1.instrument_id || null,
-              title: `${s1.full_name} – ${instrName}`,
-              student_ids: [resolvedStudentId],
-              is_active: true,
-            }))
-          );
+          const templateRows = validClasses.map(cls => ({
+            teacher_id: cls.teacher_id,
+            day_of_week: Number(cls.day_of_week),
+            start_time: cls.start_time,
+            end_time: cls.end_time || null,
+            location_id: s1.location_id || null,
+            instrument_id: s1.instrument_id || null,
+            title: `${s1.full_name} – ${instrName}`,
+            student_ids: [resolvedStudentId],
+            is_active: true,
+          }));
+          const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(templateRows);
           if (schedErr) throw schedErr;
+
+          // Auto-generate lessons from today → end of academic year
+          const startDate = new Date();
+          const endDate = new Date(`${s2.academic_year}-12-31T00:00:00`);
+          const current = new Date(startDate);
+          while (current <= endDate) {
+            const dayOfWeek = current.getDay();
+            const dateStr = current.toISOString().split('T')[0];
+            const dayTemplates = templateRows.filter(t => t.day_of_week === dayOfWeek);
+            for (const tpl of dayTemplates) {
+              const { data: existing } = await supabase
+                .from('lessons').select('id')
+                .eq('teacher_id', tpl.teacher_id).eq('date', dateStr).eq('start_time', tpl.start_time)
+                .limit(1);
+              if (existing && existing.length > 0) continue;
+              const { data: lesson } = await supabase.from('lessons').insert({
+                teacher_id: tpl.teacher_id,
+                location_id: tpl.location_id,
+                instrument_id: tpl.instrument_id,
+                lesson_type: 'regular',
+                date: dateStr,
+                start_time: tpl.start_time,
+                end_time: tpl.end_time,
+                title: tpl.title,
+              }).select('id').single();
+              if (lesson) {
+                await supabase.from('lesson_students').insert({ lesson_id: lesson.id, student_id: resolvedStudentId });
+              }
+            }
+            current.setDate(current.getDate() + 1);
+          }
         }
       }
 
