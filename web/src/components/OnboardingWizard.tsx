@@ -299,7 +299,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-navy">
-            {pendingProfile ? `Approve & Onboard — ${pendingProfile.full_name}` : 'Add New Student'}
+            {pendingProfile ? `Approve & Onboard — ${pendingProfile.full_name || pendingProfile.email}` : 'Add New Student'}
           </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-navy"><X size={20} /></button>
         </div>

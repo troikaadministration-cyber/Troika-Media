@@ -58,9 +58,6 @@ export function StudentsPage() {
     s.email?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const pendingPreview = pendingProfiles.slice(0, 3).map(p => p.full_name).join(', ') +
-    (pendingProfiles.length > 3 ? ` + ${pendingProfiles.length - 3} more` : '');
-
   // suppress unused warning
   void locations;
 
@@ -79,26 +76,33 @@ export function StudentsPage() {
         </button>
       </div>
 
-      {/* Pending approval banner */}
+      {/* Pending approval list */}
       {pendingProfiles.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-amber-400 text-white rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl mb-6 overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-amber-200">
+            <div className="w-7 h-7 bg-amber-400 text-white rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
               {pendingProfiles.length}
             </div>
-            <div>
-              <p className="text-sm font-semibold text-amber-800">
-                {pendingProfiles.length} student{pendingProfiles.length > 1 ? 's' : ''} waiting for approval
-              </p>
-              <p className="text-xs text-amber-600 mt-0.5">{pendingPreview}</p>
-            </div>
+            <p className="text-sm font-semibold text-amber-800">
+              {pendingProfiles.length} student{pendingProfiles.length > 1 ? 's' : ''} waiting for approval
+            </p>
           </div>
-          <button
-            onClick={() => openWizard(pendingProfiles[0])}
-            className="bg-amber-400 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-500 whitespace-nowrap flex-shrink-0"
-          >
-            Review →
-          </button>
+          <div className="divide-y divide-amber-100">
+            {pendingProfiles.map((p) => (
+              <div key={p.id} className="flex items-center justify-between px-4 py-3 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-amber-900">{p.full_name || '(name not set)'}</p>
+                  <p className="text-xs text-amber-600">{p.email}</p>
+                </div>
+                <button
+                  onClick={() => openWizard(p)}
+                  className="bg-amber-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-amber-500 whitespace-nowrap flex-shrink-0"
+                >
+                  Review →
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
