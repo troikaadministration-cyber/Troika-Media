@@ -21,24 +21,12 @@ interface Enrolment {
 
 interface Student { id: string; full_name: string; instrument?: { name: string } | null; }
 interface LessonRate { id: string; category: string; rate_per_lesson: number; is_online: boolean; teacher?: { full_name: string } | null; }
-
 const PLAN_OPTIONS = [
   { value: 'trial', label: 'Trial (no payment)' },
   { value: '1_instalment', label: '1 Instalment' },
   { value: '3_instalments', label: '3 Instalments' },
   { value: '10_instalments', label: '10 Instalments' },
 ];
-
-const CATEGORY_LABELS: Record<string, string> = {
-  '1:1_instrumental': '1:1 Instrumental',
-  '1:1_theory': '1:1 Theory',
-  '1:1_vocals': '1:1 Vocals',
-  'group_strings': 'Group: Cello/Violin',
-  'group_guitar': 'Group: Guitar',
-  'group_vocals': 'Group: Vocals',
-  'group_theory': 'Group: Theory',
-  'demo': 'Demo',
-};
 
 export function EnrolmentsPage() {
   const [enrolments, setEnrolments] = useState<Enrolment[]>([]);
@@ -307,7 +295,7 @@ export function EnrolmentsPage() {
                   <option value="">Select rate...</option>
                   {rates.map((r) => (
                     <option key={r.id} value={r.id}>
-                      {CATEGORY_LABELS[r.category] || r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}
+                      {r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}
                       {r.is_online ? ' (Online)' : ''}
                       {r.teacher ? ` — ${r.teacher.full_name}` : ''}
                     </option>

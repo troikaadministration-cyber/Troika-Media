@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useNotifications } from '../../hooks/useNotifications';
 import {
   LayoutDashboard, Calendar, Users, CreditCard, BookOpen,
-  LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, ClipboardList, CalendarClock,
+  LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, CalendarClock,
   CalendarDays, CalendarOff
 } from 'lucide-react';
 
@@ -16,7 +16,6 @@ const coordinatorNav = [
   { to: '/teacher-schedules', label: 'Teacher Schedules', icon: CalendarClock },
   { to: '/payments', label: 'Payments', icon: CreditCard },
   { to: '/lesson-rates', label: 'Lesson Rates', icon: IndianRupee },
-  { to: '/enrolments', label: 'Enrolments', icon: ClipboardList },
   { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
   { to: '/breaks', label: 'Breaks', icon: CalendarOff },
 ];

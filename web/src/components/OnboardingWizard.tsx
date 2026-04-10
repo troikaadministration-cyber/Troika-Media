@@ -2,13 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-interface PendingProfile {
-  id: string;
-  full_name: string;
-  email: string;
-}
+interface PendingProfile { id: string; full_name: string; email: string; }
 
 export interface OnboardingWizardProps {
   open: boolean;
@@ -21,27 +15,18 @@ interface Instrument { id: string; name: string; }
 interface Location { id: string; name: string; }
 interface Teacher { id: string; full_name: string; }
 interface LessonRate { id: string; teacher_id: string | null; location_id: string | null; category: string; rate_per_lesson: number; is_online: boolean; }
+interface LessonCategory { id: string; name: string; sort_order: number; }
 
 interface ClassRow {
   teacher_id: string;
   category: string;
-  day_of_week: string; // '0'–'5' (Mon–Sat)
+  day_of_week: string;
   start_time: string;
   end_time: string;
-  rate: string; // string for input, parsed on save
+  rate: string;
 }
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-const CATEGORIES: { value: string; label: string }[] = [
-  { value: '1:1_instrumental', label: '1:1 Instrumental' },
-  { value: '1:1_theory',       label: '1:1 Theory' },
-  { value: '1:1_vocals',       label: '1:1 Vocals' },
-  { value: 'group_strings',    label: 'Group: Strings' },
-  { value: 'group_guitar',     label: 'Group: Guitar' },
-  { value: 'group_vocals',     label: 'Group: Vocals' },
-  { value: 'group_theory',     label: 'Group: Theory' },
-];
 
 const PAYMENT_PLANS = [
   { value: 'trial',          label: 'Trial (no payment)' },
@@ -53,13 +38,11 @@ const PAYMENT_PLANS = [
 const TOTAL_LESSONS = (plan: string) => plan === 'trial' ? 1 : 39;
 
 function emptyClass(): ClassRow {
-  return { teacher_id: '', category: '1:1_instrumental', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '' };
+  return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '' };
 }
 
-// ── Step indicator ───────────────────────────────────────────────────────────
-
 function StepBar({ step }: { step: number }) {
-  const steps = ['Student Info', 'Payment Plan', 'Classes & Fee'];
+  const steps = ['Student Info', 'Payment & Classes'];
   return (
     <div className="flex items-center mb-6">
       {steps.map((label, i) => (
@@ -81,18 +64,21 @@ function StepBar({ step }: { step: number }) {
   );
 }
 
-// ── Main component ───────────────────────────────────────────────────────────
-
 export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: OnboardingWizardProps) {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Meta
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [allRates, setAllRates] = useState<LessonRate[]>([]);
+  const [categories, setCategories] = useState<LessonCategory[]>([]);
+
+  // Inline new instrument
+  const [showNewInstrument, setShowNewInstrument] = useState(false);
+  const [newInstrumentName, setNewInstrumentName] = useState('');
+  const [addingInstrument, setAddingInstrument] = useState(false);
 
   // Step 1 state
   const [s1, setS1] = useState({
@@ -104,76 +90,79 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   });
   const [studentId, setStudentId] = useState<string | null>(null);
 
-  // Step 2 state
+  // Step 2 state (payment + classes combined)
   const [s2, setS2] = useState({
     payment_plan: '3_instalments',
     academic_year: new Date().getFullYear().toString(),
     registration_fee: '0',
   });
-
-  // Step 3 state
   const [classes, setClasses] = useState<ClassRow[]>([emptyClass()]);
 
-  // Reset when opened
   useEffect(() => {
     if (open) {
       setStep(0);
       setError(null);
       setStudentId(null);
+      setShowNewInstrument(false);
+      setNewInstrumentName('');
       setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', instrument_id: '', location_id: '' });
       setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0' });
       setClasses([emptyClass()]);
     }
   }, [open, pendingProfile]);
 
-  // Load meta on mount
   useEffect(() => {
     if (!open) return;
     Promise.all([
       supabase.from('instruments').select('id, name').order('name'),
       supabase.from('locations').select('id, name').order('name'),
-      supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
+      supabase.from('profiles').select('id, full_name').eq('role', 'teacher').eq('approved', true).order('full_name'),
       supabase.from('lesson_rates').select('id, teacher_id, location_id, category, rate_per_lesson, is_online'),
-    ]).then(([iRes, lRes, tRes, rRes]) => {
+      supabase.from('lesson_categories').select('*').order('sort_order'),
+    ]).then(([iRes, lRes, tRes, rRes, cRes]) => {
       setInstruments(iRes.data ?? []);
       setLocations(lRes.data ?? []);
       setTeachers(tRes.data ?? []);
       setAllRates((rRes.data ?? []) as LessonRate[]);
+      setCategories((cRes.data ?? []) as LessonCategory[]);
     });
-  }, [open]);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null;
 
-  // ── Step 1 handlers ────────────────────────────────────────────────────────
+  async function addInstrumentInline() {
+    const name = newInstrumentName.trim();
+    if (!name) return;
+    setAddingInstrument(true);
+    const { data, error: err } = await supabase.from('instruments').insert({ name }).select('id, name').single();
+    setAddingInstrument(false);
+    if (err) { setError(err.message); return; }
+    setInstruments(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setS1(prev => ({ ...prev, instrument_id: data.id }));
+    setShowNewInstrument(false);
+    setNewInstrumentName('');
+  }
 
+  // Step 1 → create student + approve profile
   async function handleStep1Next() {
     if (!s1.full_name.trim()) { setError('Full name is required'); return; }
     setSaving(true);
     setError(null);
     try {
-      // Approve pending profile if applicable
       if (pendingProfile) {
-        const { error: approveErr } = await supabase
-          .from('profiles')
-          .update({ approved: true })
-          .eq('id', pendingProfile.id);
+        const { error: approveErr } = await supabase.from('profiles').update({ approved: true }).eq('id', pendingProfile.id);
         if (approveErr) throw approveErr;
       }
-      // Create student record
-      const { data, error: studentErr } = await supabase
-        .from('students')
-        .insert({
-          user_id: pendingProfile?.id ?? null,
-          full_name: s1.full_name.trim(),
-          phone: s1.phone.trim() || null,
-          email: s1.email.trim() || null,
-          instrument_id: s1.instrument_id || null,
-          location_id: s1.location_id || null,
-          is_active: true,
-          payment_plan: '3_instalments',
-        })
-        .select('id')
-        .single();
+      const { data, error: studentErr } = await supabase.from('students').insert({
+        user_id: pendingProfile?.id ?? null,
+        full_name: s1.full_name.trim(),
+        phone: s1.phone.trim() || null,
+        email: s1.email.trim() || null,
+        instrument_id: s1.instrument_id || null,
+        location_id: s1.location_id || null,
+        is_active: true,
+        payment_plan: '3_instalments',
+      }).select('id').single();
       if (studentErr) throw studentErr;
       setStudentId(data.id);
       setStep(1);
@@ -184,19 +173,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     }
   }
 
-  // ── Step 2 handlers ────────────────────────────────────────────────────────
-
-  function handleStep2Next() {
-    setStep(2);
-  }
-
-  // ── Step 3 helpers ─────────────────────────────────────────────────────────
-
+  // Step 2 helpers
   function autoRate(teacherId: string, category: string): string {
     const isOnline = s1.location_id === '';
     const match = allRates.find(r =>
-      r.teacher_id === teacherId &&
-      r.category === category &&
+      r.teacher_id === teacherId && r.category === category &&
       (isOnline ? r.is_online : r.location_id === s1.location_id)
     );
     return match ? String(match.rate_per_lesson) : '';
@@ -206,30 +187,19 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     setClasses(prev => prev.map((c, i) => {
       if (i !== idx) return c;
       const updated = { ...c, ...patch };
-      // Auto-fill rate when teacher or category changes
-      if ((patch.teacher_id !== undefined || patch.category !== undefined)) {
+      if (patch.teacher_id !== undefined || patch.category !== undefined) {
         const tId = patch.teacher_id ?? c.teacher_id;
         const cat = patch.category ?? c.category;
-        if (tId) updated.rate = autoRate(tId, cat);
+        if (tId && cat) updated.rate = autoRate(tId, cat);
       }
       return updated;
     }));
-  }
-
-  function addClass() {
-    setClasses(prev => [...prev, emptyClass()]);
-  }
-
-  function removeClass(idx: number) {
-    setClasses(prev => prev.filter((_, i) => i !== idx));
   }
 
   const totalLessons = TOTAL_LESSONS(s2.payment_plan);
   const totalRatePerLesson = classes.reduce((sum, c) => sum + (parseFloat(c.rate) || 0), 0);
   const regFee = parseFloat(s2.registration_fee) || 0;
   const totalFee = totalRatePerLesson * totalLessons + regFee;
-
-  // ── Step 3 confirm ─────────────────────────────────────────────────────────
 
   async function handleConfirm(skip = false) {
     if (!studentId) return;
@@ -239,36 +209,29 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       const ratePerLesson = skip ? 0 : totalRatePerLesson;
       const fee = skip ? 0 : totalFee;
 
-      // Create enrolment
-      const { data: enrolment, error: enrolErr } = await supabase
-        .from('student_enrolments')
-        .insert({
-          student_id: studentId,
-          academic_year: s2.academic_year,
-          lesson_rate_id: null,
-          total_lessons: totalLessons,
-          lessons_used: 0,
-          start_date: new Date().toISOString().split('T')[0],
-          payment_plan: s2.payment_plan,
-          rate_per_lesson: ratePerLesson,
-          total_fee: fee,
-          registration_fee: regFee,
-        })
-        .select('id')
-        .single();
+      const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
+        student_id: studentId,
+        academic_year: s2.academic_year,
+        lesson_rate_id: null,
+        total_lessons: totalLessons,
+        lessons_used: 0,
+        start_date: new Date().toISOString().split('T')[0],
+        payment_plan: s2.payment_plan,
+        rate_per_lesson: ratePerLesson,
+        total_fee: fee,
+        registration_fee: regFee,
+      }).select('id').single();
       if (enrolErr) throw enrolErr;
 
-      // Generate instalments
       if (s2.payment_plan !== 'trial') {
         const { error: genErr } = await supabase.rpc('generate_instalments', { p_enrolment_id: enrolment.id });
         if (genErr) throw genErr;
       }
 
-      // Create schedule templates (skip if no classes or skip=true)
       if (!skip && classes.length > 0) {
+        const instrName = instruments.find(i => i.id === s1.instrument_id)?.name ?? '';
         for (const cls of classes) {
           if (!cls.teacher_id) continue;
-          const instrName = instruments.find(i => i.id === s1.instrument_id)?.name ?? '';
           await supabase.from('teacher_schedule_templates').insert({
             teacher_id: cls.teacher_id,
             day_of_week: Number(cls.day_of_week),
@@ -291,12 +254,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     }
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6">
-        {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-navy">
             {pendingProfile ? `Approve & Onboard — ${pendingProfile.full_name || pendingProfile.email}` : 'Add New Student'}
@@ -310,214 +270,166 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
           <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600 mb-4">{error}</div>
         )}
 
-        {/* ── STEP 1 ── */}
+        {/* ── STEP 1: Student Info ── */}
         {step === 0 && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Full Name <span className="text-coral">*</span></label>
-                <input
-                  type="text"
-                  value={s1.full_name}
-                  onChange={e => setS1(p => ({ ...p, full_name: e.target.value }))}
+                <input type="text" value={s1.full_name} onChange={e => setS1(p => ({ ...p, full_name: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                  placeholder="Student's full name"
-                />
+                  placeholder="Student's full name" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Phone</label>
-                <input
-                  type="tel"
-                  value={s1.phone}
-                  onChange={e => setS1(p => ({ ...p, phone: e.target.value }))}
+                <input type="tel" value={s1.phone} onChange={e => setS1(p => ({ ...p, phone: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                  placeholder="+91 98765 43210"
-                />
+                  placeholder="+91 98765 43210" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={s1.email}
-                  onChange={e => setS1(p => ({ ...p, email: e.target.value }))}
+                <input type="email" value={s1.email} onChange={e => setS1(p => ({ ...p, email: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                  placeholder="student@email.com"
-                />
+                  placeholder="student@email.com" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Instrument</label>
-                <select
-                  value={s1.instrument_id}
-                  onChange={e => setS1(p => ({ ...p, instrument_id: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                >
-                  <option value="">Select instrument</option>
-                  {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                </select>
+                <div className="flex items-center gap-2">
+                  <select value={s1.instrument_id} onChange={e => setS1(p => ({ ...p, instrument_id: e.target.value }))}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                    <option value="">Select instrument</option>
+                    {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                  </select>
+                  <button onClick={() => setShowNewInstrument(v => !v)}
+                    className="text-xs text-teal font-semibold hover:underline whitespace-nowrap">+ New</button>
+                </div>
+                {showNewInstrument && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <input autoFocus type="text" value={newInstrumentName}
+                      onChange={e => setNewInstrumentName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addInstrumentInline()}
+                      placeholder="Instrument name"
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:border-teal focus:outline-none" />
+                    <button onClick={addInstrumentInline} disabled={addingInstrument || !newInstrumentName.trim()}
+                      className="text-xs text-white bg-teal px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
+                      {addingInstrument ? '…' : 'Add'}
+                    </button>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
-                <select
-                  value={s1.location_id}
-                  onChange={e => setS1(p => ({ ...p, location_id: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                >
+                <select value={s1.location_id} onChange={e => setS1(p => ({ ...p, location_id: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
                   <option value="">Select location</option>
                   {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               </div>
             </div>
             <div className="flex justify-end pt-2">
-              <button
-                onClick={handleStep1Next}
-                disabled={saving || !s1.full_name.trim()}
-                className="flex items-center gap-2 bg-teal text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
-              >
-                {saving ? 'Saving...' : 'Next: Payment Plan'} <ChevronRight size={16} />
+              <button onClick={handleStep1Next} disabled={saving || !s1.full_name.trim()}
+                className="flex items-center gap-2 bg-teal text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
+                {saving ? 'Saving...' : 'Next: Payment & Classes'} <ChevronRight size={16} />
               </button>
             </div>
           </div>
         )}
 
-        {/* ── STEP 2 ── */}
+        {/* ── STEP 2: Payment + Classes (merged) ── */}
         {step === 1 && (
           <div className="space-y-4">
+            {/* Payment section */}
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Payment Plan</label>
-                <select
-                  value={s2.payment_plan}
-                  onChange={e => setS2(p => ({ ...p, payment_plan: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                >
+                <select value={s2.payment_plan} onChange={e => setS2(p => ({ ...p, payment_plan: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
                   {PAYMENT_PLANS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Academic Year</label>
-                <input
-                  type="text"
-                  value={s2.academic_year}
-                  onChange={e => setS2(p => ({ ...p, academic_year: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                />
+                <input type="text" value={s2.academic_year} onChange={e => setS2(p => ({ ...p, academic_year: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Registration Fee (₹)</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={s2.registration_fee}
+                <input type="number" min={0} value={s2.registration_fee}
                   onChange={e => setS2(p => ({ ...p, registration_fee: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                  placeholder="0"
-                />
+                  placeholder="0" />
               </div>
             </div>
-            <div className="bg-gray-50 rounded-xl p-4 text-sm text-gray-500">
-              Fee total will be calculated in the next step once classes are assigned.
-            </div>
-            <div className="flex justify-between pt-2">
-              <button onClick={() => setStep(0)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-navy"><ChevronLeft size={16} /> Back</button>
-              <button
-                onClick={handleStep2Next}
-                className="flex items-center gap-2 bg-teal text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90"
-              >
-                Next: Classes & Fee <ChevronRight size={16} />
+
+            {/* Class rows */}
+            <div className="border-t pt-4">
+              <p className="text-xs font-bold text-gray-400 uppercase mb-3">Class Schedule</p>
+              <div className="space-y-3">
+                {classes.map((cls, idx) => (
+                  <div key={idx} className="bg-gray-50 rounded-xl p-4">
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Teacher</label>
+                        <select value={cls.teacher_id} onChange={e => updateClass(idx, { teacher_id: e.target.value })}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                          <option value="">Select teacher</option>
+                          {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Category</label>
+                        <select value={cls.category} onChange={e => updateClass(idx, { category: e.target.value })}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                          <option value="">Select category</option>
+                          {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Day</label>
+                        <select value={cls.day_of_week} onChange={e => updateClass(idx, { day_of_week: e.target.value })}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                          {DAYS.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-500 mb-1">Start</label>
+                          <input type="time" value={cls.start_time} onChange={e => updateClass(idx, { start_time: e.target.value })}
+                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-500 mb-1">End</label>
+                          <input type="time" value={cls.end_time} onChange={e => updateClass(idx, { end_time: e.target.value })}
+                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-semibold text-gray-500">Rate per lesson (₹)</label>
+                        <input type="number" min={0} value={cls.rate} onChange={e => updateClass(idx, { rate: e.target.value })}
+                          className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white focus:border-teal focus:outline-none"
+                          placeholder="auto" />
+                        {cls.rate && <span className="text-xs text-teal font-semibold">₹{Number(cls.rate).toLocaleString('en-IN')}</span>}
+                      </div>
+                      {classes.length > 1 && (
+                        <button onClick={() => setClasses(prev => prev.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-coral"><Trash2 size={14} /></button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setClasses(prev => [...prev, emptyClass()])}
+                className="flex items-center gap-1 text-sm text-teal font-semibold hover:underline mt-2">
+                <Plus size={14} /> Add another class
               </button>
             </div>
-          </div>
-        )}
-
-        {/* ── STEP 3 ── */}
-        {step === 2 && (
-          <div className="space-y-4">
-            <div className="space-y-3">
-              {classes.map((cls, idx) => (
-                <div key={idx} className="bg-gray-50 rounded-xl p-4">
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Teacher</label>
-                      <select
-                        value={cls.teacher_id}
-                        onChange={e => updateClass(idx, { teacher_id: e.target.value })}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none"
-                      >
-                        <option value="">Select teacher</option>
-                        {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Category</label>
-                      <select
-                        value={cls.category}
-                        onChange={e => updateClass(idx, { category: e.target.value })}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none"
-                      >
-                        {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Day</label>
-                      <select
-                        value={cls.day_of_week}
-                        onChange={e => updateClass(idx, { day_of_week: e.target.value })}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none"
-                      >
-                        {DAYS.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}
-                      </select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Start</label>
-                        <input type="time" value={cls.start_time} onChange={e => updateClass(idx, { start_time: e.target.value })}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">End</label>
-                        <input type="time" value={cls.end_time} onChange={e => updateClass(idx, { end_time: e.target.value })}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-semibold text-gray-500">Rate per lesson (₹)</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={cls.rate}
-                        onChange={e => updateClass(idx, { rate: e.target.value })}
-                        className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white focus:border-teal focus:outline-none"
-                        placeholder="auto"
-                      />
-                      {cls.rate && <span className="text-xs text-teal font-semibold">₹{Number(cls.rate).toLocaleString('en-IN')}</span>}
-                    </div>
-                    {classes.length > 1 && (
-                      <button onClick={() => removeClass(idx)} className="text-gray-400 hover:text-coral"><Trash2 size={14} /></button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <button onClick={addClass} className="flex items-center gap-1 text-sm text-teal font-semibold hover:underline">
-              <Plus size={14} /> Add another class
-            </button>
 
             {/* Fee summary */}
             {totalRatePerLesson > 0 && (
               <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2 text-sm">
                 <p className="text-xs font-bold text-gray-500 uppercase">Fee Summary</p>
-                {classes.map((cls, i) => (
-                  cls.rate ? (
-                    <div key={i} className="flex justify-between text-gray-600">
-                      <span>{CATEGORIES.find(c => c.value === cls.category)?.label} — {teachers.find(t => t.id === cls.teacher_id)?.full_name || '—'}</span>
-                      <span>₹{Number(cls.rate).toLocaleString('en-IN')}</span>
-                    </div>
-                  ) : null
-                ))}
-                <div className="flex justify-between text-gray-600 border-t pt-2">
+                <div className="flex justify-between text-gray-600">
                   <span>₹{totalRatePerLesson.toLocaleString('en-IN')} × {totalLessons} lessons</span>
                   <span>₹{(totalRatePerLesson * totalLessons).toLocaleString('en-IN')}</span>
                 </div>
@@ -536,16 +448,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
 
             <div className="flex items-center justify-between pt-2">
               <div className="flex items-center gap-4">
-                <button onClick={() => setStep(1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-navy"><ChevronLeft size={16} /> Back</button>
-                <button onClick={() => handleConfirm(true)} disabled={saving} className="text-sm text-gray-400 hover:text-gray-600 underline">
-                  Skip for now
-                </button>
+                <button onClick={() => setStep(0)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-navy"><ChevronLeft size={16} /> Back</button>
+                <button onClick={() => handleConfirm(true)} disabled={saving} className="text-sm text-gray-400 hover:text-gray-600 underline">Skip for now</button>
               </div>
-              <button
-                onClick={() => handleConfirm(false)}
-                disabled={saving}
-                className="bg-teal text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
-              >
+              <button onClick={() => handleConfirm(false)} disabled={saving}
+                className="bg-teal text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
                 {saving ? 'Saving...' : 'Confirm & Finish'}
               </button>
             </div>

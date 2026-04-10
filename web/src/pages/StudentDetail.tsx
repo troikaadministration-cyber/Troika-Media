@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, AlertTriangle, CheckCircle, Music, X, BookOpen } from 'lucide-react';
+import { ArrowLeft, Calendar, AlertTriangle, CheckCircle, Music, X, BookOpen, BookmarkPlus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Student, StudentStats, AbsenceCategory, StudentEnrolment } from '../types';
 
 interface Instrument { id: string; name: string; }
@@ -34,6 +35,21 @@ export function StudentDetailPage() {
   const [editForm, setEditForm] = useState<any>({});
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // Re-enrol modal
+  const [reEnrolOpen, setReEnrolOpen] = useState(false);
+  const [rates, setRates] = useState<{ id: string; category: string; rate_per_lesson: number; is_online: boolean }[]>([]);
+  const [reEnrolForm, setReEnrolForm] = useState({
+    academic_year: new Date().getFullYear().toString(),
+    payment_plan: '3_instalments',
+    lesson_rate_id: '',
+    registration_fee: 0,
+  });
+  const [reEnrolSaving, setReEnrolSaving] = useState(false);
+  const [reEnrolError, setReEnrolError] = useState<string | null>(null);
+
+  // Delete confirm
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -106,6 +122,61 @@ export function StudentDetailPage() {
     setEditOpen(true);
   }
 
+  function openReEnrol() {
+    setReEnrolForm({
+      academic_year: new Date().getFullYear().toString(),
+      payment_plan: '3_instalments',
+      lesson_rate_id: '',
+      registration_fee: 0,
+    });
+    setReEnrolError(null);
+    setReEnrolOpen(true);
+    supabase.from('lesson_rates').select('id, category, rate_per_lesson, is_online').order('category')
+      .then(({ data }) => setRates((data || []) as any));
+  }
+
+  async function handleReEnrol() {
+    setReEnrolSaving(true);
+    setReEnrolError(null);
+    try {
+      const selectedRate = rates.find(r => r.id === reEnrolForm.lesson_rate_id);
+      const totalLessons = reEnrolForm.payment_plan === 'trial' ? 1 : 39;
+      const totalFee = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
+
+      const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
+        student_id: id,
+        academic_year: reEnrolForm.academic_year,
+        lesson_rate_id: reEnrolForm.lesson_rate_id || null,
+        total_lessons: totalLessons,
+        lessons_used: 0,
+        start_date: new Date().toISOString().split('T')[0],
+        payment_plan: reEnrolForm.payment_plan,
+        rate_per_lesson: selectedRate?.rate_per_lesson || 0,
+        total_fee: totalFee,
+        registration_fee: reEnrolForm.registration_fee,
+      }).select('id').single();
+      if (enrolErr) throw enrolErr;
+
+      if (reEnrolForm.payment_plan !== 'trial' && enrolment) {
+        const { error: genErr } = await supabase.rpc('generate_instalments', { p_enrolment_id: enrolment.id });
+        if (genErr) throw genErr;
+      }
+
+      setReEnrolOpen(false);
+      fetchData();
+    } catch (err: any) {
+      setReEnrolError(err.message);
+    } finally {
+      setReEnrolSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    const { error } = await supabase.from('students').delete().eq('id', id!);
+    if (error) { alert(error.message); return; }
+    navigate('/students');
+  }
+
   async function saveEdit() {
     if (!editForm.full_name?.trim()) { setEditError('Full name is required'); return; }
     setEditSaving(true);
@@ -165,9 +236,13 @@ export function StudentDetailPage() {
               </span>
             </p>
           </div>
-          <div className="flex gap-2 flex-shrink-0">
+          <div className="flex gap-2 flex-shrink-0 flex-wrap">
             <button onClick={openEdit} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:border-navy hover:text-navy font-medium">
               Edit
+            </button>
+            <button onClick={openReEnrol}
+              className="flex items-center gap-1.5 border border-teal/30 text-teal rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-teal-light">
+              <BookmarkPlus size={14} /> Re-enrol
             </button>
             <button
               onClick={toggleActive}
@@ -178,6 +253,10 @@ export function StudentDetailPage() {
               }`}
             >
               {student.is_active ? 'Deactivate' : 'Activate'}
+            </button>
+            <button onClick={() => setDeleteConfirmOpen(true)}
+              className="flex items-center gap-1.5 border border-red-200 text-red-500 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-red-50">
+              <Trash2 size={14} /> Delete
             </button>
           </div>
         </div>
@@ -397,6 +476,74 @@ export function StudentDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Re-enrol modal */}
+      {reEnrolOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-navy text-lg">Re-enrol — {student.full_name}</h3>
+              <button onClick={() => setReEnrolOpen(false)} className="text-gray-400 hover:text-navy"><X size={20} /></button>
+            </div>
+            {reEnrolError && <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600">{reEnrolError}</div>}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Academic Year</label>
+                <input type="text" value={reEnrolForm.academic_year}
+                  onChange={e => setReEnrolForm(p => ({ ...p, academic_year: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Payment Plan</label>
+                <select value={reEnrolForm.payment_plan}
+                  onChange={e => setReEnrolForm(p => ({ ...p, payment_plan: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                  {PAYMENT_PLANS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Lesson Rate</label>
+                <select value={reEnrolForm.lesson_rate_id}
+                  onChange={e => setReEnrolForm(p => ({ ...p, lesson_rate_id: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                  <option value="">Select rate...</option>
+                  {rates.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}{r.is_online ? ' (Online)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Registration Fee (₹)</label>
+                <input type="number" min={0} value={reEnrolForm.registration_fee}
+                  onChange={e => setReEnrolForm(p => ({ ...p, registration_fee: Number(e.target.value) }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
+                  placeholder="0" />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button onClick={handleReEnrol} disabled={reEnrolSaving}
+                className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
+                {reEnrolSaving ? 'Saving...' : 'Create Enrolment'}
+              </button>
+              <button onClick={() => setReEnrolOpen(false)}
+                className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirm */}
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="Delete Student"
+        message={`This will permanently delete ${student.full_name} and all their lesson and payment records. This cannot be undone.`}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteConfirmOpen(false)}
+      />
     </div>
   );
 }
