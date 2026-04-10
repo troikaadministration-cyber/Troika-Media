@@ -143,17 +143,13 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     setNewInstrumentName('');
   }
 
-  // Step 1 → create student + approve profile
+  // Step 1 → create student + approve profile (parallel)
   async function handleStep1Next() {
     if (!s1.full_name.trim()) { setError('Full name is required'); return; }
     setSaving(true);
     setError(null);
     try {
-      if (pendingProfile) {
-        const { error: approveErr } = await supabase.from('profiles').update({ approved: true }).eq('id', pendingProfile.id);
-        if (approveErr) throw approveErr;
-      }
-      const { data, error: studentErr } = await supabase.from('students').insert({
+      const studentPromise = supabase.from('students').insert({
         user_id: pendingProfile?.id ?? null,
         full_name: s1.full_name.trim(),
         phone: s1.phone.trim() || null,
@@ -163,7 +159,14 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         is_active: true,
         payment_plan: '3_instalments',
       }).select('id').single();
+
+      const approvePromise = pendingProfile
+        ? supabase.from('profiles').update({ approved: true }).eq('id', pendingProfile.id)
+        : Promise.resolve({ error: null });
+
+      const [{ data, error: studentErr }, { error: approveErr }] = await Promise.all([studentPromise, approvePromise]);
       if (studentErr) throw studentErr;
+      if (approveErr) throw approveErr;
       setStudentId(data.id);
       setStep(1);
     } catch (err: any) {
@@ -230,19 +233,22 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
 
       if (!skip && classes.length > 0) {
         const instrName = instruments.find(i => i.id === s1.instrument_id)?.name ?? '';
-        for (const cls of classes) {
-          if (!cls.teacher_id) continue;
-          await supabase.from('teacher_schedule_templates').insert({
-            teacher_id: cls.teacher_id,
-            day_of_week: Number(cls.day_of_week),
-            start_time: cls.start_time,
-            end_time: cls.end_time || null,
-            location_id: s1.location_id || null,
-            instrument_id: s1.instrument_id || null,
-            title: `${s1.full_name} – ${instrName}`,
-            student_ids: [studentId],
-            is_active: true,
-          });
+        const validClasses = classes.filter(cls => cls.teacher_id);
+        if (validClasses.length > 0) {
+          const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(
+            validClasses.map(cls => ({
+              teacher_id: cls.teacher_id,
+              day_of_week: Number(cls.day_of_week),
+              start_time: cls.start_time,
+              end_time: cls.end_time || null,
+              location_id: s1.location_id || null,
+              instrument_id: s1.instrument_id || null,
+              title: `${s1.full_name} – ${instrName}`,
+              student_ids: [studentId],
+              is_active: true,
+            }))
+          );
+          if (schedErr) throw schedErr;
         }
       }
 
