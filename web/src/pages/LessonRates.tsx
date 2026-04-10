@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // useCallback used in TeacherRateGrid
 import { supabase } from '../lib/supabase';
 import { ChevronDown, ChevronRight, Trash2, Plus, Check, X } from 'lucide-react';
 import type { LessonRate, Location } from '../types';
@@ -170,62 +170,36 @@ function AdminPanel({ title, count, children }: { title: string; count: number; 
   );
 }
 
-// ── Main Page ────────────────────────────────────────────────────────────────
+// ── TeacherRateGrid: rate table for one teacher ──────────────────────────────
 
-export function LessonRatesPage() {
-  const [teachers, setTeachers] = useState<Teacher[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [categories, setCategories] = useState<LessonCategory[]>([]);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
+interface TeacherRateGridProps {
+  teacher: Teacher;
+  locations: Location[];
+  categories: LessonCategory[];
+  year: string;
+}
+
+function TeacherRateGrid({ teacher, locations, categories, year }: TeacherRateGridProps) {
   const [rateMap, setRateMap] = useState<Record<string, LessonRate>>({});
-  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
-  const [year, setYear] = useState(CURRENT_YEAR);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Track which instruments/categories are in use (to disable delete)
-  const [instrumentsInUse, setInstrumentsInUse] = useState<Set<string>>(new Set());
-  const [categoriesInUse, setCategoriesInUse] = useState<Set<string>>(new Set());
-
-  async function loadMeta() {
-    const [teachersRes, locationsRes, categoriesRes, instrumentsRes, studentsRes, ratesRes] = await Promise.all([
-      supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
-      supabase.from('locations').select('*').order('name'),
-      supabase.from('lesson_categories').select('*').order('sort_order'),
-      supabase.from('instruments').select('*').order('name'),
-      supabase.from('students').select('instrument_id').not('instrument_id', 'is', null),
-      supabase.from('lesson_rates').select('category'),
-    ]);
-    const ts = teachersRes.data ?? [];
-    setTeachers(ts);
-    setLocations(locationsRes.data ?? []);
-    setCategories((categoriesRes.data ?? []) as LessonCategory[]);
-    setInstruments((instrumentsRes.data ?? []) as Instrument[]);
-    if (ts.length > 0) setSelectedTeacherId(prev => prev ?? ts[0].id);
-    setInstrumentsInUse(new Set((studentsRes.data ?? []).map((s: any) => s.instrument_id)));
-    setCategoriesInUse(new Set((ratesRes.data ?? []).map((r: any) => r.category)));
-  }
-
-  useEffect(() => { loadMeta(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const loadRates = useCallback(async () => {
-    if (!selectedTeacherId) return;
+  const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('lesson_rates').select('*')
-      .eq('teacher_id', selectedTeacherId).eq('academic_year', year);
+    const { data } = await supabase.from('lesson_rates').select('*')
+      .eq('teacher_id', teacher.id).eq('academic_year', year);
     const map: Record<string, LessonRate> = {};
     for (const r of data ?? []) {
       map[rateKey(r.category, r.is_online ? null : r.location_id)] = r as LessonRate;
     }
     setRateMap(map);
     setLoading(false);
-  }, [selectedTeacherId, year]);
+  }, [teacher.id, year]);
 
-  useEffect(() => { loadRates(); }, [loadRates]);
+  useEffect(() => { load(); }, [load]);
 
   async function saveCell(category: string, locationId: string | null, value: number) {
-    if (!selectedTeacherId || saving) return;
+    if (saving) return;
     setSaving(true);
     try {
       const isOnline = locationId === null;
@@ -234,11 +208,11 @@ export function LessonRatesPage() {
         await supabase.from('lesson_rates').update({ rate_per_lesson: value }).eq('id', existing.id);
       } else {
         await supabase.from('lesson_rates').insert({
-          teacher_id: selectedTeacherId, location_id: isOnline ? null : locationId,
+          teacher_id: teacher.id, location_id: isOnline ? null : locationId,
           category, rate_per_lesson: value, is_online: isOnline, academic_year: year,
         });
       }
-      await loadRates();
+      await load();
     } finally { setSaving(false); }
   }
 
@@ -246,8 +220,87 @@ export function LessonRatesPage() {
     const existing = rateMap[rateKey(category, locationId)];
     if (!existing) return;
     await supabase.from('lesson_rates').delete().eq('id', existing.id);
-    await loadRates();
+    await load();
   }
+
+  const cols = locations.length + 1; // locations + online
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+      <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
+        <div className="w-8 h-8 rounded-full bg-teal/10 flex items-center justify-center text-teal font-bold text-sm">
+          {teacher.full_name.charAt(0)}
+        </div>
+        <h3 className="font-semibold text-navy">{teacher.full_name}</h3>
+        {saving && <span className="text-xs text-gray-400 ml-auto">Saving…</span>}
+      </div>
+      {loading ? (
+        <div className="py-6 text-center text-gray-400 text-sm">Loading…</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <div className="grid text-xs font-semibold uppercase text-gray-500 bg-gray-50/60 border-b border-gray-100"
+            style={{ gridTemplateColumns: `180px repeat(${cols}, 1fr)`, minWidth: `${180 + cols * 120}px` }}>
+            <div className="px-4 py-2">Lesson Type</div>
+            {locations.map(loc => <div key={loc.id} className="px-2 py-2 text-center">{loc.name}</div>)}
+            <div className="px-2 py-2 text-center">Online</div>
+          </div>
+          {categories.map((cat, idx, arr) => (
+            <div key={cat.id}
+              className={`grid items-center hover:bg-gray-50/40 ${idx < arr.length - 1 ? 'border-b border-gray-50' : ''}`}
+              style={{ gridTemplateColumns: `180px repeat(${cols}, 1fr)`, minWidth: `${180 + cols * 120}px` }}>
+              <div className="px-4 py-1 text-sm text-gray-700">{cat.name}</div>
+              {locations.map(loc => (
+                <RateCell key={loc.id}
+                  rate={rateMap[rateKey(cat.name, loc.id)]}
+                  onSave={v => saveCell(cat.name, loc.id, v)}
+                  onDelete={() => deleteCell(cat.name, loc.id)} />
+              ))}
+              <RateCell
+                rate={rateMap[rateKey(cat.name, null)]}
+                onSave={v => saveCell(cat.name, null, v)}
+                onDelete={() => deleteCell(cat.name, null)} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main Page ────────────────────────────────────────────────────────────────
+
+export function LessonRatesPage() {
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [categories, setCategories] = useState<LessonCategory[]>([]);
+  const [instruments, setInstruments] = useState<Instrument[]>([]);
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [loading, setLoading] = useState(true);
+
+  // Track which instruments/categories are in use (to disable delete)
+  const [instrumentsInUse, setInstrumentsInUse] = useState<Set<string>>(new Set());
+  const [categoriesInUse, setCategoriesInUse] = useState<Set<string>>(new Set());
+
+  async function loadMeta() {
+    setLoading(true);
+    const [teachersRes, locationsRes, categoriesRes, instrumentsRes, studentsRes, ratesRes] = await Promise.all([
+      supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
+      supabase.from('locations').select('*').order('name'),
+      supabase.from('lesson_categories').select('*').order('sort_order'),
+      supabase.from('instruments').select('*').order('name'),
+      supabase.from('students').select('instrument_id').not('instrument_id', 'is', null),
+      supabase.from('lesson_rates').select('category'),
+    ]);
+    setTeachers(teachersRes.data ?? []);
+    setLocations(locationsRes.data ?? []);
+    setCategories((categoriesRes.data ?? []) as LessonCategory[]);
+    setInstruments((instrumentsRes.data ?? []) as Instrument[]);
+    setInstrumentsInUse(new Set((studentsRes.data ?? []).map((s: any) => s.instrument_id)));
+    setCategoriesInUse(new Set((ratesRes.data ?? []).map((r: any) => r.category)));
+    setLoading(false);
+  }
+
+  useEffect(() => { loadMeta(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Instrument CRUD ──────────────────────────────────────────────────────
 
@@ -339,52 +392,21 @@ export function LessonRatesPage() {
         <InlineAdder placeholder="New category name..." onAdd={addCategory} />
       </AdminPanel>
 
-      {/* Teacher tabs */}
-      <div className="flex gap-2 flex-wrap mb-6">
-        {teachers.map((t) => (
-          <button key={t.id} onClick={() => setSelectedTeacherId(t.id)}
-            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
-              selectedTeacherId === t.id
-                ? 'bg-teal text-white'
-                : 'bg-white border border-gray-200 text-gray-600 hover:border-teal hover:text-teal'
-            }`}>
-            {t.full_name}
-          </button>
-        ))}
-      </div>
-
-      {/* Rate grid — rows come from lesson_categories */}
+      {/* Per-teacher rate grids */}
       {loading ? (
-        <p className="text-gray-400 text-center py-12">Loading...</p>
+        <p className="text-gray-400 text-center py-12">Loading…</p>
+      ) : teachers.length === 0 ? (
+        <p className="text-gray-400 text-center py-12">No teachers found. Add teachers from the Teachers page first.</p>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="grid text-xs font-semibold uppercase text-gray-500 bg-gray-50 border-b border-gray-100"
-            style={{ gridTemplateColumns: `200px repeat(${locations.length + 1}, 1fr)` }}>
-            <div className="px-4 py-3">Lesson Type</div>
-            {locations.map((loc) => (
-              <div key={loc.id} className="px-2 py-3 text-center">{loc.name}</div>
-            ))}
-            <div className="px-2 py-3 text-center">Online</div>
-          </div>
-
-          {categories.map((cat, idx, arr) => (
-            <div key={cat.id}
-              className={`grid items-center hover:bg-gray-50/40 ${idx < arr.length - 1 ? 'border-b border-gray-50' : ''}`}
-              style={{ gridTemplateColumns: `200px repeat(${locations.length + 1}, 1fr)` }}>
-              <div className="px-4 py-1 text-sm text-gray-700">{cat.name}</div>
-              {locations.map((loc) => (
-                <RateCell key={loc.id}
-                  rate={rateMap[rateKey(cat.name, loc.id)]}
-                  onSave={(v) => saveCell(cat.name, loc.id, v)}
-                  onDelete={() => deleteCell(cat.name, loc.id)} />
-              ))}
-              <RateCell
-                rate={rateMap[rateKey(cat.name, null)]}
-                onSave={(v) => saveCell(cat.name, null, v)}
-                onDelete={() => deleteCell(cat.name, null)} />
-            </div>
-          ))}
-        </div>
+        teachers.map(teacher => (
+          <TeacherRateGrid
+            key={`${teacher.id}-${year}`}
+            teacher={teacher}
+            locations={locations}
+            categories={categories}
+            year={year}
+          />
+        ))
       )}
     </div>
   );
