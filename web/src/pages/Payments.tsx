@@ -5,7 +5,8 @@ import { DollarSign, AlertTriangle, Clock, CheckCircle, Send, RefreshCw, Downloa
 export function PaymentsPage() {
   const { payments, loading, error, verifyPayment, downloadInvoice, sendReminder, refresh } = usePayments();
   const [verifying, setVerifying] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ message: string; url?: string } | null>(null);
+  const [reminding, setReminding] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; url?: string; error?: boolean } | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
   const overdue = payments.filter((p) => !p.paid_date && p.due_date < today);
@@ -26,6 +27,20 @@ export function PaymentsPage() {
       setTimeout(() => setToast(null), 5000);
     } finally {
       setVerifying(null);
+    }
+  }
+
+  async function handleRemind(id: string) {
+    setReminding(id);
+    try {
+      await sendReminder(id);
+      setToast({ message: 'Reminder sent successfully' });
+      setTimeout(() => setToast(null), 5000);
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to send reminder', error: true });
+      setTimeout(() => setToast(null), 5000);
+    } finally {
+      setReminding(null);
     }
   }
 
@@ -58,9 +73,9 @@ export function PaymentsPage() {
 
       {/* Toast */}
       {toast && (
-        <div className="bg-teal/10 border border-teal/20 rounded-xl p-4 flex items-center justify-between">
+        <div className={`${toast.error ? 'bg-coral/10 border-coral/20' : 'bg-teal/10 border-teal/20'} border rounded-xl p-4 flex items-center justify-between`}>
           <div className="flex items-center gap-2">
-            <CheckCircle size={16} className="text-teal" />
+            <CheckCircle size={16} className={toast.error ? 'text-coral' : 'text-teal'} />
             <span className="text-sm text-navy font-medium">{toast.message}</span>
           </div>
           {toast.url && (
@@ -144,8 +159,12 @@ export function PaymentsPage() {
                           {verifying === p.id ? 'Verifying...' : 'Mark Paid'}
                         </button>
                         {!p.reminder_sent && (
-                          <button onClick={() => sendReminder(p.id)} className="text-xs text-coral hover:underline flex items-center gap-0.5">
-                            <Send size={10} />Remind
+                          <button
+                            onClick={() => handleRemind(p.id)}
+                            disabled={reminding === p.id}
+                            className="text-xs text-coral hover:underline flex items-center gap-0.5 disabled:opacity-50"
+                          >
+                            <Send size={10} />{reminding === p.id ? 'Sending...' : 'Remind'}
                           </button>
                         )}
                       </div>
@@ -199,7 +218,13 @@ export function PaymentsPage() {
                         {verifying === p.id ? '...' : 'Mark Paid'}
                       </button>
                       {!p.reminder_sent && (
-                        <button onClick={() => sendReminder(p.id)} className="text-coral font-medium">Remind</button>
+                        <button
+                          onClick={() => handleRemind(p.id)}
+                          disabled={reminding === p.id}
+                          className="text-coral font-medium disabled:opacity-50"
+                        >
+                          {reminding === p.id ? '...' : 'Remind'}
+                        </button>
                       )}
                     </>
                   )}
