@@ -56,7 +56,7 @@ export function TeachersPage() {
         .from('profiles')
         .select(`
           id, full_name, email, phone,
-          lessons:lessons(
+          lessons:lessons!teacher_id(
             id,
             instrument:instruments(name),
             location:locations(name),
