@@ -90,6 +90,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     email: pendingProfile?.email ?? '',
     instrument_id: '',
     location_id: '',
+    address: '',
   });
   const [studentId, setStudentId] = useState<string | null>(null);
 
@@ -106,7 +107,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setStep(0);
       setError(null);
       setStudentId(null);
-      setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', instrument_id: '', location_id: '' });
+      setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', instrument_id: '', location_id: '', address: '' });
       setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0' });
       setClasses([emptyClass()]);
     }
@@ -203,6 +204,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
             email: s1.email.trim() || null,
             instrument_id: s1.instrument_id || null,
             location_id: s1.location_id || null,
+            address: s1.address.trim() || null,
             user_id: pendingProfile?.id ?? null,
           }).eq('id', existingId).select('id').single();
           if (updateErr) throw updateErr;
@@ -215,6 +217,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
             email: s1.email.trim() || null,
             instrument_id: s1.instrument_id || null,
             location_id: s1.location_id || null,
+            address: s1.address.trim() || null,
             is_active: true,
             payment_plan: '3_instalments',
           }).select('id').single();
@@ -354,13 +357,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                   );
                 })()}
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
-                <select value={s1.location_id} onChange={e => setS1(p => ({ ...p, location_id: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
-                  <option value="">Select location</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Address</label>
+                <input type="text" value={s1.address} onChange={e => setS1(p => ({ ...p, address: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
+                  placeholder="Full address (e.g. Flat 3, Empire Building, Mumbai 400001)" />
               </div>
             </div>
             <div className="flex justify-end pt-2">
