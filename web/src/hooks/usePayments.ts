@@ -76,10 +76,9 @@ export function usePayments() {
   }
 
   async function sendReminder(id: string) {
-    const { error } = await supabase
-      .from('payment_records')
-      .update({ reminder_sent: true })
-      .eq('id', id);
+    const { error } = await supabase.functions.invoke('send-payment-reminder', {
+      body: { payment_id: id },
+    });
     if (error) throw error;
     await fetchPayments();
   }
