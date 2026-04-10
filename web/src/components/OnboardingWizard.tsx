@@ -28,6 +28,8 @@ interface ClassRow {
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+const ALLOWED_INSTRUMENTS = ['Cello', 'Piano', 'Voice', 'Guitar', 'Violin', 'Viola', 'IGCSE Music', 'Music Theory'];
+
 const PAYMENT_PLANS = [
   { value: 'trial',          label: 'Trial (no payment)' },
   { value: '1_instalment',   label: '1 Instalment' },
@@ -143,71 +145,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   }
 
 
-  // Step 1 → create student + approve profile (parallel)
-  async function handleStep1Next() {
+  // Step 1 → validate only, no DB writes
+  function handleStep1Next() {
     if (!s1.full_name.trim()) { setError('Full name is required'); return; }
-    setSaving(true);
     setError(null);
-    try {
-      // Check if a student record already exists for this profile to avoid duplicates
-      let existingId: string | null = null;
-      if (pendingProfile) {
-        const { data: existing } = await supabase
-          .from('students')
-          .select('id')
-          .eq('user_id', pendingProfile.id)
-          .maybeSingle();
-        if (existing) existingId = existing.id;
-      }
-      if (!existingId && s1.email.trim()) {
-        const { data: existing } = await supabase
-          .from('students')
-          .select('id')
-          .eq('email', s1.email.trim())
-          .maybeSingle();
-        if (existing) existingId = existing.id;
-      }
-
-      let studentData: { id: string };
-      if (existingId) {
-        // Update the existing record instead of creating a duplicate
-        const { data, error: updateErr } = await supabase
-          .from('students')
-          .update({
-            full_name: s1.full_name.trim(),
-            phone: s1.phone.trim() || null,
-            email: s1.email.trim() || null,
-            instrument_id: s1.instrument_id || null,
-            location_id: s1.location_id || null,
-            user_id: pendingProfile?.id ?? null,
-          })
-          .eq('id', existingId)
-          .select('id')
-          .single();
-        if (updateErr) throw updateErr;
-        studentData = data;
-      } else {
-        const { data, error: studentErr } = await supabase.from('students').insert({
-          user_id: pendingProfile?.id ?? null,
-          full_name: s1.full_name.trim(),
-          phone: s1.phone.trim() || null,
-          email: s1.email.trim() || null,
-          instrument_id: s1.instrument_id || null,
-          location_id: s1.location_id || null,
-          is_active: true,
-          payment_plan: '3_instalments',
-        }).select('id').single();
-        if (studentErr) throw studentErr;
-        studentData = data;
-      }
-      // NOTE: profile approval happens only on Confirm & Finish — not here
-      setStudentId(studentData.id);
-      setStep(1);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
+    setStep(1);
   }
 
   // Step 2 helpers
@@ -239,15 +181,54 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   const totalFee = totalRatePerLesson * totalLessons + regFee;
 
   async function handleConfirm(skip = false) {
-    if (!studentId) return;
     setSaving(true);
     setError(null);
     try {
+      // Create or update student record (deferred from Step 1)
+      let resolvedStudentId = studentId;
+      if (!resolvedStudentId) {
+        let existingId: string | null = null;
+        if (pendingProfile) {
+          const { data: existing } = await supabase.from('students').select('id').eq('user_id', pendingProfile.id).maybeSingle();
+          if (existing) existingId = existing.id;
+        }
+        if (!existingId && s1.email.trim()) {
+          const { data: existing } = await supabase.from('students').select('id').eq('email', s1.email.trim()).maybeSingle();
+          if (existing) existingId = existing.id;
+        }
+        if (existingId) {
+          const { data, error: updateErr } = await supabase.from('students').update({
+            full_name: s1.full_name.trim(),
+            phone: s1.phone.trim() || null,
+            email: s1.email.trim() || null,
+            instrument_id: s1.instrument_id || null,
+            location_id: s1.location_id || null,
+            user_id: pendingProfile?.id ?? null,
+          }).eq('id', existingId).select('id').single();
+          if (updateErr) throw updateErr;
+          resolvedStudentId = data.id;
+        } else {
+          const { data, error: studentErr } = await supabase.from('students').insert({
+            user_id: pendingProfile?.id ?? null,
+            full_name: s1.full_name.trim(),
+            phone: s1.phone.trim() || null,
+            email: s1.email.trim() || null,
+            instrument_id: s1.instrument_id || null,
+            location_id: s1.location_id || null,
+            is_active: true,
+            payment_plan: '3_instalments',
+          }).select('id').single();
+          if (studentErr) throw studentErr;
+          resolvedStudentId = data.id;
+        }
+        setStudentId(resolvedStudentId);
+      }
+
       const ratePerLesson = skip ? 0 : totalRatePerLesson;
       const fee = skip ? 0 : totalFee;
 
       const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
-        student_id: studentId,
+        student_id: resolvedStudentId,
         academic_year: s2.academic_year,
         lesson_rate_id: null,
         total_lessons: totalLessons,
@@ -278,7 +259,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               location_id: s1.location_id || null,
               instrument_id: s1.instrument_id || null,
               title: `${s1.full_name} – ${instrName}`,
-              student_ids: [studentId],
+              student_ids: [resolvedStudentId],
               is_active: true,
             }))
           );
@@ -340,30 +321,38 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Instrument</label>
-                <div className="flex items-center gap-2">
-                  <select value={s1.instrument_id} onChange={e => setS1(p => ({ ...p, instrument_id: e.target.value }))}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
-                    <option value="">Select instrument</option>
-                    {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                  </select>
-                  <button type="button" onClick={() => { setShowNewInstrument(v => !v); setNewInstrumentName(''); }}
-                    className="text-xs text-teal font-semibold hover:underline whitespace-nowrap">+ New</button>
-                </div>
-                {showNewInstrument && (
-                  <div className="flex items-center gap-2 mt-2">
-                    <select value={newInstrumentName} onChange={e => setNewInstrumentName(e.target.value)}
-                      className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:border-teal focus:outline-none">
-                      <option value="">Select instrument to add</option>
-                      {['Cello','Piano','Voice','Guitar','Violin','Viola','IGCSE Music','Music Theory']
-                        .filter(name => !instruments.some(i => i.name === name))
-                        .map(name => <option key={name} value={name}>{name}</option>)}
-                    </select>
-                    <button type="button" onClick={addInstrumentInline} disabled={addingInstrument || !newInstrumentName}
-                      className="text-xs text-white bg-teal px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
-                      {addingInstrument ? '…' : 'Add'}
-                    </button>
-                  </div>
-                )}
+                {(() => {
+                  const allowed = instruments.filter(i => ALLOWED_INSTRUMENTS.includes(i.name));
+                  const missing = ALLOWED_INSTRUMENTS.filter(name => !instruments.some(i => i.name === name));
+                  return (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <select value={s1.instrument_id} onChange={e => setS1(p => ({ ...p, instrument_id: e.target.value }))}
+                          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
+                          <option value="">Select instrument</option>
+                          {allowed.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                        </select>
+                        {missing.length > 0 && (
+                          <button type="button" onClick={() => { setShowNewInstrument(v => !v); setNewInstrumentName(''); }}
+                            className="text-xs text-teal font-semibold hover:underline whitespace-nowrap">+ New</button>
+                        )}
+                      </div>
+                      {showNewInstrument && missing.length > 0 && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <select value={newInstrumentName} onChange={e => setNewInstrumentName(e.target.value)}
+                            className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:border-teal focus:outline-none">
+                            <option value="">Select instrument to add</option>
+                            {missing.map(name => <option key={name} value={name}>{name}</option>)}
+                          </select>
+                          <button type="button" onClick={addInstrumentInline} disabled={addingInstrument || !newInstrumentName}
+                            className="text-xs text-white bg-teal px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
+                            {addingInstrument ? '…' : 'Add'}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
@@ -375,9 +364,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               </div>
             </div>
             <div className="flex justify-end pt-2">
-              <button onClick={handleStep1Next} disabled={saving || !s1.full_name.trim()}
+              <button onClick={handleStep1Next} disabled={!s1.full_name.trim()}
                 className="flex items-center gap-2 bg-teal text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
-                {saving ? 'Saving...' : 'Next: Payment & Classes'} <ChevronRight size={16} />
+                Next: Payment & Classes <ChevronRight size={16} />
               </button>
             </div>
           </div>
