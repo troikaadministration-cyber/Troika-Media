@@ -273,7 +273,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
 
           // Auto-generate lessons from today → end of academic year
           const startDate = new Date();
-          const endDate = new Date(`${s2.academic_year}-12-31T00:00:00`);
+          const endDate = new Date(`${s2.academic_year}-05-31T00:00:00`);
           const current = new Date(startDate);
           while (current <= endDate) {
             const dayOfWeek = current.getDay();
