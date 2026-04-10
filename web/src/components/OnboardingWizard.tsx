@@ -24,6 +24,7 @@ interface ClassRow {
   start_time: string;
   end_time: string;
   rate: string;
+  instrument_id: string;
 }
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -40,7 +41,7 @@ const PAYMENT_PLANS = [
 const TOTAL_LESSONS = (plan: string) => plan === 'trial' ? 1 : 39;
 
 function emptyClass(): ClassRow {
-  return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '' };
+  return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '', instrument_id: '' };
 }
 
 function StepBar({ step }: { step: number }) {
@@ -253,17 +254,20 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         const instrName = instruments.find(i => i.id === s1.instrument_id)?.name ?? '';
         const validClasses = classes.filter(cls => cls.teacher_id);
         if (validClasses.length > 0) {
-          const templateRows = validClasses.map(cls => ({
-            teacher_id: cls.teacher_id,
-            day_of_week: Number(cls.day_of_week),
-            start_time: cls.start_time,
-            end_time: cls.end_time || null,
-            location_id: s1.location_id || null,
-            instrument_id: s1.instrument_id || null,
-            title: `${s1.full_name} – ${instrName}`,
-            student_ids: [resolvedStudentId],
-            is_active: true,
-          }));
+          const templateRows = validClasses.map(cls => {
+            const clsInstrName = instruments.find(i => i.id === cls.instrument_id)?.name ?? instrName;
+            return {
+              teacher_id: cls.teacher_id,
+              day_of_week: Number(cls.day_of_week),
+              start_time: cls.start_time,
+              end_time: cls.end_time || null,
+              location_id: s1.location_id || null,
+              instrument_id: cls.instrument_id || s1.instrument_id || null,
+              title: `${s1.full_name} – ${clsInstrName}`,
+              student_ids: [resolvedStudentId],
+              is_active: true,
+            };
+          });
           const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(templateRows);
           if (schedErr) throw schedErr;
 
@@ -442,6 +446,16 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
                           <option value="">Select teacher</option>
                           {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Instrument</label>
+                        <select value={cls.instrument_id} onChange={e => updateClass(idx, { instrument_id: e.target.value })}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                          <option value="">Select instrument</option>
+                          {instruments.filter(i => ALLOWED_INSTRUMENTS.includes(i.name)).map(i => (
+                            <option key={i.id} value={i.id}>{i.name}</option>
+                          ))}
                         </select>
                       </div>
                       <div>
