@@ -24,68 +24,57 @@ interface TodayLesson {
 }
 
 export function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats>({ activeStudents: 0, totalStudents: 0, completedToday: 0, totalToday: 0, totalTeachers: 0, pendingPayments: 0 });
+  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [todayLessons, setTodayLessons] = useState<TodayLesson[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [lessonsLoading, setLessonsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const today = new Date().toISOString().split('T')[0];
 
-  async function fetchDashboard() {
-    setError(null);
-    setLoading(true);
-    try {
-      const [studentsRes, teachersRes, lessonsRes, paymentsRes] = await Promise.all([
-        supabase.from('students').select('id, is_active', { count: 'exact', head: false }),
-        supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'teacher'),
-        supabase.from('lessons').select(`
-          id, title, start_time, status,
-          teacher:profiles!lessons_teacher_id_fkey(full_name),
-          location:locations(name),
-          instrument:instruments(name, icon),
-          students:lesson_students(student:students(full_name))
-        `).eq('date', today).order('start_time'),
-        supabase.from('payment_records').select('*', { count: 'exact', head: true }).is('paid_date', null),
-      ]);
-
-      if (studentsRes.error) throw studentsRes.error;
-      if (lessonsRes.error) throw lessonsRes.error;
-
-      const students = studentsRes.data || [];
-      const lessons = (lessonsRes.data || []) as unknown as TodayLesson[];
-
+  useEffect(() => {
+    // Fast: counts only — no row data fetched
+    Promise.all([
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('students').select('*', { count: 'exact', head: true }),
+      supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'teacher').eq('approved', true),
+      supabase.from('payment_records').select('*', { count: 'exact', head: true }).is('paid_date', null),
+    ]).then(([activeRes, totalRes, teachersRes, paymentsRes]) => {
       setStats({
-        activeStudents: students.filter((s) => s.is_active).length,
-        totalStudents: students.length,
-        completedToday: lessons.filter((l) => l.status === 'completed').length,
-        totalToday: lessons.length,
+        activeStudents: activeRes.count || 0,
+        totalStudents: totalRes.count || 0,
+        completedToday: 0,
+        totalToday: 0,
         totalTeachers: teachersRes.count || 0,
         pendingPayments: paymentsRes.count || 0,
       });
-      setTodayLessons(lessons);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load dashboard');
-    } finally {
-      setLoading(false);
-    }
-  }
+    });
 
-  useEffect(() => { fetchDashboard(); }, [today]);
-
-  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-gray-400">Loading dashboard...</p></div>;
-
-  if (error) return (
-    <div className="bg-coral/10 border border-coral/20 rounded-xl p-4 flex items-center justify-between">
-      <p className="text-coral text-sm">{error}</p>
-      <button onClick={fetchDashboard} className="flex items-center gap-1 text-coral text-sm font-medium hover:underline"><RefreshCw size={14} />Retry</button>
-    </div>
-  );
+    // Slower: full join query for today's lessons
+    supabase.from('lessons').select(`
+      id, title, start_time, status,
+      teacher:profiles!lessons_teacher_id_fkey(full_name),
+      location:locations(name),
+      instrument:instruments(name, icon),
+      students:lesson_students(student:students(full_name))
+    `).eq('date', today).order('start_time')
+      .then(({ data, error: err }) => {
+        if (err) { setError(err.message); return; }
+        const lessons = (data || []) as unknown as TodayLesson[];
+        setTodayLessons(lessons);
+        setStats(prev => prev ? {
+          ...prev,
+          completedToday: lessons.filter(l => l.status === 'completed').length,
+          totalToday: lessons.length,
+        } : prev);
+      })
+      .finally(() => setLessonsLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const statCards = [
-    { label: 'Active Students', value: stats.activeStudents, sub: `of ${stats.totalStudents}`, icon: Users, color: 'bg-teal-light text-teal', iconBg: 'bg-teal/10' },
-    { label: "Today's Lessons", value: `${stats.completedToday}/${stats.totalToday}`, sub: 'completed', icon: Calendar, color: 'bg-coral-light text-coral', iconBg: 'bg-coral/10' },
-    { label: 'Teachers', value: stats.totalTeachers, sub: 'active', icon: GraduationCap, color: 'bg-yellow-light text-yellow-700', iconBg: 'bg-yellow/10' },
-    { label: 'Pending Payments', value: stats.pendingPayments, sub: 'unpaid', icon: CreditCard, color: 'bg-coral-light text-coral', iconBg: 'bg-coral/10', onClick: () => navigate('/payments') },
+    { label: 'Active Students', value: stats ? stats.activeStudents : '—', sub: stats ? `of ${stats.totalStudents}` : '', icon: Users, color: 'bg-teal-light text-teal', iconBg: 'bg-teal/10' },
+    { label: "Today's Lessons", value: stats ? `${stats.completedToday}/${stats.totalToday}` : '—', sub: 'completed', icon: Calendar, color: 'bg-coral-light text-coral', iconBg: 'bg-coral/10' },
+    { label: 'Teachers', value: stats ? stats.totalTeachers : '—', sub: 'active', icon: GraduationCap, color: 'bg-yellow-light text-yellow-700', iconBg: 'bg-yellow/10' },
+    { label: 'Pending Payments', value: stats ? stats.pendingPayments : '—', sub: 'unpaid', icon: CreditCard, color: 'bg-coral-light text-coral', iconBg: 'bg-coral/10', onClick: () => navigate('/payments') },
   ];
 
   return (
@@ -113,12 +102,20 @@ export function DashboardPage() {
         ))}
       </div>
 
+      {error && (
+        <div className="bg-coral/10 border border-coral/20 rounded-xl p-4">
+          <p className="text-coral text-sm">{error}</p>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="font-semibold text-navy">Today's Schedule</h2>
           <button onClick={() => navigate('/schedule')} className="text-sm text-teal hover:underline">View all</button>
         </div>
-        {todayLessons.length === 0 ? (
+        {lessonsLoading ? (
+          <div className="p-8 text-center text-gray-400 text-sm">Loading lessons...</div>
+        ) : todayLessons.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">No lessons scheduled for today</div>
         ) : (
           <div className="divide-y divide-gray-50">
