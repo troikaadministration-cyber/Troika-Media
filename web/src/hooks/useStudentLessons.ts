@@ -83,7 +83,7 @@ export function useStudentLessons(studentId: string | undefined) {
     lessonId: string,
     userId: string,
     options: {
-      teacherId: string;
+      teacherId: string | null;
       date: string;
       startTime: string;
       studentName: string;
