@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { usePayments } from '../hooks/usePayments';
+import type { PaymentWithStudent } from '../hooks/usePayments';
 import { DollarSign, AlertTriangle, Clock, CheckCircle, Send, RefreshCw, Download, FileText, MessageCircle } from 'lucide-react';
 
 function buildWhatsAppUrl(
@@ -138,13 +139,13 @@ export function PaymentsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {payments.map((p) => {
+            {payments.map((p: PaymentWithStudent) => {
               const isOverdue = !p.paid_date && p.due_date < today;
               const isPaid = !!p.paid_date;
-              const invoice = (p as any).invoice;
+              const invoice = p.invoice;
               return (
                 <tr key={p.id} className="hover:bg-gray-50/50">
-                  <td className="px-5 py-3 text-sm font-medium text-navy">{(p as any).student?.full_name || '-'}</td>
+                  <td className="px-5 py-3 text-sm font-medium text-navy">{p.student?.full_name || '-'}</td>
                   <td className="px-5 py-3"><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{p.plan}</span></td>
                   <td className="px-5 py-3 text-sm font-medium text-navy">₹{Number(p.amount).toLocaleString('en-IN')}</td>
                   <td className="px-5 py-3 text-sm text-gray-500">#{p.instalment_number}</td>
@@ -191,7 +192,7 @@ export function PaymentsPage() {
                           </button>
                         )}
                         {(() => {
-                          const student = (p as any).student;
+                          const student = p.student;
                           const phone = student?.parent_phone || student?.phone;
                           if (!phone) return (
                             <span className="text-gray-300 cursor-not-allowed" title="No phone number on file">
@@ -231,14 +232,14 @@ export function PaymentsPage() {
 
       {/* Mobile cards */}
       <div className="md:hidden space-y-2">
-        {payments.map((p) => {
+        {payments.map((p: PaymentWithStudent) => {
           const isOverdue = !p.paid_date && p.due_date < today;
           const isPaid = !!p.paid_date;
-          const invoice = (p as any).invoice;
+          const invoice = p.invoice;
           return (
             <div key={p.id} className="bg-white rounded-xl border border-gray-100 p-4 space-y-2">
               <div className="flex items-center justify-between">
-                <p className="font-medium text-navy text-sm">{(p as any).student?.full_name || '-'}</p>
+                <p className="font-medium text-navy text-sm">{p.student?.full_name || '-'}</p>
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                   isPaid ? 'bg-teal/10 text-teal' : isOverdue ? 'bg-coral/10 text-coral' : 'bg-yellow-100 text-yellow-700'
                 }`}>
@@ -278,7 +279,7 @@ export function PaymentsPage() {
                         </button>
                       )}
                       {(() => {
-                        const student = (p as any).student;
+                        const student = p.student;
                         const phone = student?.parent_phone || student?.phone;
                         if (!phone) return null;
                         const url = buildWhatsAppUrl(

@@ -8,7 +8,7 @@ interface Invoice {
   pdf_path: string | null;
 }
 
-type PaymentWithStudent = PaymentRecord & {
+export type PaymentWithStudent = PaymentRecord & {
   student?: {
     full_name: string;
     phone: string | null;
