@@ -19,8 +19,8 @@ interface Enrolment {
   student?: { id: string; full_name: string; instrument?: { name: string } | null };
 }
 
-interface Student { id: string; full_name: string; instrument?: { name: string } | null; }
-interface LessonRate { id: string; category: string; rate_per_lesson: number; is_online: boolean; teacher?: { full_name: string } | null; }
+interface Student { id: string; full_name: string; location_id: string | null; instrument?: { name: string } | null; }
+interface LessonRate { id: string; category: string; rate_per_lesson: number; is_online: boolean; location_id: string | null; teacher?: { full_name: string } | null; }
 const PLAN_OPTIONS = [
   { value: 'trial', label: 'Trial (no payment)' },
   { value: '1_instalment', label: '1 Instalment' },
@@ -55,8 +55,8 @@ export function EnrolmentsPage() {
     try {
       const [enrolRes, studentRes, rateRes] = await Promise.all([
         supabase.from('student_enrolments').select('*, student:students(id, full_name, instrument:instruments(name))').order('created_at', { ascending: false }),
-        supabase.from('students').select('id, full_name, instrument:instruments(name)').eq('is_active', true).order('full_name'),
-        supabase.from('lesson_rates').select('id, category, rate_per_lesson, is_online, teacher:profiles(full_name)').order('category'),
+        supabase.from('students').select('id, full_name, location_id, instrument:instruments(name)').eq('is_active', true).order('full_name'),
+        supabase.from('lesson_rates').select('id, category, rate_per_lesson, is_online, location_id, teacher:profiles(full_name)').order('category'),
       ]);
       if (enrolRes.error) throw enrolRes.error;
       setEnrolments((enrolRes.data || []) as any);
@@ -72,6 +72,12 @@ export function EnrolmentsPage() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const selectedRate = rates.find(r => r.id === form.lesson_rate_id);
+  const selectedStudent = students.find(s => s.id === form.student_id);
+  const filteredRates = selectedStudent?.location_id
+    ? rates.filter(r => r.location_id === selectedStudent.location_id || r.location_id === null)
+    : rates;
+  const hasLocationRates = !!(selectedStudent?.location_id &&
+    rates.some(r => r.location_id === selectedStudent.location_id));
   const totalLessons = form.payment_plan === 'trial' ? 1 : 39;
   const totalFee = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
 
@@ -272,7 +278,7 @@ export function EnrolmentsPage() {
                 <select
                   required
                   value={form.student_id}
-                  onChange={(e) => setForm({ ...form, student_id: e.target.value })}
+                  onChange={(e) => setForm({ ...form, student_id: e.target.value, lesson_rate_id: '' })}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 >
                   <option value="">Select student...</option>
@@ -287,17 +293,24 @@ export function EnrolmentsPage() {
 
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Lesson Rate</label>
+                {selectedStudent?.location_id && hasLocationRates && (
+                  <p className="text-xs text-teal mb-1">Showing rates for this student's location first.</p>
+                )}
+                {selectedStudent?.location_id && !hasLocationRates && (
+                  <p className="text-xs text-yellow-600 mb-1">No location-specific rates set — showing all rates.</p>
+                )}
                 <select
                   value={form.lesson_rate_id}
                   onChange={(e) => setForm({ ...form, lesson_rate_id: e.target.value })}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 >
                   <option value="">Select rate...</option>
-                  {rates.map((r) => (
+                  {filteredRates.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}
                       {r.is_online ? ' (Online)' : ''}
                       {r.teacher ? ` — ${r.teacher.full_name}` : ''}
+                      {r.location_id ? ' ★' : ''}
                     </option>
                   ))}
                 </select>
