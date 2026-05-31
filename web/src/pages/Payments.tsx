@@ -1,6 +1,29 @@
 import { useState } from 'react';
 import { usePayments } from '../hooks/usePayments';
-import { DollarSign, AlertTriangle, Clock, CheckCircle, Send, RefreshCw, Download, FileText } from 'lucide-react';
+import { DollarSign, AlertTriangle, Clock, CheckCircle, Send, RefreshCw, Download, FileText, MessageCircle } from 'lucide-react';
+
+function buildWhatsAppUrl(
+  phone: string,
+  studentName: string,
+  parentName: string | null,
+  amount: number,
+  dueDate: string,
+  instalmentNumber: number | null
+): string {
+  const recipient = parentName || studentName;
+  const amountStr = amount.toLocaleString('en-IN');
+  const dueDateStr = new Date(dueDate + 'T00:00:00').toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const instalmentNote = instalmentNumber ? ` (Instalment ${instalmentNumber})` : '';
+  const msg =
+    `Hi ${recipient}, this is a reminder that ${studentName}'s lesson fee${instalmentNote} ` +
+    `of ₹${amountStr} is due on ${dueDateStr}. ` +
+    `Please contact us to arrange payment. Thank you!`;
+  const digits = phone.replace(/\D/g, '');
+  const normalized = digits.startsWith('91') ? digits : `91${digits}`;
+  return `https://wa.me/${normalized}?text=${encodeURIComponent(msg)}`;
+}
 
 export function PaymentsPage() {
   const { payments, loading, error, verifyPayment, downloadInvoice, sendReminder, refresh } = usePayments();
@@ -167,6 +190,34 @@ export function PaymentsPage() {
                             <Send size={10} />{reminding === p.id ? 'Sending...' : 'Remind'}
                           </button>
                         )}
+                        {(() => {
+                          const student = (p as any).student;
+                          const phone = student?.parent_phone || student?.phone;
+                          if (!phone) return (
+                            <span className="text-gray-300 cursor-not-allowed" title="No phone number on file">
+                              <MessageCircle size={12} />
+                            </span>
+                          );
+                          const url = buildWhatsAppUrl(
+                            phone,
+                            student.full_name,
+                            student.parent_name,
+                            p.amount,
+                            p.due_date,
+                            p.instalment_number
+                          );
+                          return (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-green-600 hover:underline flex items-center gap-0.5 text-xs"
+                              title="Send via WhatsApp"
+                            >
+                              <MessageCircle size={10} /> WA
+                            </a>
+                          );
+                        })()}
                       </div>
                     )}
                     {isPaid && !invoice && <span className="text-xs text-gray-400">{p.paid_date}</span>}
@@ -226,6 +277,24 @@ export function PaymentsPage() {
                           {reminding === p.id ? '...' : 'Remind'}
                         </button>
                       )}
+                      {(() => {
+                        const student = (p as any).student;
+                        const phone = student?.parent_phone || student?.phone;
+                        if (!phone) return null;
+                        const url = buildWhatsAppUrl(
+                          phone,
+                          student.full_name,
+                          student.parent_name,
+                          p.amount,
+                          p.due_date,
+                          p.instalment_number
+                        );
+                        return (
+                          <a href={url} target="_blank" rel="noreferrer" className="text-green-600 font-medium">
+                            WA
+                          </a>
+                        );
+                      })()}
                     </>
                   )}
                 </div>

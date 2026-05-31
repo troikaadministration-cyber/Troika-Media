@@ -9,7 +9,12 @@ interface Invoice {
 }
 
 type PaymentWithStudent = PaymentRecord & {
-  student?: { full_name: string };
+  student?: {
+    full_name: string;
+    phone: string | null;
+    parent_name: string | null;
+    parent_phone: string | null;
+  };
   invoice?: Invoice | null;
 };
 
@@ -24,7 +29,7 @@ export function usePayments() {
     try {
       const { data, error: err } = await supabase
         .from('payment_records')
-        .select('*, student:students(full_name), invoice:invoices(id, invoice_number, pdf_path)')
+        .select('*, student:students(full_name, phone, parent_name, parent_phone), invoice:invoices(id, invoice_number, pdf_path)')
         .order('due_date', { ascending: true })
         .limit(500);
       if (err) throw err;
