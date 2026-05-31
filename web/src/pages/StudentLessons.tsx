@@ -569,6 +569,7 @@ export function StudentLessonsPage() {
                       });
                     } catch (err: any) {
                       alert(err.message);
+                      return; // keep modal open so user can retry
                     }
                   }
                   setCancelModal(null);

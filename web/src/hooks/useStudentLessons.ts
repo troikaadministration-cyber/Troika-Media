@@ -104,13 +104,17 @@ export function useStudentLessons(studentId: string | undefined) {
       const dateLabel = new Date(options.date + 'T00:00:00').toLocaleDateString('en-IN', {
         weekday: 'long', month: 'short', day: 'numeric',
       });
-      await supabase.from('notifications').insert({
-        user_id: options.teacherId,
-        type: 'lesson_cancelled',
-        title: 'Lesson cancelled by student',
-        body: `${options.studentName} cancelled their lesson on ${dateLabel} at ${options.startTime.slice(0, 5)}`,
-        read: false,
-      });
+      try {
+        await supabase.from('notifications').insert({
+          user_id: options.teacherId,
+          type: 'lesson_cancelled',
+          title: 'Lesson cancelled by student',
+          body: `${options.studentName} cancelled their lesson on ${dateLabel} at ${options.startTime.slice(0, 5)}`,
+          read: false,
+        });
+      } catch {
+        // fire-and-forget — lesson is already cancelled
+      }
     }
 
     await fetchLessons();
