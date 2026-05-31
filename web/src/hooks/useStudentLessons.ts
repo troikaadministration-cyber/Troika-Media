@@ -8,6 +8,7 @@ interface StudentLesson {
   absence_category: string | null;
   lesson: {
     id: string;
+    teacher_id: string;
     date: string;
     start_time: string;
     end_time: string | null;
@@ -42,7 +43,7 @@ export function useStudentLessons(studentId: string | undefined) {
         supabase
           .from('lesson_students')
           .select(`id, lesson_id, attended, absence_category,
-            lesson:lessons(id, date, start_time, end_time, title, status, lesson_type, notes,
+            lesson:lessons(id, teacher_id, date, start_time, end_time, title, status, lesson_type, notes,
               teacher:profiles!lessons_teacher_id_fkey(full_name),
               location:locations(*), instrument:instruments(*))`)
           .eq('student_id', studentId)
@@ -51,7 +52,7 @@ export function useStudentLessons(studentId: string | undefined) {
         supabase
           .from('lesson_students')
           .select(`id, lesson_id, attended, absence_category,
-            lesson:lessons(id, date, start_time, end_time, title, status, lesson_type, notes,
+            lesson:lessons(id, teacher_id, date, start_time, end_time, title, status, lesson_type, notes,
               teacher:profiles!lessons_teacher_id_fkey(full_name),
               location:locations(*), instrument:instruments(*))`)
           .eq('student_id', studentId)
@@ -78,16 +79,40 @@ export function useStudentLessons(studentId: string | undefined) {
 
   useEffect(() => { fetchLessons(); }, [fetchLessons]);
 
-  async function cancelLesson(lessonId: string, userId: string, reason?: string) {
+  async function cancelLesson(
+    lessonId: string,
+    userId: string,
+    options: {
+      teacherId: string;
+      date: string;
+      startTime: string;
+      studentName: string;
+      reason?: string;
+    }
+  ) {
     const updates: Record<string, unknown> = {
       status: 'cancelled',
       cancelled_by_role: 'student',
       cancelled_by_user_id: userId,
     };
-    if (reason) updates.cancel_reason = reason;
+    if (options.reason) updates.cancel_reason = options.reason;
 
     const { error } = await supabase.from('lessons').update(updates).eq('id', lessonId);
     if (error) throw error;
+
+    if (options.teacherId) {
+      const dateLabel = new Date(options.date + 'T00:00:00').toLocaleDateString('en-IN', {
+        weekday: 'long', month: 'short', day: 'numeric',
+      });
+      await supabase.from('notifications').insert({
+        user_id: options.teacherId,
+        type: 'lesson_cancelled',
+        title: 'Lesson cancelled by student',
+        body: `${options.studentName} cancelled their lesson on ${dateLabel} at ${options.startTime.slice(0, 5)}`,
+        read: false,
+      });
+    }
+
     await fetchLessons();
   }
 

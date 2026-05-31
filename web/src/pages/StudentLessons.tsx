@@ -88,7 +88,13 @@ export function StudentLessonsPage() {
   }, [profile?.id]);
 
   const { upcoming, past, loading, error, totalCompleted, cancelLesson } = useStudentLessons(studentId);
-  const [cancelModal, setCancelModal] = useState<string | null>(null);
+  const [cancelModal, setCancelModal] = useState<{
+    lessonId: string;
+    teacherId: string;
+    date: string;
+    startTime: string;
+    studentName: string;
+  } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
   if (!lookupDone) {
@@ -307,7 +313,13 @@ export function StudentLessonsPage() {
                       </span>
                       {item.lesson.status === 'scheduled' && (
                         <button
-                          onClick={() => setCancelModal(item.lesson.id)}
+                          onClick={() => setCancelModal({
+                            lessonId: item.lesson.id,
+                            teacherId: item.lesson.teacher_id,
+                            date: item.lesson.date,
+                            startTime: item.lesson.start_time,
+                            studentName: profile?.full_name || 'Student',
+                          })}
                           className="p-1.5 text-gray-300 hover:text-coral transition-colors"
                           title="Cancel lesson"
                         >
@@ -548,7 +560,13 @@ export function StudentLessonsPage() {
                 onClick={async () => {
                   if (cancelModal && profile?.id) {
                     try {
-                      await cancelLesson(cancelModal, profile.id, cancelReason || undefined);
+                      await cancelLesson(cancelModal.lessonId, profile.id, {
+                        teacherId: cancelModal.teacherId,
+                        date: cancelModal.date,
+                        startTime: cancelModal.startTime,
+                        studentName: cancelModal.studentName,
+                        reason: cancelReason || undefined,
+                      });
                     } catch (err: any) {
                       alert(err.message);
                     }
