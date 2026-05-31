@@ -140,17 +140,17 @@ export function SchedulePage() {
     setMakeupLoading(false);
   }
 
-  // Week view helpers
+  // Week view helpers — Sunday-anchored weeks (Sun–Sat, matching JS getDay() convention)
   function getWeekStart(date: string) {
     const d = new Date(date);
-    const day = d.getDay();
-    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    const day = d.getDay(); // 0 = Sunday
+    d.setDate(d.getDate() - day); // subtract to reach Sunday
     return d.toISOString().split('T')[0];
   }
   function getWeekEnd(date: string) {
     const d = new Date(date);
-    const day = d.getDay();
-    d.setDate(d.getDate() + (day === 0 ? 0 : 7 - day));
+    const day = d.getDay(); // 0 = Sunday
+    d.setDate(d.getDate() + (6 - day)); // add to reach Saturday
     return d.toISOString().split('T')[0];
   }
   function getWeekDays(date: string) {
