@@ -40,17 +40,25 @@ export function useTeacherLessons(teacherId: string | undefined, date: string) {
 
   useEffect(() => {
     if (!teacherId) return;
+    let debounce: ReturnType<typeof setTimeout>;
+
     const channel = supabase
-      .channel('lessons-changes')
+      .channel(`lessons-${teacherId}-${date}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'lessons', filter: `teacher_id=eq.${teacherId}` },
-        () => { fetchLessons(); }
+        () => {
+          clearTimeout(debounce);
+          debounce = setTimeout(() => fetchLessons(), 400);
+        }
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, [teacherId, fetchLessons]);
+    return () => {
+      clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+  }, [teacherId, date, fetchLessons]);
 
   async function markComplete(lessonId: string) {
     await supabase.from('lessons').update({ status: 'completed' }).eq('id', lessonId);

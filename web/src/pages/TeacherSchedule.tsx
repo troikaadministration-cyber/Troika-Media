@@ -14,7 +14,7 @@ import type { PieceStatus } from '../types';
 export function TeacherSchedulePage() {
   const { profile } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const { lessons, loading, error, markComplete, markPending, updateNotes, cancelLesson } = useTeacherLessons(profile?.id, selectedDate);
+  const { lessons, loading, error, refresh, markComplete, markPending, updateNotes, cancelLesson } = useTeacherLessons(profile?.id, selectedDate);
   const [cancelModal, setCancelModal] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [confirmDeletePiece, setConfirmDeletePiece] = useState<string | null>(null);
@@ -150,6 +150,14 @@ export function TeacherSchedulePage() {
           <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
             className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm" />
           <button onClick={() => shiftDate(1)} className="p-1 rounded hover:bg-gray-100" aria-label="Next day"><ChevronRight size={18} /></button>
+          <button
+            onClick={refresh}
+            className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-navy"
+            aria-label="Refresh lessons"
+            title="Refresh"
+          >
+            <RefreshCw size={16} />
+          </button>
         </div>
       </div>
 
