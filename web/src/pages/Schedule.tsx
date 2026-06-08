@@ -499,33 +499,116 @@ export function SchedulePage() {
       {/* Week view */}
       {viewMode === 'week' && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="grid grid-cols-7 border-b border-gray-100">
+          {/* Day header row */}
+          <div className="flex border-b border-gray-100">
+            <div className="w-14 flex-shrink-0 border-r border-gray-100 bg-gray-50" />
             {getWeekDays(selectedDate).map((day) => {
               const d = new Date(day + 'T00:00');
               const isToday = day === new Date().toISOString().split('T')[0];
-              const dayLessons = weekLessons.filter((l: any) => l.date === day);
               return (
-                <div key={day} className={`border-r last:border-r-0 border-gray-100 ${isToday ? 'bg-cream/30' : ''}`}>
-                  <div className={`px-2 py-2 text-center border-b border-gray-100 ${isToday ? 'bg-coral text-white' : 'bg-gray-50'}`}>
-                    <p className="text-xs font-medium">{d.toLocaleDateString('en-US', { weekday: 'short' })}</p>
-                    <p className="text-lg font-bold">{d.getDate()}</p>
+                <div key={day} className={`flex-1 text-center py-2 border-r last:border-r-0 border-gray-100 ${isToday ? 'bg-coral/5' : 'bg-gray-50'}`}>
+                  <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">
+                    {d.toLocaleDateString('en-US', { weekday: 'short' })}
+                  </p>
+                  <div className={`mx-auto w-8 h-8 flex items-center justify-center rounded-full text-sm font-bold mt-0.5 ${isToday ? 'bg-coral text-white' : 'text-navy'}`}>
+                    {d.getDate()}
                   </div>
-                  <div className="min-h-[200px] p-1 space-y-1">
-                    {dayLessons.map((lesson: any) => (
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Scrollable time grid */}
+          <div className="flex overflow-y-auto max-h-[680px]">
+            {/* Hour labels */}
+            <div className="w-14 flex-shrink-0 relative border-r border-gray-100 bg-gray-50/50" style={{ height: GRID_HEIGHT }}>
+              {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => {
+                const hour = START_HOUR + i;
+                const label = hour < 12 ? `${hour}am` : hour === 12 ? '12pm' : `${hour - 12}pm`;
+                return (
+                  <div
+                    key={i}
+                    className="absolute right-2 text-[10px] text-gray-400 leading-none select-none"
+                    style={{ top: i * HOUR_HEIGHT - 7 }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Day columns */}
+            {getWeekDays(selectedDate).map((day) => {
+              const isToday = day === new Date().toISOString().split('T')[0];
+              const dayLessons = weekLessons.filter((l: any) => l.date === day);
+              const laidOut = computeOverlapLayout(dayLessons);
+
+              return (
+                <div
+                  key={day}
+                  className={`flex-1 relative border-r last:border-r-0 border-gray-100 ${isToday ? 'bg-coral/[0.03]' : ''}`}
+                  style={{ height: GRID_HEIGHT }}
+                >
+                  {/* Hour lines */}
+                  {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
+                    <div
+                      key={i}
+                      className="absolute left-0 right-0 border-t border-gray-100"
+                      style={{ top: i * HOUR_HEIGHT }}
+                    />
+                  ))}
+
+                  {/* Lesson cards */}
+                  {laidOut.map((lesson: any) => {
+                    const topPx = Math.max(0, (lesson._startMin - START_HOUR * 60) * (HOUR_HEIGHT / 60));
+                    const heightPx = Math.max(22, (lesson._endMin - lesson._startMin) * (HOUR_HEIGHT / 60) - 2);
+                    const leftPct = (lesson._col / lesson._totalCols) * 100;
+                    const widthPct = 100 / lesson._totalCols;
+
+                    const colorClass =
+                      lesson.status === 'completed'
+                        ? 'bg-teal/10 border-teal text-teal'
+                        : lesson.status === 'cancelled'
+                        ? 'bg-gray-100 border-gray-300 text-gray-400'
+                        : 'bg-coral/10 border-coral text-coral';
+
+                    return (
                       <div
                         key={lesson.id}
-                        className={`p-1.5 rounded text-xs cursor-pointer ${
-                          lesson.status === 'completed' ? 'bg-teal-light text-teal' :
-                          lesson.status === 'cancelled' ? 'bg-gray-100 text-gray-400 line-through' :
-                          'bg-coral-light text-coral'
-                        }`}
+                        className={`absolute overflow-hidden rounded-r border-l-2 px-1 cursor-pointer select-none hover:brightness-95 transition-[filter] ${colorClass}`}
+                        style={{
+                          top: topPx,
+                          height: heightPx,
+                          left: `calc(${leftPct}% + 1px)`,
+                          width: `calc(${widthPct}% - 2px)`,
+                        }}
+                        title={[
+                          `${lesson.start_time?.slice(0, 5)}${lesson.end_time ? ' – ' + lesson.end_time.slice(0, 5) : ''}`,
+                          lesson.title || lesson.instrument?.name,
+                          lesson.teacher?.full_name,
+                        ].filter(Boolean).join(' · ')}
                       >
-                        <p className="font-semibold">{lesson.start_time?.slice(0, 5)}</p>
-                        <p className="truncate">{lesson.title || lesson.instrument?.name}</p>
-                        <p className="truncate text-[10px] opacity-70">{lesson.teacher?.full_name}</p>
+                        <p className="text-[10px] font-bold leading-tight pt-0.5 truncate">
+                          {lesson.start_time?.slice(0, 5)}
+                        </p>
+                        {heightPx > 34 && (
+                          <p className={`text-[10px] leading-tight truncate font-medium ${lesson.status === 'cancelled' ? 'line-through' : ''}`}>
+                            {lesson.title || lesson.instrument?.name}
+                          </p>
+                        )}
+                        {heightPx > 52 && (
+                          <p className="text-[10px] leading-tight truncate opacity-70">
+                            {lesson.teacher?.full_name}
+                          </p>
+                        )}
+                        {heightPx > 70 && lesson.students?.map((s: any) => (
+                          <p key={s.student_id} className="text-[10px] leading-tight truncate opacity-60">
+                            {s.student?.full_name}
+                          </p>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
               );
             })}
