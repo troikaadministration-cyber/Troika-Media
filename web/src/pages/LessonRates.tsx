@@ -172,12 +172,129 @@ function TeacherList({ teachers, rateCounts, selectedId, onSelect }: {
   );
 }
 
-function RateEditor(_p: {
+function RateEditor({ teacher, locations, categories, year }: {
   teacher: Teacher;
   locations: Location[];
   categories: LessonCategory[];
   year: string;
-}) { return <div className="text-gray-400 text-sm p-4">Rate editor</div>; }
+}) {
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(
+    locations[0]?.id ?? null
+  );
+  const [rateMap, setRateMap] = useState<Record<string, LessonRate>>({});
+  const [loading, setLoading] = useState(true);
+
+  const loadRates = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('lesson_rates')
+      .select('*')
+      .eq('teacher_id', teacher.id)
+      .eq('academic_year', year);
+    const map: Record<string, LessonRate> = {};
+    for (const r of data ?? []) {
+      map[rateKey(r.category, r.is_online ? null : r.location_id)] = r as LessonRate;
+    }
+    setRateMap(map);
+    setLoading(false);
+  }, [teacher.id, year]);
+
+  useEffect(() => { loadRates(); }, [loadRates]);
+
+  // Reset to first location when teacher changes
+  useEffect(() => {
+    setSelectedLocationId(locations[0]?.id ?? null);
+  }, [teacher.id, locations]);
+
+  async function saveRate(category: string, locationId: string | null, value: number) {
+    const isOnline = locationId === null;
+    const existing = rateMap[rateKey(category, locationId)];
+    if (existing) {
+      const { error } = await supabase
+        .from('lesson_rates')
+        .update({ rate_per_lesson: value })
+        .eq('id', existing.id);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabase.from('lesson_rates').insert({
+        teacher_id: teacher.id,
+        location_id: isOnline ? null : locationId,
+        category,
+        rate_per_lesson: value,
+        is_online: isOnline,
+        academic_year: year,
+      });
+      if (error) throw new Error(error.message);
+    }
+    await loadRates();
+  }
+
+  async function deleteRate(category: string, locationId: string | null) {
+    const existing = rateMap[rateKey(category, locationId)];
+    if (!existing) return;
+    const { error } = await supabase
+      .from('lesson_rates')
+      .delete()
+      .eq('id', existing.id);
+    if (error) throw new Error(error.message);
+    await loadRates();
+  }
+
+  const tabs: { id: string | null; label: string }[] = [
+    ...locations.map(l => ({ id: l.id, label: l.name })),
+    { id: null, label: 'Online' },
+  ];
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 flex flex-col h-full">
+      {/* Teacher name bar */}
+      <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 rounded-t-xl flex items-center gap-2">
+        <div className="w-8 h-8 rounded-full bg-teal/10 flex items-center justify-center text-teal font-bold text-sm flex-shrink-0">
+          {teacher.full_name.charAt(0)}
+        </div>
+        <h3 className="font-semibold text-navy">{teacher.full_name}</h3>
+        <span className="text-xs text-gray-400 ml-1">— {year}</span>
+      </div>
+
+      {/* Location tabs */}
+      <div className="px-5 pt-4 pb-0 flex gap-2 flex-wrap">
+        {tabs.map(tab => (
+          <button key={tab.id ?? 'online'} onClick={() => setSelectedLocationId(tab.id)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+              selectedLocationId === tab.id
+                ? 'bg-navy text-white'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Rate rows */}
+      <div className="px-5 py-3 flex-1 overflow-y-auto">
+        {loading ? (
+          <p className="text-gray-400 text-sm text-center py-8">Loading…</p>
+        ) : categories.length === 0 ? (
+          <p className="text-gray-400 text-sm text-center py-8">No categories yet. Add via Manage.</p>
+        ) : (
+          categories.map(cat => (
+            <RateRow
+              key={`${cat.id}::${selectedLocationId ?? 'online'}`}
+              category={cat.name}
+              rate={rateMap[rateKey(cat.name, selectedLocationId)]}
+              onSave={v => saveRate(cat.name, selectedLocationId, v)}
+              onDelete={() => deleteRate(cat.name, selectedLocationId)}
+            />
+          ))
+        )}
+      </div>
+
+      <p className="px-5 py-2 text-xs text-gray-300 border-t border-gray-50">
+        Tab or Enter to save · Escape to cancel · Clear to remove
+      </p>
+    </div>
+  );
+}
 
 function AdminModal(_p: {
   open: boolean;
