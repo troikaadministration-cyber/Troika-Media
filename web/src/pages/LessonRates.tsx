@@ -302,7 +302,296 @@ function RateEditor({ teacher, locations, categories, year }: {
   );
 }
 
-function AdminModal(_p: {
+// ── InstrumentsTab ────────────────────────────────────────────────────────────
+
+function InstrumentsTab({ instruments, inUse, onRefresh }: {
+  instruments: Instrument[];
+  inUse: Set<string>;
+  onRefresh: () => void;
+}) {
+  const [adding, setAdding] = useState('');
+  const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  async function add() {
+    const name = adding.trim();
+    if (!name) return;
+    setAddSaving(true); setAddError(null);
+    const { error } = await supabase.from('instruments').insert({ name });
+    setAddSaving(false);
+    if (error) { setAddError(error.message); return; }
+    setAdding('');
+    onRefresh();
+  }
+
+  async function rename(id: string, name: string) {
+    const { error } = await supabase.from('instruments').update({ name }).eq('id', id);
+    if (error) { alert(error.message); return; }
+    onRefresh();
+  }
+
+  async function remove(id: string) {
+    const { error } = await supabase.from('instruments').delete().eq('id', id);
+    if (error) { alert(error.message); return; }
+    onRefresh();
+  }
+
+  return (
+    <div>
+      {instruments.length === 0 && (
+        <p className="text-sm text-gray-400 px-4 py-3">No instruments yet.</p>
+      )}
+      {instruments.map(i => (
+        <EditableItem key={i.id} name={i.name}
+          onRename={n => rename(i.id, n)}
+          onDelete={() => remove(i.id)}
+          deleteDisabled={inUse.has(i.id)} />
+      ))}
+      <div className="px-4 py-3 border-t border-gray-100 flex gap-2">
+        <input value={adding} onChange={e => { setAdding(e.target.value); setAddError(null); }}
+          onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder="New instrument…"
+          className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+        <button onClick={add} disabled={addSaving || !adding.trim()}
+          className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
+          <Plus size={13} /> Add
+        </button>
+      </div>
+      {addError && <p className="text-xs text-red-500 px-4 pb-2">{addError}</p>}
+    </div>
+  );
+}
+
+// ── CategoriesTab ─────────────────────────────────────────────────────────────
+
+function CategoriesTab({ categories, inUse, onRefresh }: {
+  categories: LessonCategoryRow[];
+  inUse: Set<string>;
+  onRefresh: () => void;
+}) {
+  const [adding, setAdding] = useState('');
+  const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  async function add() {
+    const name = adding.trim();
+    if (!name) return;
+    setAddSaving(true); setAddError(null);
+    const maxOrder = categories.reduce((m, c) => Math.max(m, c.sort_order), 0);
+    const { error } = await supabase.from('lesson_categories').insert({ name, sort_order: maxOrder + 1 });
+    setAddSaving(false);
+    if (error) { setAddError(error.message); return; }
+    setAdding('');
+    onRefresh();
+  }
+
+  async function rename(id: string, name: string) {
+    const { error } = await supabase.from('lesson_categories').update({ name }).eq('id', id);
+    if (error) { alert(error.message); return; }
+    onRefresh();
+  }
+
+  async function remove(id: string) {
+    const { error } = await supabase.from('lesson_categories').delete().eq('id', id);
+    if (error) { alert(error.message); return; }
+    onRefresh();
+  }
+
+  return (
+    <div>
+      {categories.length === 0 && (
+        <p className="text-sm text-gray-400 px-4 py-3">No categories yet.</p>
+      )}
+      {categories.map(c => (
+        <EditableItem key={c.id} name={c.name}
+          onRename={n => rename(c.id, n)}
+          onDelete={() => remove(c.id)}
+          deleteDisabled={inUse.has(c.name)} />
+      ))}
+      <div className="px-4 py-3 border-t border-gray-100 flex gap-2">
+        <input value={adding} onChange={e => { setAdding(e.target.value); setAddError(null); }}
+          onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder="New category…"
+          className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+        <button onClick={add} disabled={addSaving || !adding.trim()}
+          className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
+          <Plus size={13} /> Add
+        </button>
+      </div>
+      {addError && <p className="text-xs text-red-500 px-4 pb-2">{addError}</p>}
+    </div>
+  );
+}
+
+// ── LocationsTab ──────────────────────────────────────────────────────────────
+
+function LocationsTab({ locations, inUse, onRefresh }: {
+  locations: Location[];
+  inUse: Set<string>;
+  onRefresh: () => void;
+}) {
+  const [form, setForm] = useState({ name: '', city: '', address: '', zone: '' });
+  const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { name: string; city: string; address: string; zone: string }>>({});
+
+  async function add() {
+    if (!form.name.trim()) return;
+    setSaving(true); setAddError(null);
+    const { error } = await supabase.from('locations').insert({
+      name: form.name.trim(), city: form.city.trim(),
+      address: form.address.trim(), zone: form.zone.trim(),
+    });
+    setSaving(false);
+    if (error) { setAddError(error.message); return; }
+    setForm({ name: '', city: '', address: '', zone: '' });
+    setFormOpen(false);
+    onRefresh();
+  }
+
+  async function save(id: string) {
+    const d = drafts[id];
+    if (!d?.name.trim()) return;
+    const { error } = await supabase.from('locations').update({
+      name: d.name.trim(), city: d.city.trim(),
+      address: d.address.trim(), zone: d.zone.trim(),
+    }).eq('id', id);
+    if (error) { alert(error.message); return; }
+    setEditing(null);
+    onRefresh();
+  }
+
+  async function remove(id: string) {
+    const { error } = await supabase.from('locations').delete().eq('id', id);
+    if (error) { alert(error.message); return; }
+    onRefresh();
+  }
+
+  return (
+    <div>
+      {locations.length === 0 && (
+        <p className="text-sm text-gray-400 px-4 py-3">No locations yet.</p>
+      )}
+      {locations.map(loc => {
+        if (editing === loc.id) {
+          const d = drafts[loc.id] ?? { name: loc.name, city: loc.city ?? '', address: loc.address ?? '', zone: loc.zone ?? '' };
+          return (
+            <div key={loc.id} className="px-4 py-3 border-b border-gray-50 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-400 mb-0.5 block">Name *</label>
+                  <input autoFocus value={d.name}
+                    onChange={e => setDrafts(ds => ({ ...ds, [loc.id]: { ...d, name: e.target.value } }))}
+                    className="w-full text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-0.5 block">City</label>
+                  <input value={d.city}
+                    onChange={e => setDrafts(ds => ({ ...ds, [loc.id]: { ...d, city: e.target.value } }))}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-0.5 block">Address</label>
+                  <input value={d.address}
+                    onChange={e => setDrafts(ds => ({ ...ds, [loc.id]: { ...d, address: e.target.value } }))}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-0.5 block">Zone</label>
+                  <input value={d.zone}
+                    onChange={e => setDrafts(ds => ({ ...ds, [loc.id]: { ...d, zone: e.target.value } }))}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => save(loc.id)} disabled={!d.name.trim()}
+                  className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
+                  <Check size={13} /> Save
+                </button>
+                <button onClick={() => setEditing(null)}
+                  className="text-sm text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100">Cancel</button>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={loc.id} className="flex items-center justify-between px-4 py-2 hover:bg-gray-50 group">
+            <div className="flex-1 min-w-0">
+              <button onClick={() => {
+                setDrafts(ds => ({ ...ds, [loc.id]: { name: loc.name, city: loc.city ?? '', address: loc.address ?? '', zone: loc.zone ?? '' } }));
+                setEditing(loc.id);
+              }} className="text-sm font-medium text-navy hover:underline text-left">{loc.name}</button>
+              {(loc.city || loc.address) && (
+                <p className="text-xs text-gray-400 truncate">
+                  {[loc.address, loc.city, loc.zone].filter(Boolean).join(', ')}
+                </p>
+              )}
+            </div>
+            <button onClick={() => remove(loc.id)} disabled={inUse.has(loc.id)}
+              title={inUse.has(loc.id) ? 'In use — cannot delete' : 'Delete'}
+              className="text-gray-300 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 transition-opacity ml-3">
+              <Trash2 size={13} />
+            </button>
+          </div>
+        );
+      })}
+
+      {!formOpen ? (
+        <div className="px-4 py-3 border-t border-gray-100">
+          <button onClick={() => setFormOpen(true)}
+            className="flex items-center gap-1 text-sm font-medium text-teal hover:text-teal/80">
+            <Plus size={13} /> Add location
+          </button>
+        </div>
+      ) : (
+        <div className="px-4 py-3 border-t border-gray-100 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-gray-400 mb-0.5 block">Name *</label>
+              <input autoFocus value={form.name}
+                onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setAddError(null); }}
+                onKeyDown={e => e.key === 'Enter' && add()}
+                placeholder="e.g. Bandra Studio"
+                className="w-full text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-0.5 block">City</label>
+              <input value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                placeholder="e.g. Mumbai"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-0.5 block">Address</label>
+              <input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+                placeholder="Street address"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-0.5 block">Zone</label>
+              <input value={form.zone} onChange={e => setForm(f => ({ ...f, zone: e.target.value }))}
+                placeholder="e.g. West"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+            </div>
+          </div>
+          {addError && <p className="text-xs text-red-500">{addError}</p>}
+          <div className="flex gap-2">
+            <button onClick={add} disabled={saving || !form.name.trim()}
+              className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
+              <Plus size={13} /> {saving ? 'Adding…' : 'Add Location'}
+            </button>
+            <button onClick={() => { setFormOpen(false); setForm({ name: '', city: '', address: '', zone: '' }); setAddError(null); }}
+              className="text-sm text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminModal({ open, onClose, locations, instruments, categories,
+  locationsInUse, instrumentsInUse, categoriesInUse, onRefresh }: {
   open: boolean;
   onClose: () => void;
   locations: Location[];
@@ -312,7 +601,67 @@ function AdminModal(_p: {
   instrumentsInUse: Set<string>;
   categoriesInUse: Set<string>;
   onRefresh: () => void;
-}) { return null; }
+}) {
+  const [tab, setTab] = useState<'locations' | 'instruments' | 'categories'>('locations');
+
+  if (!open) return null;
+
+  const tabs = [
+    { key: 'locations' as const, label: 'Locations', count: locations.length },
+    { key: 'instruments' as const, label: 'Instruments', count: instruments.length },
+    { key: 'categories' as const, label: 'Categories', count: categories.length },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.35)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="text-base font-bold text-navy">Manage</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-navy">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex gap-0 px-5 pt-3 border-b border-gray-100">
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${
+                tab === t.key
+                  ? 'border-teal text-teal'
+                  : 'border-transparent text-gray-400 hover:text-navy'
+              }`}>
+              {t.label}
+              <span className={`text-xs rounded-full px-1.5 py-0.5 ${
+                tab === t.key ? 'bg-teal/10 text-teal' : 'bg-gray-100 text-gray-400'
+              }`}>{t.count}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {tab === 'locations' && (
+            <LocationsTab locations={locations} inUse={locationsInUse} onRefresh={onRefresh} />
+          )}
+          {tab === 'instruments' && (
+            <InstrumentsTab instruments={instruments} inUse={instrumentsInUse} onRefresh={onRefresh} />
+          )}
+          {tab === 'categories' && (
+            <CategoriesTab categories={categories} inUse={categoriesInUse} onRefresh={onRefresh} />
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose}
+            className="text-sm font-semibold text-white bg-navy px-4 py-2 rounded-lg hover:bg-navy/90">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── LessonRatesPage ───────────────────────────────────────────────────────────
 
