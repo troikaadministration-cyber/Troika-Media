@@ -15,6 +15,50 @@ interface MakeupMatch {
   needs_makeup: boolean;
 }
 
+// ── Time-grid layout ──────────────────────────────────────────
+const HOUR_HEIGHT = 64; // px per hour
+const START_HOUR  = 7;  // 7 am
+const END_HOUR    = 21; // 9 pm
+const GRID_HEIGHT = (END_HOUR - START_HOUR) * HOUR_HEIGHT; // 896 px
+
+function timeToMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function computeOverlapLayout(lessons: any[]) {
+  if (!lessons.length) return [];
+
+  const events = lessons
+    .map(l => ({
+      ...l,
+      _startMin: timeToMinutes(l.start_time),
+      _endMin: l.end_time ? timeToMinutes(l.end_time) : timeToMinutes(l.start_time) + 60,
+    }))
+    .sort((a, b) => a._startMin - b._startMin);
+
+  const colEnds: number[] = [];
+  const assigned = events.map(ev => {
+    let col = colEnds.findIndex(end => end <= ev._startMin);
+    if (col === -1) { col = colEnds.length; colEnds.push(0); }
+    colEnds[col] = ev._endMin;
+    return col;
+  });
+
+  const totalCols = events.map((ev, i) => {
+    let maxCol = assigned[i];
+    for (let j = 0; j < events.length; j++) {
+      if (i !== j && ev._startMin < events[j]._endMin && events[j]._startMin < ev._endMin) {
+        maxCol = Math.max(maxCol, assigned[j]);
+      }
+    }
+    return maxCol + 1;
+  });
+
+  return events.map((ev, i) => ({ ...ev, _col: assigned[i], _totalCols: totalCols[i] }));
+}
+// ─────────────────────────────────────────────────────────────
+
 export function SchedulePage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [teacherFilter, setTeacherFilter] = useState('');
