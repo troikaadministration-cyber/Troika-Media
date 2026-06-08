@@ -58,6 +58,80 @@ function EditableItem({ name, onRename, onDelete, deleteDisabled }: {
   );
 }
 
+// ── RateRow — always-visible input with auto-save ─────────────────────────────
+
+function RateRow({ category, rate, onSave, onDelete }: {
+  category: string;
+  rate: LessonRate | undefined;
+  onSave: (value: number) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [value, setValue] = useState(rate ? String(rate.rate_per_lesson) : '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset when rate prop changes (location tab switch via key on parent)
+  useEffect(() => {
+    setValue(rate ? String(rate.rate_per_lesson) : '');
+    setError(null);
+  }, [rate]);
+
+  async function commit() {
+    const trimmed = value.trim();
+    setError(null);
+    if (trimmed === '') {
+      if (rate) {
+        setSaving(true);
+        try { await onDelete(); } catch (e: any) { setError(e.message); }
+        finally { setSaving(false); }
+      }
+      return;
+    }
+    const num = parseFloat(trimmed);
+    if (isNaN(num) || num <= 0) { setError('Enter a positive number'); return; }
+    setSaving(true);
+    try {
+      await onSave(num);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1200);
+    } catch (e: any) {
+      setError(e.message);
+    } finally { setSaving(false); }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+    if (e.key === 'Escape') { setValue(rate ? String(rate.rate_per_lesson) : ''); setError(null); }
+  }
+
+  return (
+    <div className="flex items-start justify-between py-2.5 border-b border-gray-50 last:border-0">
+      <span className="text-sm text-gray-700 pt-1.5">{category}</span>
+      <div className="flex flex-col items-end gap-1">
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">₹</span>
+          <input
+            type="number" min={0} value={value}
+            onChange={e => { setValue(e.target.value); setError(null); }}
+            onBlur={commit}
+            onKeyDown={handleKeyDown}
+            placeholder="—"
+            className={`w-28 pl-6 pr-3 py-1.5 text-sm text-right font-semibold rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-teal/30 ${
+              saved
+                ? 'border-teal bg-teal/5 text-teal'
+                : error
+                ? 'border-red-300 bg-red-50'
+                : 'border-gray-200 bg-gray-50 hover:border-gray-300 focus:border-teal'
+            } ${saving ? 'opacity-60' : ''}`}
+          />
+        </div>
+        {error && <p className="text-xs text-red-500">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
 // ── Placeholder shells (filled in later tasks) ────────────────────────────────
 
 function TeacherList({ teachers, rateCounts, selectedId, onSelect }: {
