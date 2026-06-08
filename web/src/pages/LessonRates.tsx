@@ -73,6 +73,14 @@ function RateRow({ category, rate, onSave, onDelete }: {
   const escapeRef = React.useRef(false);
   const savedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Resync displayed value when server confirms a save (rate prop updates after loadRates)
+  useEffect(() => {
+    if (!saving) {
+      setValue(rate ? String(rate.rate_per_lesson) : '');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rate?.id, rate?.rate_per_lesson]);
+
   useEffect(() => () => {
     if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
   }, []);
@@ -679,8 +687,8 @@ export function LessonRatesPage() {
   const [categoriesInUse, setCategoriesInUse] = useState<Set<string>>(new Set());
   const [locationsInUse, setLocationsInUse] = useState<Set<string>>(new Set());
 
-  const loadMeta = useCallback(async () => {
-    setLoading(true);
+  const loadMeta = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     const [teachersRes, locationsRes, categoriesRes, instrumentsRes,
       studentsInstrRes, ratesRes, studentsLocRes, lessonsLocRes, rateCountsRes] = await Promise.all([
       supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
@@ -779,7 +787,7 @@ export function LessonRatesPage() {
         locationsInUse={locationsInUse}
         instrumentsInUse={instrumentsInUse}
         categoriesInUse={categoriesInUse}
-        onRefresh={loadMeta}
+        onRefresh={() => loadMeta(true)}
       />
     </div>
   );

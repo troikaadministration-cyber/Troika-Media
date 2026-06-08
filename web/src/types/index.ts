@@ -167,7 +167,7 @@ export interface LessonRate {
   id: string;
   teacher_id: string | null;
   location_id: string | null;
-  category: LessonCategory;
+  category: string;
   rate_per_lesson: number;
   is_online: boolean;
   academic_year: string;
