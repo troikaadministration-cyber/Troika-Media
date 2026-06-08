@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react'; // useCallback used in TeacherRateGrid
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { ChevronDown, ChevronRight, Trash2, Plus, Check, X } from 'lucide-react';
 import type { LessonRate, Location } from '../types';
 
 const CURRENT_YEAR = new Date().getFullYear().toString();
 const YEARS = [CURRENT_YEAR, (Number(CURRENT_YEAR) - 1).toString()];
-
-const ALLOWED_INSTRUMENTS = ['Cello', 'Piano', 'Voice', 'Guitar', 'Violin', 'Viola', 'IGCSE Music', 'Music Theory'];
 
 interface Teacher { id: string; full_name: string; }
 interface LessonCategory { id: string; name: string; sort_order: number; }
@@ -151,6 +149,181 @@ function EditableRow({ name, onRename, onDelete, deleteDisabled }: {
   );
 }
 
+// ── LocationRow: multi-field editable row for locations ───────────────────────
+
+function LocationRow({ location, onSave, onDelete, deleteDisabled }: {
+  location: Location;
+  onSave: (updates: { name: string; address: string; city: string; zone: string }) => Promise<void>;
+  onDelete: () => Promise<void>;
+  deleteDisabled: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({
+    name: location.name,
+    address: location.address ?? '',
+    city: location.city ?? '',
+    zone: location.zone ?? '',
+  });
+
+  async function save() {
+    const trimmed = {
+      name: draft.name.trim(),
+      address: draft.address.trim(),
+      city: draft.city.trim(),
+      zone: draft.zone.trim(),
+    };
+    if (!trimmed.name) return;
+    await onSave(trimmed);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="px-4 py-3 border-b border-gray-50 space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-gray-400 mb-0.5 block">Name *</label>
+            <input autoFocus value={draft.name}
+              onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+              onKeyDown={e => e.key === 'Escape' && setEditing(false)}
+              className="w-full text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-0.5 block">City</label>
+            <input value={draft.city}
+              onChange={e => setDraft(d => ({ ...d, city: e.target.value }))}
+              placeholder="e.g. Mumbai"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-gray-400 mb-0.5 block">Address</label>
+            <input value={draft.address}
+              onChange={e => setDraft(d => ({ ...d, address: e.target.value }))}
+              placeholder="Street address"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-0.5 block">Zone</label>
+            <input value={draft.zone}
+              onChange={e => setDraft(d => ({ ...d, zone: e.target.value }))}
+              placeholder="e.g. West"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={save} disabled={!draft.name.trim()}
+            className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
+            <Check size={14} /> Save
+          </button>
+          <button onClick={() => setEditing(false)}
+            className="text-sm text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100">Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between px-4 py-2 hover:bg-gray-50 group">
+      <div className="flex-1 min-w-0">
+        <button
+          onClick={() => {
+            setDraft({ name: location.name, address: location.address ?? '', city: location.city ?? '', zone: location.zone ?? '' });
+            setEditing(true);
+          }}
+          className="text-sm text-navy hover:underline text-left font-medium">{location.name}</button>
+        {(location.city || location.address) && (
+          <p className="text-xs text-gray-400 truncate">
+            {[location.address, location.city, location.zone].filter(Boolean).join(', ')}
+          </p>
+        )}
+      </div>
+      <button onClick={onDelete} disabled={deleteDisabled}
+        title={deleteDisabled ? 'In use — cannot delete' : 'Delete'}
+        className="text-gray-300 hover:text-coral disabled:opacity-30 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 transition-opacity ml-3 flex-shrink-0">
+        <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+// ── AddLocationForm: expandable multi-field form ──────────────────────────────
+
+function AddLocationForm({ onAdd }: {
+  onAdd: (loc: { name: string; address: string; city: string; zone: string }) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: '', address: '', city: '', zone: '' });
+  const [saving, setSaving] = useState(false);
+
+  async function submit() {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    await onAdd({ name: form.name.trim(), address: form.address.trim(), city: form.city.trim(), zone: form.zone.trim() });
+    setForm({ name: '', address: '', city: '', zone: '' });
+    setOpen(false);
+    setSaving(false);
+  }
+
+  if (!open) {
+    return (
+      <div className="px-4 py-2 border-t border-gray-100">
+        <button onClick={() => setOpen(true)}
+          className="flex items-center gap-1 text-sm text-teal hover:text-teal/80 font-medium">
+          <Plus size={14} /> Add location
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-3 border-t border-gray-100 space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs text-gray-400 mb-0.5 block">Name *</label>
+          <input autoFocus value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            placeholder="e.g. Bandra Studio"
+            className="w-full text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-0.5 block">City</label>
+          <input value={form.city}
+            onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+            placeholder="e.g. Mumbai"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs text-gray-400 mb-0.5 block">Address</label>
+          <input value={form.address}
+            onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+            placeholder="Street address"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-0.5 block">Zone</label>
+          <input value={form.zone}
+            onChange={e => setForm(f => ({ ...f, zone: e.target.value }))}
+            placeholder="e.g. West"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={submit} disabled={saving || !form.name.trim()}
+          className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
+          <Plus size={14} /> {saving ? 'Adding…' : 'Add Location'}
+        </button>
+        <button onClick={() => { setOpen(false); setForm({ name: '', address: '', city: '', zone: '' }); }}
+          className="text-sm text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ── AdminPanel: collapsible panel wrapper ────────────────────────────────────
 
 function AdminPanel({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
@@ -277,26 +450,35 @@ export function LessonRatesPage() {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [loading, setLoading] = useState(true);
 
-  // Track which instruments/categories are in use (to disable delete)
   const [instrumentsInUse, setInstrumentsInUse] = useState<Set<string>>(new Set());
   const [categoriesInUse, setCategoriesInUse] = useState<Set<string>>(new Set());
+  const [locationsInUse, setLocationsInUse] = useState<Set<string>>(new Set());
 
   async function loadMeta() {
     setLoading(true);
-    const [teachersRes, locationsRes, categoriesRes, instrumentsRes, studentsRes, ratesRes] = await Promise.all([
+    const [
+      teachersRes, locationsRes, categoriesRes, instrumentsRes,
+      studentsInstrRes, ratesRes, studentsLocRes, lessonsLocRes,
+    ] = await Promise.all([
       supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
       supabase.from('locations').select('*').order('name'),
       supabase.from('lesson_categories').select('*').order('sort_order'),
       supabase.from('instruments').select('*').order('name'),
       supabase.from('students').select('instrument_id').not('instrument_id', 'is', null),
       supabase.from('lesson_rates').select('category'),
+      supabase.from('students').select('location_id').not('location_id', 'is', null),
+      supabase.from('lessons').select('location_id').not('location_id', 'is', null),
     ]);
     setTeachers(teachersRes.data ?? []);
     setLocations(locationsRes.data ?? []);
     setCategories((categoriesRes.data ?? []) as LessonCategory[]);
     setInstruments((instrumentsRes.data ?? []) as Instrument[]);
-    setInstrumentsInUse(new Set((studentsRes.data ?? []).map((s: any) => s.instrument_id)));
+    setInstrumentsInUse(new Set((studentsInstrRes.data ?? []).map((s: any) => s.instrument_id)));
     setCategoriesInUse(new Set((ratesRes.data ?? []).map((r: any) => r.category)));
+    setLocationsInUse(new Set([
+      ...(studentsLocRes.data ?? []).map((s: any) => s.location_id),
+      ...(lessonsLocRes.data ?? []).map((l: any) => l.location_id),
+    ]));
     setLoading(false);
   }
 
@@ -317,6 +499,26 @@ export function LessonRatesPage() {
 
   async function deleteInstrument(id: string) {
     const { error } = await supabase.from('instruments').delete().eq('id', id);
+    if (error) { alert(error.message); return; }
+    await loadMeta();
+  }
+
+  // ── Location CRUD ────────────────────────────────────────────────────────
+
+  async function addLocation(loc: { name: string; address: string; city: string; zone: string }) {
+    const { error } = await supabase.from('locations').insert(loc);
+    if (error) { alert(error.message); return; }
+    await loadMeta();
+  }
+
+  async function updateLocation(id: string, updates: { name: string; address: string; city: string; zone: string }) {
+    const { error } = await supabase.from('locations').update(updates).eq('id', id);
+    if (error) { alert(error.message); return; }
+    await loadMeta();
+  }
+
+  async function deleteLocation(id: string) {
+    const { error } = await supabase.from('locations').delete().eq('id', id);
     if (error) { alert(error.message); return; }
     await loadMeta();
   }
@@ -355,31 +557,26 @@ export function LessonRatesPage() {
       </div>
 
       {/* Instruments admin panel */}
-      {(() => {
-        const allowedInstruments = instruments.filter(i => ALLOWED_INSTRUMENTS.includes(i.name));
-        const missingInstruments = ALLOWED_INSTRUMENTS.filter(name => !instruments.some(i => i.name === name));
-        return (
-          <AdminPanel title="Instruments" count={allowedInstruments.length}>
-            {allowedInstruments.map(inst => (
-              <EditableRow key={inst.id} name={inst.name}
-                onRename={name => renameInstrument(inst.id, name)}
-                onDelete={() => deleteInstrument(inst.id)}
-                deleteDisabled={instrumentsInUse.has(inst.id)} />
-            ))}
-            {missingInstruments.length > 0 && (
-              <div className="px-4 py-2 border-t border-gray-100">
-                <select
-                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none mr-2"
-                  defaultValue=""
-                  onChange={async e => { if (e.target.value) { await addInstrument(e.target.value); e.target.value = ''; } }}>
-                  <option value="">+ Add missing instrument…</option>
-                  {missingInstruments.map(name => <option key={name} value={name}>{name}</option>)}
-                </select>
-              </div>
-            )}
-          </AdminPanel>
-        );
-      })()}
+      <AdminPanel title="Instruments" count={instruments.length}>
+        {instruments.map(inst => (
+          <EditableRow key={inst.id} name={inst.name}
+            onRename={name => renameInstrument(inst.id, name)}
+            onDelete={() => deleteInstrument(inst.id)}
+            deleteDisabled={instrumentsInUse.has(inst.id)} />
+        ))}
+        <InlineAdder placeholder="New instrument name (e.g. Tabla)…" onAdd={addInstrument} />
+      </AdminPanel>
+
+      {/* Locations admin panel */}
+      <AdminPanel title="Locations" count={locations.length}>
+        {locations.map(loc => (
+          <LocationRow key={loc.id} location={loc}
+            onSave={updates => updateLocation(loc.id, updates)}
+            onDelete={() => deleteLocation(loc.id)}
+            deleteDisabled={locationsInUse.has(loc.id)} />
+        ))}
+        <AddLocationForm onAdd={addLocation} />
+      </AdminPanel>
 
       {/* Lesson categories admin panel */}
       <AdminPanel title="Lesson Categories" count={categories.length}>
@@ -389,7 +586,7 @@ export function LessonRatesPage() {
             onDelete={() => deleteCategory(cat.id)}
             deleteDisabled={categoriesInUse.has(cat.name)} />
         ))}
-        <InlineAdder placeholder="New category name..." onAdd={addCategory} />
+        <InlineAdder placeholder="New category name…" onAdd={addCategory} />
       </AdminPanel>
 
       {/* Per-teacher rate grids */}
