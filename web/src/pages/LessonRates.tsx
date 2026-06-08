@@ -9,7 +9,7 @@ const YEARS = [CURRENT_YEAR, (Number(CURRENT_YEAR) - 1).toString()];
 // ── Shared types ─────────────────────────────────────────────────────────────
 
 interface Teacher { id: string; full_name: string; }
-interface LessonCategory { id: string; name: string; sort_order: number; }
+interface LessonCategoryRow { id: string; name: string; sort_order: number; }
 interface Instrument { id: string; name: string; }
 
 function rateKey(category: string, locationId: string | null) {
@@ -175,7 +175,7 @@ function TeacherList({ teachers, rateCounts, selectedId, onSelect }: {
 function RateEditor({ teacher, locations, categories, year }: {
   teacher: Teacher;
   locations: Location[];
-  categories: LessonCategory[];
+  categories: LessonCategoryRow[];
   year: string;
 }) {
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(
@@ -183,28 +183,32 @@ function RateEditor({ teacher, locations, categories, year }: {
   );
   const [rateMap, setRateMap] = useState<Record<string, LessonRate>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadRates = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('lesson_rates')
       .select('*')
       .eq('teacher_id', teacher.id)
       .eq('academic_year', year);
+    if (error) { setLoadError(error.message); setLoading(false); return; }
     const map: Record<string, LessonRate> = {};
     for (const r of data ?? []) {
       map[rateKey(r.category, r.is_online ? null : r.location_id)] = r as LessonRate;
     }
     setRateMap(map);
+    setLoadError(null);
     setLoading(false);
   }, [teacher.id, year]);
 
   useEffect(() => { loadRates(); }, [loadRates]);
 
   // Reset to first location when teacher changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     setSelectedLocationId(locations[0]?.id ?? null);
-  }, [teacher.id, locations]);
+  }, [teacher.id]);
 
   async function saveRate(category: string, locationId: string | null, value: number) {
     const isOnline = locationId === null;
@@ -274,6 +278,8 @@ function RateEditor({ teacher, locations, categories, year }: {
       <div className="px-5 py-3 flex-1 overflow-y-auto">
         {loading ? (
           <p className="text-gray-400 text-sm text-center py-8">Loading…</p>
+        ) : loadError ? (
+          <p className="text-red-400 text-sm text-center py-8">{loadError}</p>
         ) : categories.length === 0 ? (
           <p className="text-gray-400 text-sm text-center py-8">No categories yet. Add via Manage.</p>
         ) : (
@@ -301,7 +307,7 @@ function AdminModal(_p: {
   onClose: () => void;
   locations: Location[];
   instruments: Instrument[];
-  categories: LessonCategory[];
+  categories: LessonCategoryRow[];
   locationsInUse: Set<string>;
   instrumentsInUse: Set<string>;
   categoriesInUse: Set<string>;
@@ -313,7 +319,7 @@ function AdminModal(_p: {
 export function LessonRatesPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
-  const [categories, setCategories] = useState<LessonCategory[]>([]);
+  const [categories, setCategories] = useState<LessonCategoryRow[]>([]);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [rateCounts, setRateCounts] = useState<Record<string, number>>({});
   const [year, setYear] = useState(CURRENT_YEAR);
@@ -342,7 +348,7 @@ export function LessonRatesPage() {
     const ts = teachersRes.data ?? [];
     setTeachers(ts);
     setLocations(locationsRes.data ?? []);
-    setCategories((categoriesRes.data ?? []) as LessonCategory[]);
+    setCategories((categoriesRes.data ?? []) as LessonCategoryRow[]);
     setInstruments((instrumentsRes.data ?? []) as Instrument[]);
     setInstrumentsInUse(new Set((studentsInstrRes.data ?? []).map((s: any) => s.instrument_id)));
     setCategoriesInUse(new Set((ratesRes.data ?? []).map((r: any) => r.category)));
