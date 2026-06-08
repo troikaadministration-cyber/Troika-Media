@@ -22,7 +22,9 @@ const END_HOUR    = 21; // 9 pm
 const GRID_HEIGHT = (END_HOUR - START_HOUR) * HOUR_HEIGHT; // 896 px
 
 function timeToMinutes(time: string): number {
-  const [h, m] = time.split(':').map(Number);
+  const parts = time.split(':');
+  const h = Number(parts[0]) || 0;
+  const m = Number(parts[1]) || 0;
   return h * 60 + m;
 }
 
@@ -208,6 +210,7 @@ export function SchedulePage() {
   }
 
   const displayLessons = viewMode === 'day' ? lessons : weekLessons;
+  const todayStr = new Date().toISOString().split('T')[0];
 
   return (
     <div>
@@ -504,7 +507,7 @@ export function SchedulePage() {
             <div className="w-14 flex-shrink-0 border-r border-gray-100 bg-gray-50" />
             {getWeekDays(selectedDate).map((day) => {
               const d = new Date(day + 'T00:00');
-              const isToday = day === new Date().toISOString().split('T')[0];
+              const isToday = day === todayStr;
               return (
                 <div key={day} className={`flex-1 text-center py-2 border-r last:border-r-0 border-gray-100 ${isToday ? 'bg-coral/5' : 'bg-gray-50'}`}>
                   <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">
@@ -539,7 +542,7 @@ export function SchedulePage() {
 
             {/* Day columns */}
             {getWeekDays(selectedDate).map((day) => {
-              const isToday = day === new Date().toISOString().split('T')[0];
+              const isToday = day === todayStr;
               const dayLessons = weekLessons.filter((l: any) => l.date === day);
               const laidOut = computeOverlapLayout(dayLessons);
 
@@ -576,6 +579,7 @@ export function SchedulePage() {
                       <div
                         key={lesson.id}
                         className={`absolute overflow-hidden rounded-r border-l-2 px-1 cursor-pointer select-none hover:brightness-95 transition-[filter] ${colorClass}`}
+                        onClick={() => { setSelectedDate(lesson.date); setViewMode('day'); }}
                         style={{
                           top: topPx,
                           height: heightPx,
