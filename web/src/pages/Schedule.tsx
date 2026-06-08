@@ -30,6 +30,7 @@ function computeOverlapLayout(lessons: any[]) {
   if (!lessons.length) return [];
 
   const events = lessons
+    .filter(l => l.start_time)
     .map(l => ({
       ...l,
       _startMin: timeToMinutes(l.start_time),
@@ -40,8 +41,8 @@ function computeOverlapLayout(lessons: any[]) {
   const colEnds: number[] = [];
   const assigned = events.map(ev => {
     let col = colEnds.findIndex(end => end <= ev._startMin);
-    if (col === -1) { col = colEnds.length; colEnds.push(0); }
-    colEnds[col] = ev._endMin;
+    if (col === -1) { col = colEnds.length; colEnds.push(ev._endMin); }
+    else { colEnds[col] = ev._endMin; }
     return col;
   });
 
