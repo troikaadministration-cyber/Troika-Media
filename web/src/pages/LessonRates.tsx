@@ -354,7 +354,7 @@ function InstrumentsTab({ instruments, inUse, onRefresh }: {
           className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
         <button onClick={add} disabled={addSaving || !adding.trim()}
           className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
-          <Plus size={13} /> Add
+          <Plus size={13} /> {addSaving ? 'Adding…' : 'Add'}
         </button>
       </div>
       {addError && <p className="text-xs text-red-500 px-4 pb-2">{addError}</p>}
@@ -415,7 +415,7 @@ function CategoriesTab({ categories, inUse, onRefresh }: {
           className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
         <button onClick={add} disabled={addSaving || !adding.trim()}
           className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
-          <Plus size={13} /> Add
+          <Plus size={13} /> {addSaving ? 'Adding…' : 'Add'}
         </button>
       </div>
       {addError && <p className="text-xs text-red-500 px-4 pb-2">{addError}</p>}
@@ -770,6 +770,7 @@ export function LessonRatesPage() {
       )}
 
       <AdminModal
+        key={adminOpen ? 'open' : 'closed'}
         open={adminOpen}
         onClose={() => { setAdminOpen(false); loadMeta(); }}
         locations={locations}

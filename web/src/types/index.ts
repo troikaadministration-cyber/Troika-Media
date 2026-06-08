@@ -23,9 +23,9 @@ export interface Profile {
 export interface Location {
   id: string;
   name: string;
-  address: string;
-  city: string;
-  zone: string;
+  address: string | null;
+  city: string | null;
+  zone: string | null;
   created_at: string;
 }
 
