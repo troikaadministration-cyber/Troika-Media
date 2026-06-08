@@ -378,12 +378,14 @@ function TeacherRateGrid({ teacher, locations, categories, year }: TeacherRateGr
       const isOnline = locationId === null;
       const existing = rateMap[rateKey(category, locationId)];
       if (existing) {
-        await supabase.from('lesson_rates').update({ rate_per_lesson: value }).eq('id', existing.id);
+        const { error } = await supabase.from('lesson_rates').update({ rate_per_lesson: value }).eq('id', existing.id);
+        if (error) { alert(`Save failed: ${error.message}`); return; }
       } else {
-        await supabase.from('lesson_rates').insert({
+        const { error } = await supabase.from('lesson_rates').insert({
           teacher_id: teacher.id, location_id: isOnline ? null : locationId,
           category, rate_per_lesson: value, is_online: isOnline, academic_year: year,
         });
+        if (error) { alert(`Save failed: ${error.message}`); return; }
       }
       await load();
     } finally { setSaving(false); }
@@ -392,7 +394,8 @@ function TeacherRateGrid({ teacher, locations, categories, year }: TeacherRateGr
   async function deleteCell(category: string, locationId: string | null) {
     const existing = rateMap[rateKey(category, locationId)];
     if (!existing) return;
-    await supabase.from('lesson_rates').delete().eq('id', existing.id);
+    const { error } = await supabase.from('lesson_rates').delete().eq('id', existing.id);
+    if (error) { alert(`Delete failed: ${error.message}`); return; }
     await load();
   }
 
