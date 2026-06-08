@@ -60,12 +60,37 @@ function EditableItem({ name, onRename, onDelete, deleteDisabled }: {
 
 // ── Placeholder shells (filled in later tasks) ────────────────────────────────
 
-function TeacherList(_p: {
+function TeacherList({ teachers, rateCounts, selectedId, onSelect }: {
   teachers: Teacher[];
   rateCounts: Record<string, number>;
   selectedId: string | null;
   onSelect: (id: string) => void;
-}) { return <div className="text-gray-400 text-sm p-4">Teacher list</div>; }
+}) {
+  return (
+    <div className="w-44 flex-shrink-0 flex flex-col gap-1.5">
+      <p className="text-xs font-semibold uppercase text-gray-400 tracking-wide px-1 mb-1">Teachers</p>
+      {teachers.map(t => {
+        const count = rateCounts[t.id] ?? 0;
+        const isSelected = t.id === selectedId;
+        return (
+          <button key={t.id} onClick={() => onSelect(t.id)}
+            className={`w-full text-left rounded-xl px-3 py-2.5 border transition-all ${
+              isSelected
+                ? 'bg-teal/10 border-teal text-navy'
+                : 'bg-white border-gray-100 hover:border-gray-200 text-navy'
+            }`}>
+            <p className="text-sm font-semibold truncate">{t.full_name}</p>
+            <p className={`text-xs mt-0.5 font-medium ${
+              count === 0 ? 'text-amber-400' : 'text-teal'
+            }`}>
+              {count === 0 ? '⚠ No rates set' : `${count} rate${count === 1 ? '' : 's'}`}
+            </p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function RateEditor(_p: {
   teacher: Teacher;
