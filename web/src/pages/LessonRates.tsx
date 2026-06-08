@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { ChevronDown, ChevronRight, Trash2, Plus, Check, X } from 'lucide-react';
+import { Settings, Check, X, Trash2, Plus } from 'lucide-react';
 import type { LessonRate, Location } from '../types';
 
 const CURRENT_YEAR = new Date().getFullYear().toString();
 const YEARS = [CURRENT_YEAR, (Number(CURRENT_YEAR) - 1).toString()];
+
+// ── Shared types ─────────────────────────────────────────────────────────────
 
 interface Teacher { id: string; full_name: string; }
 interface LessonCategory { id: string; name: string; sort_order: number; }
@@ -14,104 +16,11 @@ function rateKey(category: string, locationId: string | null) {
   return `${category}::${locationId ?? 'online'}`;
 }
 
-// ── RateCell ─────────────────────────────────────────────────────────────────
+// ── EditableItem — inline rename + delete for admin lists ─────────────────────
 
-interface RateCellProps {
-  rate: LessonRate | undefined;
-  onSave: (value: number) => Promise<void>;
-  onDelete: () => Promise<void>;
-}
-
-function RateCell({ rate, onSave, onDelete }: RateCellProps) {
-  const [editing, setEditing] = useState(false);
-  const [inputVal, setInputVal] = useState('');
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  function startEdit() {
-    setInputVal(rate ? String(rate.rate_per_lesson) : '');
-    setEditing(true);
-    setTimeout(() => inputRef.current?.select(), 0);
-  }
-
-  async function commit() {
-    setEditing(false);
-    const trimmed = inputVal.trim();
-    if (trimmed === '') { await onDelete(); }
-    else {
-      const num = parseFloat(trimmed);
-      if (!isNaN(num) && num > 0) await onSave(num);
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { setEditing(false); }
-  }
-
-  if (editing) {
-    return (
-      <div className="px-2 py-1.5">
-        <input ref={inputRef} autoFocus type="number" min={0} value={inputVal}
-          onChange={(e) => setInputVal(e.target.value)} onBlur={commit} onKeyDown={handleKeyDown}
-          className="w-full border border-teal rounded-lg px-2 py-1.5 text-sm font-semibold text-navy text-center focus:outline-none focus:ring-2 focus:ring-teal/40"
-          placeholder="e.g. 1750" />
-      </div>
-    );
-  }
-
-  if (rate) {
-    return (
-      <div onClick={startEdit}
-        className="mx-2 my-1.5 rounded-lg px-2 py-1.5 text-sm font-bold text-center cursor-pointer select-none"
-        style={{ background: '#ecfdf5', border: '1.5px solid #6ee7b7', color: '#065f46' }}>
-        ₹{Number(rate.rate_per_lesson).toLocaleString('en-IN')}
-      </div>
-    );
-  }
-
-  return (
-    <div onClick={startEdit}
-      className="mx-2 my-1.5 rounded-lg px-2 py-1.5 text-xs text-center cursor-pointer select-none text-gray-400"
-      style={{ border: '1.5px dashed #cbd5e1', background: '#fafafa' }}>
-      + Set rate
-    </div>
-  );
-}
-
-// ── InlineAdder: shared "type and press enter to add" row ────────────────────
-
-function InlineAdder({ placeholder, onAdd }: { placeholder: string; onAdd: (name: string) => Promise<void> }) {
-  const [value, setValue] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  async function submit() {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    setSaving(true);
-    await onAdd(trimmed);
-    setValue('');
-    setSaving(false);
-  }
-
-  return (
-    <div className="flex items-center gap-2 px-4 py-2 border-t border-gray-100">
-      <input value={value} onChange={e => setValue(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && submit()}
-        placeholder={placeholder}
-        className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
-      <button onClick={submit} disabled={saving || !value.trim()}
-        className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
-        <Plus size={14} /> Add
-      </button>
-    </div>
-  );
-}
-
-// ── EditableRow: name with inline rename + delete ────────────────────────────
-
-function EditableRow({ name, onRename, onDelete, deleteDisabled }: {
+function EditableItem({ name, onRename, onDelete, deleteDisabled }: {
   name: string;
-  onRename: (newName: string) => Promise<void>;
+  onRename: (n: string) => Promise<void>;
   onDelete: () => Promise<void>;
   deleteDisabled: boolean;
 }) {
@@ -119,8 +28,8 @@ function EditableRow({ name, onRename, onDelete, deleteDisabled }: {
   const [draft, setDraft] = useState(name);
 
   async function save() {
-    const trimmed = draft.trim();
-    if (trimmed && trimmed !== name) await onRename(trimmed);
+    const t = draft.trim();
+    if (t && t !== name) await onRename(t);
     setEditing(false);
   }
 
@@ -130,8 +39,8 @@ function EditableRow({ name, onRename, onDelete, deleteDisabled }: {
         <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
           className="flex-1 text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
-        <button onClick={save} className="text-teal hover:text-teal/70"><Check size={16} /></button>
-        <button onClick={() => setEditing(false)} className="text-gray-400 hover:text-navy"><X size={16} /></button>
+        <button onClick={save} className="text-teal"><Check size={15} /></button>
+        <button onClick={() => setEditing(false)} className="text-gray-400"><X size={15} /></button>
       </div>
     );
   }
@@ -142,327 +51,61 @@ function EditableRow({ name, onRename, onDelete, deleteDisabled }: {
         className="text-sm text-navy hover:underline text-left flex-1">{name}</button>
       <button onClick={onDelete} disabled={deleteDisabled}
         title={deleteDisabled ? 'In use — cannot delete' : 'Delete'}
-        className="text-gray-300 hover:text-coral disabled:opacity-30 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 transition-opacity">
-        <Trash2 size={14} />
+        className="text-gray-300 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 transition-opacity">
+        <Trash2 size={13} />
       </button>
     </div>
   );
 }
 
-// ── LocationRow: multi-field editable row for locations ───────────────────────
+// ── Placeholder shells (filled in later tasks) ────────────────────────────────
 
-function LocationRow({ location, onSave, onDelete, deleteDisabled }: {
-  location: Location;
-  onSave: (updates: { name: string; address: string; city: string; zone: string }) => Promise<void>;
-  onDelete: () => Promise<void>;
-  deleteDisabled: boolean;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({
-    name: location.name,
-    address: location.address ?? '',
-    city: location.city ?? '',
-    zone: location.zone ?? '',
-  });
+function TeacherList(_p: {
+  teachers: Teacher[];
+  rateCounts: Record<string, number>;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) { return <div className="text-gray-400 text-sm p-4">Teacher list</div>; }
 
-  async function save() {
-    const trimmed = {
-      name: draft.name.trim(),
-      address: draft.address.trim(),
-      city: draft.city.trim(),
-      zone: draft.zone.trim(),
-    };
-    if (!trimmed.name) return;
-    await onSave(trimmed);
-    setEditing(false);
-  }
-
-  if (editing) {
-    return (
-      <div className="px-4 py-3 border-b border-gray-50 space-y-2">
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-xs text-gray-400 mb-0.5 block">Name *</label>
-            <input autoFocus value={draft.name}
-              onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
-              onKeyDown={e => e.key === 'Escape' && setEditing(false)}
-              className="w-full text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs text-gray-400 mb-0.5 block">City</label>
-            <input value={draft.city}
-              onChange={e => setDraft(d => ({ ...d, city: e.target.value }))}
-              placeholder="e.g. Mumbai"
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-xs text-gray-400 mb-0.5 block">Address</label>
-            <input value={draft.address}
-              onChange={e => setDraft(d => ({ ...d, address: e.target.value }))}
-              placeholder="Street address"
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs text-gray-400 mb-0.5 block">Zone</label>
-            <input value={draft.zone}
-              onChange={e => setDraft(d => ({ ...d, zone: e.target.value }))}
-              placeholder="e.g. West"
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={save} disabled={!draft.name.trim()}
-            className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
-            <Check size={14} /> Save
-          </button>
-          <button onClick={() => setEditing(false)}
-            className="text-sm text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100">Cancel</button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center justify-between px-4 py-2 hover:bg-gray-50 group">
-      <div className="flex-1 min-w-0">
-        <button
-          onClick={() => {
-            setDraft({ name: location.name, address: location.address ?? '', city: location.city ?? '', zone: location.zone ?? '' });
-            setEditing(true);
-          }}
-          className="text-sm text-navy hover:underline text-left font-medium">{location.name}</button>
-        {(location.city || location.address) && (
-          <p className="text-xs text-gray-400 truncate">
-            {[location.address, location.city, location.zone].filter(Boolean).join(', ')}
-          </p>
-        )}
-      </div>
-      <button onClick={onDelete} disabled={deleteDisabled}
-        title={deleteDisabled ? 'In use — cannot delete' : 'Delete'}
-        className="text-gray-300 hover:text-coral disabled:opacity-30 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 transition-opacity ml-3 flex-shrink-0">
-        <Trash2 size={14} />
-      </button>
-    </div>
-  );
-}
-
-// ── AddLocationForm: expandable multi-field form ──────────────────────────────
-
-function AddLocationForm({ onAdd }: {
-  onAdd: (loc: { name: string; address: string; city: string; zone: string }) => Promise<void>;
-}) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', address: '', city: '', zone: '' });
-  const [saving, setSaving] = useState(false);
-
-  async function submit() {
-    if (!form.name.trim()) return;
-    setSaving(true);
-    await onAdd({ name: form.name.trim(), address: form.address.trim(), city: form.city.trim(), zone: form.zone.trim() });
-    setForm({ name: '', address: '', city: '', zone: '' });
-    setOpen(false);
-    setSaving(false);
-  }
-
-  if (!open) {
-    return (
-      <div className="px-4 py-2 border-t border-gray-100">
-        <button onClick={() => setOpen(true)}
-          className="flex items-center gap-1 text-sm text-teal hover:text-teal/80 font-medium">
-          <Plus size={14} /> Add location
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="px-4 py-3 border-t border-gray-100 space-y-2">
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="text-xs text-gray-400 mb-0.5 block">Name *</label>
-          <input autoFocus value={form.name}
-            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            onKeyDown={e => e.key === 'Enter' && submit()}
-            placeholder="e.g. Bandra Studio"
-            className="w-full text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-400 mb-0.5 block">City</label>
-          <input value={form.city}
-            onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
-            placeholder="e.g. Mumbai"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="text-xs text-gray-400 mb-0.5 block">Address</label>
-          <input value={form.address}
-            onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-            placeholder="Street address"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-400 mb-0.5 block">Zone</label>
-          <input value={form.zone}
-            onChange={e => setForm(f => ({ ...f, zone: e.target.value }))}
-            placeholder="e.g. West"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:border-teal focus:outline-none" />
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <button onClick={submit} disabled={saving || !form.name.trim()}
-          className="flex items-center gap-1 text-sm font-semibold text-white bg-teal px-3 py-1.5 rounded-lg hover:bg-teal/90 disabled:opacity-40">
-          <Plus size={14} /> {saving ? 'Adding…' : 'Add Location'}
-        </button>
-        <button onClick={() => { setOpen(false); setForm({ name: '', address: '', city: '', zone: '' }); }}
-          className="text-sm text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100">Cancel</button>
-      </div>
-    </div>
-  );
-}
-
-// ── AdminPanel: collapsible panel wrapper ────────────────────────────────────
-
-function AdminPanel({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden mb-4">
-      <button onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50">
-        <div className="flex items-center gap-2">
-          {open ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
-          <span className="text-sm font-semibold text-navy">{title}</span>
-          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{count}</span>
-        </div>
-      </button>
-      {open && <div className="border-t border-gray-100">{children}</div>}
-    </div>
-  );
-}
-
-// ── TeacherRateGrid: rate table for one teacher ──────────────────────────────
-
-interface TeacherRateGridProps {
+function RateEditor(_p: {
   teacher: Teacher;
   locations: Location[];
   categories: LessonCategory[];
   year: string;
-}
+}) { return <div className="text-gray-400 text-sm p-4">Rate editor</div>; }
 
-function TeacherRateGrid({ teacher, locations, categories, year }: TeacherRateGridProps) {
-  const [rateMap, setRateMap] = useState<Record<string, LessonRate>>({});
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+function AdminModal(_p: {
+  open: boolean;
+  onClose: () => void;
+  locations: Location[];
+  instruments: Instrument[];
+  categories: LessonCategory[];
+  locationsInUse: Set<string>;
+  instrumentsInUse: Set<string>;
+  categoriesInUse: Set<string>;
+  onRefresh: () => void;
+}) { return null; }
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const { data } = await supabase.from('lesson_rates').select('*')
-      .eq('teacher_id', teacher.id).eq('academic_year', year);
-    const map: Record<string, LessonRate> = {};
-    for (const r of data ?? []) {
-      map[rateKey(r.category, r.is_online ? null : r.location_id)] = r as LessonRate;
-    }
-    setRateMap(map);
-    setLoading(false);
-  }, [teacher.id, year]);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function saveCell(category: string, locationId: string | null, value: number) {
-    if (saving) return;
-    setSaving(true);
-    try {
-      const isOnline = locationId === null;
-      const existing = rateMap[rateKey(category, locationId)];
-      if (existing) {
-        const { error } = await supabase.from('lesson_rates').update({ rate_per_lesson: value }).eq('id', existing.id);
-        if (error) { alert(`Save failed: ${error.message}`); return; }
-      } else {
-        const { error } = await supabase.from('lesson_rates').insert({
-          teacher_id: teacher.id, location_id: isOnline ? null : locationId,
-          category, rate_per_lesson: value, is_online: isOnline, academic_year: year,
-        });
-        if (error) { alert(`Save failed: ${error.message}`); return; }
-      }
-      await load();
-    } finally { setSaving(false); }
-  }
-
-  async function deleteCell(category: string, locationId: string | null) {
-    const existing = rateMap[rateKey(category, locationId)];
-    if (!existing) return;
-    const { error } = await supabase.from('lesson_rates').delete().eq('id', existing.id);
-    if (error) { alert(`Delete failed: ${error.message}`); return; }
-    await load();
-  }
-
-  const cols = locations.length + 1; // locations + online
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-      <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
-        <div className="w-8 h-8 rounded-full bg-teal/10 flex items-center justify-center text-teal font-bold text-sm">
-          {teacher.full_name.charAt(0)}
-        </div>
-        <h3 className="font-semibold text-navy">{teacher.full_name}</h3>
-        {saving && <span className="text-xs text-gray-400 ml-auto">Saving…</span>}
-      </div>
-      {loading ? (
-        <div className="py-6 text-center text-gray-400 text-sm">Loading…</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <div className="grid text-xs font-semibold uppercase text-gray-500 bg-gray-50/60 border-b border-gray-100"
-            style={{ gridTemplateColumns: `180px repeat(${cols}, 1fr)`, minWidth: `${180 + cols * 120}px` }}>
-            <div className="px-4 py-2">Lesson Type</div>
-            {locations.map(loc => <div key={loc.id} className="px-2 py-2 text-center">{loc.name}</div>)}
-            <div className="px-2 py-2 text-center">Online</div>
-          </div>
-          {categories.map((cat, idx, arr) => (
-            <div key={cat.id}
-              className={`grid items-center hover:bg-gray-50/40 ${idx < arr.length - 1 ? 'border-b border-gray-50' : ''}`}
-              style={{ gridTemplateColumns: `180px repeat(${cols}, 1fr)`, minWidth: `${180 + cols * 120}px` }}>
-              <div className="px-4 py-1 text-sm text-gray-700">{cat.name}</div>
-              {locations.map(loc => (
-                <RateCell key={loc.id}
-                  rate={rateMap[rateKey(cat.name, loc.id)]}
-                  onSave={v => saveCell(cat.name, loc.id, v)}
-                  onDelete={() => deleteCell(cat.name, loc.id)} />
-              ))}
-              <RateCell
-                rate={rateMap[rateKey(cat.name, null)]}
-                onSave={v => saveCell(cat.name, null, v)}
-                onDelete={() => deleteCell(cat.name, null)} />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Main Page ────────────────────────────────────────────────────────────────
+// ── LessonRatesPage ───────────────────────────────────────────────────────────
 
 export function LessonRatesPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [categories, setCategories] = useState<LessonCategory[]>([]);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
+  const [rateCounts, setRateCounts] = useState<Record<string, number>>({});
   const [year, setYear] = useState(CURRENT_YEAR);
   const [loading, setLoading] = useState(true);
-
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [instrumentsInUse, setInstrumentsInUse] = useState<Set<string>>(new Set());
   const [categoriesInUse, setCategoriesInUse] = useState<Set<string>>(new Set());
   const [locationsInUse, setLocationsInUse] = useState<Set<string>>(new Set());
 
-  async function loadMeta() {
+  const loadMeta = useCallback(async () => {
     setLoading(true);
-    const [
-      teachersRes, locationsRes, categoriesRes, instrumentsRes,
-      studentsInstrRes, ratesRes, studentsLocRes, lessonsLocRes,
-    ] = await Promise.all([
+    const [teachersRes, locationsRes, categoriesRes, instrumentsRes,
+      studentsInstrRes, ratesRes, studentsLocRes, lessonsLocRes, rateCountsRes] = await Promise.all([
       supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
       supabase.from('locations').select('*').order('name'),
       supabase.from('lesson_categories').select('*').order('sort_order'),
@@ -471,8 +114,11 @@ export function LessonRatesPage() {
       supabase.from('lesson_rates').select('category'),
       supabase.from('students').select('location_id').not('location_id', 'is', null),
       supabase.from('lessons').select('location_id').not('location_id', 'is', null),
+      supabase.from('lesson_rates').select('teacher_id').eq('academic_year', year),
     ]);
-    setTeachers(teachersRes.data ?? []);
+
+    const ts = teachersRes.data ?? [];
+    setTeachers(ts);
     setLocations(locationsRes.data ?? []);
     setCategories((categoriesRes.data ?? []) as LessonCategory[]);
     setInstruments((instrumentsRes.data ?? []) as Instrument[]);
@@ -482,132 +128,81 @@ export function LessonRatesPage() {
       ...(studentsLocRes.data ?? []).map((s: any) => s.location_id),
       ...(lessonsLocRes.data ?? []).map((l: any) => l.location_id),
     ]));
+
+    const counts: Record<string, number> = {};
+    for (const r of rateCountsRes.data ?? []) {
+      const tid = (r as any).teacher_id;
+      if (tid) counts[tid] = (counts[tid] ?? 0) + 1;
+    }
+    setRateCounts(counts);
+
+    setSelectedTeacherId(prev => prev ?? (ts[0]?.id ?? null));
     setLoading(false);
-  }
+  }, [year]);
 
-  useEffect(() => { loadMeta(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadMeta(); }, [loadMeta]);
 
-  // ── Instrument CRUD ──────────────────────────────────────────────────────
-
-  async function addInstrument(name: string) {
-    const { error } = await supabase.from('instruments').insert({ name });
-    if (error) { alert(error.message); return; }
-    await loadMeta();
-  }
-
-  async function renameInstrument(id: string, name: string) {
-    await supabase.from('instruments').update({ name }).eq('id', id);
-    await loadMeta();
-  }
-
-  async function deleteInstrument(id: string) {
-    const { error } = await supabase.from('instruments').delete().eq('id', id);
-    if (error) { alert(error.message); return; }
-    await loadMeta();
-  }
-
-  // ── Location CRUD ────────────────────────────────────────────────────────
-
-  async function addLocation(loc: { name: string; address: string; city: string; zone: string }) {
-    const { error } = await supabase.from('locations').insert(loc);
-    if (error) { alert(error.message); return; }
-    await loadMeta();
-  }
-
-  async function updateLocation(id: string, updates: { name: string; address: string; city: string; zone: string }) {
-    const { error } = await supabase.from('locations').update(updates).eq('id', id);
-    if (error) { alert(error.message); return; }
-    await loadMeta();
-  }
-
-  async function deleteLocation(id: string) {
-    const { error } = await supabase.from('locations').delete().eq('id', id);
-    if (error) { alert(error.message); return; }
-    await loadMeta();
-  }
-
-  // ── Category CRUD ────────────────────────────────────────────────────────
-
-  async function addCategory(name: string) {
-    const maxOrder = categories.reduce((m, c) => Math.max(m, c.sort_order), 0);
-    const { error } = await supabase.from('lesson_categories').insert({ name, sort_order: maxOrder + 1 });
-    if (error) { alert(error.message); return; }
-    await loadMeta();
-  }
-
-  async function renameCategory(id: string, name: string) {
-    await supabase.from('lesson_categories').update({ name }).eq('id', id);
-    await loadMeta();
-  }
-
-  async function deleteCategory(id: string) {
-    const { error } = await supabase.from('lesson_categories').delete().eq('id', id);
-    if (error) { alert(error.message); return; }
-    await loadMeta();
-  }
+  const selectedTeacher = teachers.find(t => t.id === selectedTeacherId) ?? null;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-bold text-navy">Lesson Rates</h1>
-          <p className="text-gray-500 text-sm mt-1">Click any cell to set or edit a rate</p>
+          <p className="text-gray-400 text-sm mt-0.5">Select a teacher, pick a location, set rates</p>
         </div>
-        <select value={year} onChange={(e) => setYear(e.target.value)}
-          className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy">
-          {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
+        <div className="flex items-center gap-3">
+          <select value={year} onChange={e => setYear(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy">
+            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <button onClick={() => setAdminOpen(true)}
+            className="flex items-center gap-1.5 text-sm font-semibold text-navy border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50">
+            <Settings size={15} /> Manage
+          </button>
+        </div>
       </div>
 
-      {/* Instruments admin panel */}
-      <AdminPanel title="Instruments" count={instruments.length}>
-        {instruments.map(inst => (
-          <EditableRow key={inst.id} name={inst.name}
-            onRename={name => renameInstrument(inst.id, name)}
-            onDelete={() => deleteInstrument(inst.id)}
-            deleteDisabled={instrumentsInUse.has(inst.id)} />
-        ))}
-        <InlineAdder placeholder="New instrument name (e.g. Tabla)…" onAdd={addInstrument} />
-      </AdminPanel>
-
-      {/* Locations admin panel */}
-      <AdminPanel title="Locations" count={locations.length}>
-        {locations.map(loc => (
-          <LocationRow key={loc.id} location={loc}
-            onSave={updates => updateLocation(loc.id, updates)}
-            onDelete={() => deleteLocation(loc.id)}
-            deleteDisabled={locationsInUse.has(loc.id)} />
-        ))}
-        <AddLocationForm onAdd={addLocation} />
-      </AdminPanel>
-
-      {/* Lesson categories admin panel */}
-      <AdminPanel title="Lesson Categories" count={categories.length}>
-        {categories.map(cat => (
-          <EditableRow key={cat.id} name={cat.name}
-            onRename={name => renameCategory(cat.id, name)}
-            onDelete={() => deleteCategory(cat.id)}
-            deleteDisabled={categoriesInUse.has(cat.name)} />
-        ))}
-        <InlineAdder placeholder="New category name…" onAdd={addCategory} />
-      </AdminPanel>
-
-      {/* Per-teacher rate grids */}
+      {/* Body */}
       {loading ? (
-        <p className="text-gray-400 text-center py-12">Loading…</p>
+        <p className="text-gray-400 text-center py-16">Loading…</p>
       ) : teachers.length === 0 ? (
-        <p className="text-gray-400 text-center py-12">No teachers found. Add teachers from the Teachers page first.</p>
+        <p className="text-gray-400 text-center py-16">No teachers yet. Add from the Teachers page first.</p>
       ) : (
-        teachers.map(teacher => (
-          <TeacherRateGrid
-            key={`${teacher.id}-${year}`}
-            teacher={teacher}
-            locations={locations}
-            categories={categories}
-            year={year}
+        <div className="flex gap-5 flex-1 min-h-0">
+          <TeacherList
+            teachers={teachers}
+            rateCounts={rateCounts}
+            selectedId={selectedTeacherId}
+            onSelect={setSelectedTeacherId}
           />
-        ))
+          <div className="flex-1 min-w-0">
+            {selectedTeacher ? (
+              <RateEditor
+                teacher={selectedTeacher}
+                locations={locations}
+                categories={categories}
+                year={year}
+              />
+            ) : (
+              <p className="text-gray-400 text-sm">Select a teacher to edit rates.</p>
+            )}
+          </div>
+        </div>
       )}
+
+      <AdminModal
+        open={adminOpen}
+        onClose={() => { setAdminOpen(false); loadMeta(); }}
+        locations={locations}
+        instruments={instruments}
+        categories={categories}
+        locationsInUse={locationsInUse}
+        instrumentsInUse={instrumentsInUse}
+        categoriesInUse={categoriesInUse}
+        onRefresh={loadMeta}
+      />
     </div>
   );
 }
