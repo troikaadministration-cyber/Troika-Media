@@ -70,20 +70,21 @@ function RateRow({ category, rate, onSave, onDelete }: {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const escapeRef = React.useRef(false);
+  const savedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset when rate prop changes (location tab switch via key on parent)
-  useEffect(() => {
-    setValue(rate ? String(rate.rate_per_lesson) : '');
-    setError(null);
-  }, [rate]);
+  useEffect(() => () => {
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+  }, []);
 
   async function commit() {
+    if (escapeRef.current) { escapeRef.current = false; return; }
     const trimmed = value.trim();
     setError(null);
     if (trimmed === '') {
       if (rate) {
         setSaving(true);
-        try { await onDelete(); } catch (e: any) { setError(e.message); }
+        try { await onDelete(); } catch (e) { setError(e instanceof Error ? e.message : 'Save failed'); }
         finally { setSaving(false); }
       }
       return;
@@ -94,15 +95,20 @@ function RateRow({ category, rate, onSave, onDelete }: {
     try {
       await onSave(num);
       setSaved(true);
-      setTimeout(() => setSaved(false), 1200);
-    } catch (e: any) {
-      setError(e.message);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 1200);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
     } finally { setSaving(false); }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Escape') {
+      escapeRef.current = true;
+      setValue(rate ? String(rate.rate_per_lesson) : '');
+      setError(null);
+      (e.target as HTMLInputElement).blur();
+    }
     if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
-    if (e.key === 'Escape') { setValue(rate ? String(rate.rate_per_lesson) : ''); setError(null); }
   }
 
   return (
