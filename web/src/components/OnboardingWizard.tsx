@@ -77,10 +77,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   const [locations, setLocations] = useState<Location[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
 
-  // Inline new instrument via dropdown
-  const [showNewInstrument, setShowNewInstrument] = useState(false);
-  const [newInstrumentName, setNewInstrumentName] = useState('');
-  const [addingInstrument, setAddingInstrument] = useState(false);
   const [allRates, setAllRates] = useState<LessonRate[]>([]);
   const [categories, setCategories] = useState<LessonCategory[]>([]);
 
@@ -90,7 +86,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     full_name: pendingProfile?.full_name ?? '',
     phone: '',
     email: pendingProfile?.email ?? '',
-    instrument_id: '',
     location_id: '',
     address: '',
   });
@@ -109,7 +104,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setStep(0);
       setError(null);
       setStudentId(null);
-      setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', instrument_id: '', location_id: '', address: '' });
+      setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', location_id: '', address: '' });
       setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0' });
       setClasses([emptyClass()]);
     }
@@ -133,20 +128,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null;
-
-  async function addInstrumentInline() {
-    const name = newInstrumentName.trim();
-    if (!name) return;
-    setAddingInstrument(true);
-    const { data, error: err } = await supabase.from('instruments').insert({ name }).select('id, name').single();
-    setAddingInstrument(false);
-    if (err) { setError(err.message); return; }
-    setInstruments(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
-    setS1(prev => ({ ...prev, instrument_id: data.id }));
-    setShowNewInstrument(false);
-    setNewInstrumentName('');
-  }
-
 
   // Step 1 → validate only, no DB writes
   function handleStep1Next() {
@@ -206,7 +187,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
             full_name: s1.full_name.trim(),
             phone: s1.phone.trim() || null,
             email: s1.email.trim() || null,
-            instrument_id: s1.instrument_id || null,
             location_id: s1.location_id || null,
             address: s1.address.trim() || null,
             user_id: pendingProfile?.id ?? null,
@@ -219,7 +199,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
             full_name: s1.full_name.trim(),
             phone: s1.phone.trim() || null,
             email: s1.email.trim() || null,
-            instrument_id: s1.instrument_id || null,
             location_id: s1.location_id || null,
             address: s1.address.trim() || null,
             is_active: true,
@@ -254,19 +233,18 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       }
 
       if (!skip && classes.length > 0) {
-        const instrName = instruments.find(i => i.id === s1.instrument_id)?.name ?? '';
         const validClasses = classes.filter(cls => cls.teacher_id);
         if (validClasses.length > 0) {
           const templateRows = validClasses.map(cls => {
-            const clsInstrName = instruments.find(i => i.id === cls.instrument_id)?.name ?? instrName;
+            const clsInstrName = instruments.find(i => i.id === cls.instrument_id)?.name ?? '';
             return {
               teacher_id: cls.teacher_id,
               day_of_week: Number(cls.day_of_week),
               start_time: cls.start_time,
               end_time: cls.end_time || null,
               location_id: s1.location_id || null,
-              instrument_id: cls.instrument_id || s1.instrument_id || null,
-              title: `${s1.full_name} – ${clsInstrName}`,
+              instrument_id: cls.instrument_id || null,
+              title: `${s1.full_name}${clsInstrName ? ` – ${clsInstrName}` : ''}`,
               student_ids: [resolvedStudentId],
               is_active: true,
             };
@@ -361,41 +339,6 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 <input type="email" value={s1.email} onChange={e => setS1(p => ({ ...p, email: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
                   placeholder="student@email.com" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Instrument</label>
-                {(() => {
-                  const allowed = instruments.filter(i => ALLOWED_INSTRUMENTS.includes(i.name));
-                  const missing = ALLOWED_INSTRUMENTS.filter(name => !instruments.some(i => i.name === name));
-                  return (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <select value={s1.instrument_id} onChange={e => setS1(p => ({ ...p, instrument_id: e.target.value }))}
-                          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
-                          <option value="">Select instrument</option>
-                          {allowed.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                        </select>
-                        {missing.length > 0 && (
-                          <button type="button" onClick={() => { setShowNewInstrument(v => !v); setNewInstrumentName(''); }}
-                            className="text-xs text-teal font-semibold hover:underline whitespace-nowrap">+ New</button>
-                        )}
-                      </div>
-                      {showNewInstrument && missing.length > 0 && (
-                        <div className="flex items-center gap-2 mt-2">
-                          <select value={newInstrumentName} onChange={e => setNewInstrumentName(e.target.value)}
-                            className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:border-teal focus:outline-none">
-                            <option value="">Select instrument to add</option>
-                            {missing.map(name => <option key={name} value={name}>{name}</option>)}
-                          </select>
-                          <button type="button" onClick={addInstrumentInline} disabled={addingInstrument || !newInstrumentName}
-                            className="text-xs text-white bg-teal px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
-                            {addingInstrument ? '…' : 'Add'}
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Address</label>
