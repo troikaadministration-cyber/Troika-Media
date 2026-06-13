@@ -32,8 +32,8 @@ export function RescheduleModal({ lesson, date, onClose, onConfirm }: Props) {
     try {
       await onConfirm(lesson.id, date, time + ':00'); // append seconds for DB
       onClose();
-    } catch (e: any) {
-      setError(e.message || 'Failed to reschedule');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to reschedule');
     } finally {
       setLoading(false);
     }
