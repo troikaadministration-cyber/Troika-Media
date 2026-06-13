@@ -98,7 +98,7 @@ export function EnrolmentsPage() {
     rates.some(r => r.location_id === selectedStudent.location_id));
   const totalLessons = form.payment_plan === 'trial' ? 1 : 39;
   const totalFee = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
-  const teacherId = (selectedRate as any)?.teacher?.id || selectedRate?.teacher_id || manualTeacherId;
+  const teacherId = selectedRate?.teacher?.id ?? selectedRate?.teacher_id ?? manualTeacherId ?? '';
   const teacherName = teachers.find(t => t.id === teacherId)?.full_name
     || (selectedRate as any)?.teacher?.full_name
     || '';
@@ -155,6 +155,8 @@ export function EnrolmentsPage() {
     setError(null);
     setGenerateResult(null);
 
+    let createdEnrolmentId: string | null = null;
+
     try {
       // 1. Create enrolment
       const { data: enrolment, error: enrolErr } = await supabase
@@ -175,9 +177,10 @@ export function EnrolmentsPage() {
         .single();
 
       if (enrolErr) throw enrolErr;
+      createdEnrolmentId = enrolment.id;
 
       // 2. Auto-generate payment instalments
-      if (form.payment_plan !== 'trial' && enrolment) {
+      if (form.payment_plan !== 'trial') {
         const { error: genErr } = await supabase.rpc('generate_instalments', {
           p_enrolment_id: enrolment.id,
         });
@@ -234,55 +237,64 @@ export function EnrolmentsPage() {
         templateTitle = selectedSlot.title || 'Lesson';
       }
 
-      // 4. Generate lessons from start_date to end_date, capped at totalLessons
+      // 4. Pre-compute all target dates
       const startDate = new Date(form.start_date + 'T00:00:00');
       const endDate = new Date(form.end_date + 'T00:00:00');
-      let created = 0;
-      let skipped = 0;
+      const targetDates: string[] = [];
       const current = new Date(startDate);
-
-      while (current <= endDate && created < totalLessons) {
+      while (current <= endDate && targetDates.length < totalLessons) {
         if (current.getDay() === templateDayOfWeek) {
-          const dateStr = current.toISOString().split('T')[0];
-
-          const { data: existing } = await supabase
-            .from('lessons')
-            .select('id')
-            .eq('teacher_id', resolvedTeacherId)
-            .eq('date', dateStr)
-            .eq('start_time', templateStartTime)
-            .limit(1);
-
-          if (existing && existing.length > 0) {
-            skipped++;
-          } else {
-            const { data: lesson, error: lessonErr } = await supabase
-              .from('lessons')
-              .insert({
-                teacher_id: resolvedTeacherId,
-                location_id: null,
-                instrument_id: templateInstrumentId || null,
-                lesson_type: 'regular',
-                date: dateStr,
-                start_time: templateStartTime,
-                end_time: templateEndTime,
-                title: templateTitle,
-              })
-              .select()
-              .single();
-
-            if (!lessonErr && lesson) {
-              await supabase.from('lesson_students').insert({
-                lesson_id: lesson.id,
-                student_id: form.student_id,
-              });
-              created++;
-            } else {
-              skipped++;
-            }
-          }
+          targetDates.push(current.toISOString().split('T')[0]);
         }
         current.setDate(current.getDate() + 1);
+      }
+
+      let created = 0;
+      let skipped = 0;
+
+      if (targetDates.length > 0) {
+        // Batch check for existing lessons
+        const { data: existingLessons } = await supabase
+          .from('lessons')
+          .select('date')
+          .eq('teacher_id', resolvedTeacherId)
+          .eq('start_time', templateStartTime)
+          .in('date', targetDates);
+
+        const existingDates = new Set((existingLessons || []).map((l: { date: string }) => l.date));
+        const newDates = targetDates.filter(d => !existingDates.has(d));
+        skipped = targetDates.length - newDates.length;
+
+        if (newDates.length > 0) {
+          // Batch insert lessons
+          const { data: insertedLessons, error: lessonsErr } = await supabase
+            .from('lessons')
+            .insert(newDates.map(date => ({
+              teacher_id: resolvedTeacherId,
+              location_id: null,
+              instrument_id: templateInstrumentId || null,
+              lesson_type: 'regular' as const,
+              date,
+              start_time: templateStartTime,
+              end_time: templateEndTime,
+              title: templateTitle,
+            })))
+            .select('id');
+
+          if (lessonsErr) throw lessonsErr;
+
+          if (insertedLessons && insertedLessons.length > 0) {
+            // Batch insert lesson_students
+            const { error: lsErr } = await supabase
+              .from('lesson_students')
+              .insert(insertedLessons.map((l: { id: string }) => ({
+                lesson_id: l.id,
+                student_id: form.student_id,
+              })));
+            if (lsErr) throw lsErr;
+            created = insertedLessons.length;
+          }
+        }
       }
 
       const resultMsg = `Enrolment created. ${created} lesson${created !== 1 ? 's' : ''} generated${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
@@ -293,6 +305,10 @@ export function EnrolmentsPage() {
       closeModal();
       fetchAll();
     } catch (err: any) {
+      // Compensating delete if enrolment was created but later steps failed
+      if (createdEnrolmentId) {
+        await supabase.from('student_enrolments').delete().eq('id', createdEnrolmentId);
+      }
       setError(err.message || 'Failed to create enrolment');
     } finally {
       setSaving(false);
