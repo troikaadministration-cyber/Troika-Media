@@ -15,7 +15,7 @@ function nextDayOfWeek(from: Date, dow: number): Date {
 }
 
 function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export function usePendingReschedules() {
@@ -51,7 +51,7 @@ export function usePendingReschedules() {
 
   useEffect(() => { fetchLessons(); }, [fetchLessons]);
 
-  async function reschedule(lessonId: string, newDate: string, newTime: string): Promise<void> {
+  const reschedule = useCallback(async (lessonId: string, newDate: string, newTime: string): Promise<void> => {
     const lesson = lessons.find(l => l.id === lessonId);
     if (!lesson) throw new Error('Lesson not found');
 
@@ -73,9 +73,10 @@ export function usePendingReschedules() {
     if (insertErr) throw insertErr;
 
     if (lesson.students.length > 0) {
-      await supabase.from('lesson_students').insert(
+      const { error: lsErr } = await supabase.from('lesson_students').insert(
         lesson.students.map(s => ({ lesson_id: makeup!.id, student_id: s.student_id }))
       );
+      if (lsErr) throw lsErr;
     }
 
     await supabase.from('lessons').update({ pending_reschedule: false }).eq('id', lessonId);
@@ -95,9 +96,9 @@ export function usePendingReschedules() {
     }
 
     await fetchLessons();
-  }
+  }, [lessons, fetchLessons]);
 
-  async function autoRescheduleBreak(breakId: string): Promise<AutoReschedulePreviewItem[]> {
+  const autoRescheduleBreak = useCallback(async (breakId: string): Promise<AutoReschedulePreviewItem[]> => {
     const breakLessons = lessons.filter(l => l.source_break_id === breakId);
     if (breakLessons.length === 0) return [];
 
@@ -136,11 +137,14 @@ export function usePendingReschedules() {
 
       return { original: lesson, newDate: '', newTime: '', found: false };
     });
-  }
+  }, [lessons]);
 
-  async function confirmAutoReschedule(preview: AutoReschedulePreviewItem[]): Promise<void> {
+  const confirmAutoReschedule = useCallback(async (preview: AutoReschedulePreviewItem[]): Promise<void> => {
     const toSchedule = preview.filter(p => p.found);
     if (toSchedule.length === 0) return;
+
+    const breakIds = new Set(toSchedule.map(p => p.original.source_break_id));
+    if (breakIds.size > 1) throw new Error('confirmAutoReschedule: all items must belong to the same break');
 
     const { data: insertedLessons, error: insertErr } = await supabase
       .from('lessons')
@@ -162,7 +166,8 @@ export function usePendingReschedules() {
       toSchedule[i].original.students.map(s => ({ lesson_id: ml.id, student_id: s.student_id }))
     );
     if (lessonStudents.length > 0) {
-      await supabase.from('lesson_students').insert(lessonStudents);
+      const { error: lsErr } = await supabase.from('lesson_students').insert(lessonStudents);
+      if (lsErr) throw lsErr;
     }
 
     await supabase
@@ -184,7 +189,7 @@ export function usePendingReschedules() {
     }
 
     await fetchLessons();
-  }
+  }, [fetchLessons]);
 
   return { lessons, loading, error, refresh: fetchLessons, reschedule, autoRescheduleBreak, confirmAutoReschedule };
 }
