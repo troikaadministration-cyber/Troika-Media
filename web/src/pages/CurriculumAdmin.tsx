@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useCurriculum } from '../hooks/useCurriculum';
 import { supabase } from '../lib/supabase';
+import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Search, Upload, Trash2, Lightbulb, Calendar, BookOpen, RefreshCw } from 'lucide-react';
 import type { ResourceType } from '../types';
@@ -11,6 +12,7 @@ export function CurriculumAdminPage() {
     typeFilter, setTypeFilter, selectedTags, toggleTag, deleteResource, refresh,
   } = useCurriculum();
 
+  const { showToast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -29,10 +31,15 @@ export function CurriculumAdminPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      await supabase.functions.invoke('parse-curriculum-excel', { body: formData });
+      const { data, error: fnErr } = await supabase.functions.invoke('parse-curriculum-excel', { body: formData });
+      if (fnErr) throw new Error(fnErr.message);
+      if (data?.error) throw new Error(data.error);
       await refresh();
-    } catch (err) {
+      const count = data?.inserted;
+      showToast('success', count != null ? `Imported ${count} resource${count !== 1 ? 's' : ''}` : 'Curriculum imported');
+    } catch (err: any) {
       console.error('Upload error:', err);
+      showToast('error', `Upload failed: ${err.message}`);
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';

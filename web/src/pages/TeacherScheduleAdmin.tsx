@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useToast } from '../contexts/ToastContext';
 import {
   Plus, X, Trash2, Calendar, Clock, MapPin, Users as UsersIcon,
   RefreshCw, ChevronRight, Play
@@ -24,6 +25,7 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function TeacherScheduleAdminPage() {
+  const { showToast } = useToast();
   const [teachers, setTeachers] = useState<Profile[]>([]);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -98,6 +100,15 @@ export function TeacherScheduleAdminPage() {
   const handleCreateSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTeacher) return;
+
+    // Validation
+    if (!form.title.trim()) { setError('Title is required'); return; }
+    if (form.end_time && form.end_time <= form.start_time) {
+      setError('End time must be after start time');
+      return;
+    }
+    setError(null);
+
     const { error: err } = await supabase.from('teacher_schedule_templates').insert({
       teacher_id: selectedTeacher,
       day_of_week: form.day_of_week,
@@ -105,86 +116,62 @@ export function TeacherScheduleAdminPage() {
       end_time: form.end_time || null,
       location_id: form.location_id || null,
       instrument_id: form.instrument_id || null,
-      title: form.title,
+      title: form.title.trim(),
       student_ids: form.student_ids,
     });
-    if (err) { setError(err.message); return; }
+    if (err) { setError(err.message); showToast('error', `Failed to add slot: ${err.message}`); return; }
     setShowCreate(false);
     setForm({ day_of_week: 1, start_time: '09:00', end_time: '', location_id: '', instrument_id: '', title: '', student_ids: [] });
+    showToast('success', 'Slot added');
     fetchTemplates();
   };
 
   const handleDeleteSlot = async (id: string) => {
-    await supabase.from('teacher_schedule_templates').update({ is_active: false }).eq('id', id);
+    const { error: err } = await supabase.from('teacher_schedule_templates').update({ is_active: false }).eq('id', id);
+    if (err) { showToast('error', `Failed to remove slot: ${err.message}`); return; }
+    showToast('success', 'Slot removed');
     fetchTemplates();
   };
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (templates.length === 0) return;
+    if (templates.length === 0 || !selectedTeacher) return;
+    if (genForm.end_date < genForm.start_date) {
+      setGenerateResult('Error: End date must be on or after start date');
+      return;
+    }
     setGenerating(true);
     setGenerateResult(null);
 
     try {
-      const startDate = new Date(genForm.start_date + 'T00:00:00');
-      const endDate = new Date(genForm.end_date + 'T00:00:00');
-      let created = 0;
-      let skipped = 0;
+      // Server-side generation: batched, atomic insert, accurate counts.
+      const { data, error: fnErr } = await supabase.functions.invoke('generate-lessons', {
+        body: {
+          teacher_id: selectedTeacher,
+          start_date: genForm.start_date,
+          end_date: genForm.end_date,
+          skip_existing: genForm.skip_existing,
+        },
+      });
+      if (fnErr) throw new Error(fnErr.message);
+      if (data?.error) throw new Error(data.error);
 
-      // Iterate each day in range
-      const current = new Date(startDate);
-      while (current <= endDate) {
-        const dayOfWeek = current.getDay();
-        const dateStr = current.toISOString().split('T')[0];
+      const { created = 0, skipped = 0, errors = 0, error_messages = [] } = data || {};
+      const parts = [`Created ${created} lesson${created !== 1 ? 's' : ''}`];
+      if (skipped > 0) parts.push(`skipped ${skipped} existing`);
+      if (errors > 0) parts.push(`${errors} failed`);
+      const summary = parts.join(', ');
 
-        // Find matching templates for this day
-        const dayTemplates = templates.filter(t => t.day_of_week === dayOfWeek);
-
-        for (const tpl of dayTemplates) {
-          if (genForm.skip_existing) {
-            // Check if lesson already exists for this teacher/date/time
-            const { data: existing } = await supabase
-              .from('lessons')
-              .select('id')
-              .eq('teacher_id', tpl.teacher_id)
-              .eq('date', dateStr)
-              .eq('start_time', tpl.start_time)
-              .limit(1);
-            if (existing && existing.length > 0) { skipped++; continue; }
-          }
-
-          // Create lesson
-          const { data: lesson, error: lessonErr } = await supabase
-            .from('lessons')
-            .insert({
-              teacher_id: tpl.teacher_id,
-              location_id: tpl.location_id,
-              instrument_id: tpl.instrument_id,
-              lesson_type: 'regular',
-              date: dateStr,
-              start_time: tpl.start_time,
-              end_time: tpl.end_time,
-              title: tpl.title,
-            })
-            .select()
-            .single();
-
-          if (lessonErr) { skipped++; continue; }
-
-          // Add students
-          if (lesson && tpl.student_ids.length > 0) {
-            await supabase.from('lesson_students').insert(
-              tpl.student_ids.map(sid => ({ lesson_id: lesson.id, student_id: sid }))
-            );
-          }
-          created++;
-        }
-        current.setDate(current.getDate() + 1);
+      if (errors > 0) {
+        setGenerateResult(`Error: ${summary}${error_messages.length ? ` — ${error_messages[0]}` : ''}`);
+        showToast('error', summary);
+      } else {
+        setGenerateResult(summary);
+        showToast('success', summary);
       }
-
-      setGenerateResult(`Created ${created} lesson${created !== 1 ? 's' : ''}${skipped > 0 ? `, skipped ${skipped} existing` : ''}`);
     } catch (err: any) {
       setGenerateResult(`Error: ${err.message}`);
+      showToast('error', err.message);
     } finally {
       setGenerating(false);
     }
@@ -318,9 +305,11 @@ export function TeacherScheduleAdminPage() {
       {/* Create Slot Modal */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div ref={createRef} className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div ref={createRef} role="dialog" aria-modal="true" aria-labelledby="create-slot-title"
+            onKeyDown={(e) => { if (e.key === 'Escape') setShowCreate(false); }}
+            className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="font-semibold text-navy">Add Weekly Slot</h2>
+              <h2 id="create-slot-title" className="font-semibold text-navy">Add Weekly Slot</h2>
               <button onClick={() => setShowCreate(false)} className="text-gray-400 hover:text-navy"><X size={20} /></button>
             </div>
             <form onSubmit={handleCreateSlot} className="p-6 space-y-4">
@@ -396,10 +385,12 @@ export function TeacherScheduleAdminPage() {
       {/* Generate Lessons Modal */}
       {showGenerate && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div ref={generateRef} className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+          <div ref={generateRef} role="dialog" aria-modal="true" aria-labelledby="generate-title"
+            onKeyDown={(e) => { if (e.key === 'Escape') { setShowGenerate(false); setGenerateResult(null); } }}
+            className="bg-white rounded-2xl shadow-xl w-full max-w-md">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div>
-                <h2 className="font-semibold text-navy">Generate Lessons</h2>
+                <h2 id="generate-title" className="font-semibold text-navy">Generate Lessons</h2>
                 <p className="text-xs text-gray-500 mt-0.5">Create lessons from {teacherName}'s weekly template</p>
               </div>
               <button onClick={() => { setShowGenerate(false); setGenerateResult(null); }} className="text-gray-400 hover:text-navy"><X size={20} /></button>
