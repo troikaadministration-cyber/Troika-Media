@@ -25,6 +25,7 @@ export function useTeacherLessons(teacherId: string | undefined, date: string) {
         `)
         .eq('teacher_id', teacherId)
         .eq('date', date)
+        .neq('status', 'cancelled')
         .order('start_time', { ascending: true });
 
       if (err) throw err;
