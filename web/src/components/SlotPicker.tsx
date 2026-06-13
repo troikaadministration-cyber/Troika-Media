@@ -32,6 +32,7 @@ interface SlotPickerProps {
 export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPickerProps) {
   const [templates, setTemplates] = useState<TeacherScheduleTemplate[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [newSlot, setNewSlot] = useState({
     dayOfWeek: 1,
     startTime: '09:00',
@@ -54,7 +55,13 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
       .order('start_time')
       .then(({ data, error }) => {
         if (ignore) return;
-        if (!error) setTemplates((data as TeacherScheduleTemplate[]) ?? []);
+        if (error) {
+          setFetchError(error.message);
+          setTemplates([]);
+        } else {
+          setFetchError(null);
+          setTemplates((data as TeacherScheduleTemplate[]) ?? []);
+        }
         setLoading(false);
       });
     return () => { ignore = true; };
@@ -95,6 +102,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
   }
 
   if (loading) return <p className="text-sm text-gray-400">Loading slots...</p>;
+  if (fetchError) return <p className="text-xs text-red-500">Failed to load slots: {fetchError}</p>;
 
   const byDay: Record<number, TeacherScheduleTemplate[]> = {};
   for (const t of templates) {
@@ -149,10 +157,9 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
 
       {/* Fix 4 — Replace outer <label> with <div> to avoid nested <label> elements */}
       <div
-        className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+        className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
           isNewSelected ? 'border-coral bg-coral/5' : 'border-gray-200 hover:border-gray-300'
         }`}
-        onClick={() => !isNewSelected && updateNewSlot({})}
       >
         {/* Fix 5 — Scope radio name to instance */}
         <input
@@ -160,12 +167,15 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
           name={`slot-${teacherId}`}
           checked={isNewSelected}
           onChange={() => updateNewSlot({})}
-          className="mt-0.5 text-coral"
+          className="mt-0.5 text-coral cursor-pointer"
         />
         <div className="flex-1">
-          <p className="text-sm font-medium text-navy mb-2">+ Create new slot</p>
+          <p
+            className="text-sm font-medium text-navy mb-2 cursor-pointer"
+            onClick={() => !isNewSelected && updateNewSlot({})}
+          >+ Create new slot</p>
           {isNewSelected && (
-            <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+            <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block text-xs text-gray-500 mb-0.5">Day</label>
