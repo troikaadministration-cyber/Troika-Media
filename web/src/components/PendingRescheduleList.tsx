@@ -85,7 +85,9 @@ export function PendingRescheduleList({
                       <span className="text-gray-400 font-normal"> — {lesson.teacher.full_name}</span>
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      {lesson.instrument ? `${lesson.instrument.icon ?? ''} ${lesson.instrument.name} · ` : ''}
+                      {lesson.instrument
+                        ? `${[lesson.instrument.icon, lesson.instrument.name].filter(Boolean).join(' ')} · `
+                        : ''}
                       {formatOriginalDate(lesson.date, lesson.start_time)}
                     </p>
                   </div>
