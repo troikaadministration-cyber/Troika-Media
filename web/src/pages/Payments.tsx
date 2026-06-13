@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { usePayments } from '../hooks/usePayments';
 import type { PaymentWithStudent } from '../hooks/usePayments';
-import { DollarSign, AlertTriangle, Clock, CheckCircle, Send, RefreshCw, Download, FileText, MessageCircle } from 'lucide-react';
+import { DollarSign, AlertTriangle, Clock, CheckCircle, RefreshCw, Download, FileText, MessageCircle } from 'lucide-react';
 
 function buildWhatsAppUrl(
   phone: string,
@@ -27,9 +27,8 @@ function buildWhatsAppUrl(
 }
 
 export function PaymentsPage() {
-  const { payments, loading, error, verifyPayment, downloadInvoice, sendReminder, refresh } = usePayments();
+  const { payments, loading, error, verifyPayment, downloadInvoice, refresh } = usePayments();
   const [verifying, setVerifying] = useState<string | null>(null);
-  const [reminding, setReminding] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; url?: string; error?: boolean } | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
@@ -51,20 +50,6 @@ export function PaymentsPage() {
       setTimeout(() => setToast(null), 5000);
     } finally {
       setVerifying(null);
-    }
-  }
-
-  async function handleRemind(id: string) {
-    setReminding(id);
-    try {
-      await sendReminder(id);
-      setToast({ message: 'Reminder sent successfully' });
-      setTimeout(() => setToast(null), 5000);
-    } catch (err: any) {
-      setToast({ message: err.message || 'Failed to send reminder', error: true });
-      setTimeout(() => setToast(null), 5000);
-    } finally {
-      setReminding(null);
     }
   }
 
@@ -182,15 +167,6 @@ export function PaymentsPage() {
                         >
                           {verifying === p.id ? 'Verifying...' : 'Mark Paid'}
                         </button>
-                        {!p.reminder_sent && (
-                          <button
-                            onClick={() => handleRemind(p.id)}
-                            disabled={reminding === p.id}
-                            className="text-xs text-coral hover:underline flex items-center gap-0.5 disabled:opacity-50"
-                          >
-                            <Send size={10} />{reminding === p.id ? 'Sending...' : 'Remind'}
-                          </button>
-                        )}
                         {(() => {
                           const student = p.student;
                           const phone = student?.parent_phone || student?.phone;
@@ -215,7 +191,7 @@ export function PaymentsPage() {
                               className="text-green-600 hover:underline flex items-center gap-0.5 text-xs"
                               title="Send via WhatsApp"
                             >
-                              <MessageCircle size={10} /> WA
+                              <MessageCircle size={10} /> Remind
                             </a>
                           );
                         })()}
@@ -269,15 +245,6 @@ export function PaymentsPage() {
                       >
                         {verifying === p.id ? '...' : 'Mark Paid'}
                       </button>
-                      {!p.reminder_sent && (
-                        <button
-                          onClick={() => handleRemind(p.id)}
-                          disabled={reminding === p.id}
-                          className="text-coral font-medium disabled:opacity-50"
-                        >
-                          {reminding === p.id ? '...' : 'Remind'}
-                        </button>
-                      )}
                       {(() => {
                         const student = p.student;
                         const phone = student?.parent_phone || student?.phone;
@@ -291,8 +258,8 @@ export function PaymentsPage() {
                           p.instalment_number
                         );
                         return (
-                          <a href={url} target="_blank" rel="noreferrer" className="text-green-600 font-medium">
-                            WA
+                          <a href={url} target="_blank" rel="noreferrer" className="text-green-600 font-medium flex items-center gap-1">
+                            <MessageCircle size={10} /> Remind
                           </a>
                         );
                       })()}
