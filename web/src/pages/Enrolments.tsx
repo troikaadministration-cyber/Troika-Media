@@ -156,6 +156,8 @@ export function EnrolmentsPage() {
     setGenerateResult(null);
 
     let createdEnrolmentId: string | null = null;
+    let createdTemplateId: string | null = null;        // set if new template was inserted
+    let templateStudentUndo: { id: string; ids: string[] } | null = null; // set if existing was updated
 
     try {
       // 1. Create enrolment
@@ -209,6 +211,8 @@ export function EnrolmentsPage() {
             .update({ student_ids: [...existingIds, form.student_id] })
             .eq('id', selectedSlot.templateId);
           if (updateErr) throw updateErr;
+          // Track for rollback
+          templateStudentUndo = { id: selectedSlot.templateId, ids: existingIds };
         }
 
         templateDayOfWeek = selectedSlot.dayOfWeek;
@@ -217,7 +221,7 @@ export function EnrolmentsPage() {
         templateInstrumentId = selectedSlot.instrumentId;
         templateTitle = selectedSlot.title;
       } else {
-        const { error: insertErr } = await supabase
+        const { data: newTpl, error: insertErr } = await supabase
           .from('teacher_schedule_templates')
           .insert({
             teacher_id: resolvedTeacherId,
@@ -227,8 +231,11 @@ export function EnrolmentsPage() {
             instrument_id: selectedSlot.instrumentId || null,
             title: selectedSlot.title || 'Lesson',
             student_ids: [form.student_id],
-          });
+          })
+          .select('id')
+          .single();
         if (insertErr) throw insertErr;
+        createdTemplateId = newTpl.id;
 
         templateDayOfWeek = selectedSlot.dayOfWeek;
         templateStartTime = selectedSlot.startTime;
@@ -242,7 +249,7 @@ export function EnrolmentsPage() {
       const endDate = new Date(form.end_date + 'T00:00:00');
       const targetDates: string[] = [];
       const current = new Date(startDate);
-      while (current <= endDate && targetDates.length < totalLessons) {
+      while (current <= endDate) {
         if (current.getDay() === templateDayOfWeek) {
           targetDates.push(current.toISOString().split('T')[0]);
         }
@@ -262,7 +269,7 @@ export function EnrolmentsPage() {
           .in('date', targetDates);
 
         const existingDates = new Set((existingLessons || []).map((l: { date: string }) => l.date));
-        const newDates = targetDates.filter(d => !existingDates.has(d));
+        const newDates = targetDates.filter(d => !existingDates.has(d)).slice(0, totalLessons);
         skipped = targetDates.length - newDates.length;
 
         if (newDates.length > 0) {
@@ -308,6 +315,15 @@ export function EnrolmentsPage() {
       // Compensating delete if enrolment was created but later steps failed
       if (createdEnrolmentId) {
         await supabase.from('student_enrolments').delete().eq('id', createdEnrolmentId);
+      }
+      if (createdTemplateId) {
+        await supabase.from('teacher_schedule_templates').delete().eq('id', createdTemplateId);
+      }
+      if (templateStudentUndo) {
+        await supabase
+          .from('teacher_schedule_templates')
+          .update({ student_ids: templateStudentUndo.ids })
+          .eq('id', templateStudentUndo.id);
       }
       setError(err.message || 'Failed to create enrolment');
     } finally {
