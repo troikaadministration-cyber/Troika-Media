@@ -324,78 +324,118 @@ export function EnrolmentsPage() {
       {modal && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4">
+            {/* Header */}
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-navy text-lg">Enrol Student</h3>
-              <button onClick={() => setModal(false)} className="text-gray-400 hover:text-navy"><X size={20} /></button>
+              <div>
+                <h3 className="font-semibold text-navy text-lg">Enrol Student</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Step {step} of 2 — {step === 1 ? 'Enrolment Details' : 'Assign Schedule Slot'}
+                </p>
+              </div>
+              <button onClick={closeModal} className="text-gray-400 hover:text-navy"><X size={20} /></button>
             </div>
 
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Student</label>
-                <select
-                  required
-                  value={form.student_id}
-                  onChange={(e) => setForm({ ...form, student_id: e.target.value, lesson_rate_id: '' })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="">Select student...</option>
-                  {availableStudents.map((s) => (
-                    <option key={s.id} value={s.id}>{s.full_name}{s.instrument ? ` (${s.instrument.name})` : ''}</option>
-                  ))}
-                </select>
-                {availableStudents.length === 0 && (
-                  <p className="text-xs text-gray-400 mt-1">No active students found</p>
-                )}
-              </div>
+            {/* Step indicator */}
+            <div className="flex items-center gap-2">
+              <div className={`flex-1 h-1 rounded-full ${step >= 1 ? 'bg-teal' : 'bg-gray-200'}`} />
+              <div className={`flex-1 h-1 rounded-full ${step >= 2 ? 'bg-teal' : 'bg-gray-200'}`} />
+            </div>
 
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Lesson Rate</label>
-                {selectedStudent?.location_id && hasLocationRates && (
-                  <p className="text-xs text-teal mb-1">Showing rates for this student's location first.</p>
-                )}
-                {selectedStudent?.location_id && !hasLocationRates && (
-                  <p className="text-xs text-yellow-600 mb-1">No location-specific rates set — showing all rates.</p>
-                )}
-                <select
-                  value={form.lesson_rate_id}
-                  onChange={(e) => setForm({ ...form, lesson_rate_id: e.target.value })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="">Select rate...</option>
-                  {filteredRates.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}
-                      {r.is_online ? ' (Online)' : ''}
-                      {r.teacher ? ` — ${r.teacher.full_name}` : ''}
-                      {r.location_id ? ' ★' : ''}
-                    </option>
-                  ))}
-                </select>
+            {error && (
+              <div className="bg-coral/10 border border-coral/20 rounded-lg p-3">
+                <p className="text-coral text-sm">{error}</p>
               </div>
+            )}
 
-              <div className="grid grid-cols-2 gap-3">
+            {/* ── STEP 1 ── */}
+            {step === 1 && (
+              <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Payment Plan</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Student</label>
                   <select
-                    value={form.payment_plan}
-                    onChange={(e) => setForm({ ...form, payment_plan: e.target.value })}
+                    required
+                    value={form.student_id}
+                    onChange={(e) => setForm({ ...form, student_id: e.target.value, lesson_rate_id: '' })}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   >
-                    {PLAN_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                    <option value="">Select student...</option>
+                    {availableStudents.map((s) => (
+                      <option key={s.id} value={s.id}>{s.full_name}{s.instrument ? ` (${s.instrument.name})` : ''}</option>
+                    ))}
+                  </select>
+                  {availableStudents.length === 0 && (
+                    <p className="text-xs text-gray-400 mt-1">No active students found</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Lesson Rate</label>
+                  {selectedStudent?.location_id && hasLocationRates && (
+                    <p className="text-xs text-teal mb-1">Showing rates for this student's location first.</p>
+                  )}
+                  {selectedStudent?.location_id && !hasLocationRates && (
+                    <p className="text-xs text-yellow-600 mb-1">No location-specific rates set — showing all rates.</p>
+                  )}
+                  <select
+                    value={form.lesson_rate_id}
+                    onChange={(e) => setForm({ ...form, lesson_rate_id: e.target.value })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="">Select rate...</option>
+                    {filteredRates.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}
+                        {r.is_online ? ' (Online)' : ''}
+                        {r.teacher ? ` — ${r.teacher.full_name}` : ''}
+                        {r.location_id ? ' ★' : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Start Date</label>
-                  <input
-                    type="date"
-                    value={form.start_date}
-                    onChange={(e) => setForm({ ...form, start_date: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Payment Plan</label>
+                    <select
+                      value={form.payment_plan}
+                      onChange={(e) => setForm({ ...form, payment_plan: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    >
+                      {PLAN_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Academic Year</label>
+                    <input
+                      type="text"
+                      value={form.academic_year}
+                      onChange={(e) => setForm({ ...form, academic_year: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Start Date</label>
+                    <input
+                      type="date"
+                      value={form.start_date}
+                      onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">End Date</label>
+                    <input
+                      type="date"
+                      value={form.end_date}
+                      onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Registration Fee (₹)</label>
                   <input
@@ -407,60 +447,116 @@ export function EnrolmentsPage() {
                     min={0}
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Academic Year</label>
-                  <input
-                    type="text"
-                    value={form.academic_year}
-                    onChange={(e) => setForm({ ...form, academic_year: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
 
-              {/* Fee Summary */}
-              {selectedRate && form.payment_plan !== 'trial' && (
-                <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-500 uppercase">Fee Summary</h4>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')} × {totalLessons} lessons</span>
-                    <span className="font-medium text-navy">₹{totalFee.toLocaleString('en-IN')}</span>
-                  </div>
-                  {form.registration_fee > 0 && (
+                {/* Fee Summary */}
+                {selectedRate && form.payment_plan !== 'trial' && (
+                  <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase">Fee Summary</h4>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Registration fee</span>
-                      <span className="font-medium text-navy">₹{form.registration_fee.toLocaleString('en-IN')}</span>
+                      <span className="text-gray-500">₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')} × {totalLessons} lessons</span>
+                      <span className="font-medium text-navy">₹{totalFee.toLocaleString('en-IN')}</span>
                     </div>
-                  )}
-                  <div className="border-t pt-2 flex justify-between text-sm font-bold">
-                    <span className="text-navy">Total</span>
-                    <span className="text-navy">₹{(totalFee + form.registration_fee).toLocaleString('en-IN')}</span>
+                    {form.registration_fee > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Registration fee</span>
+                        <span className="font-medium text-navy">₹{form.registration_fee.toLocaleString('en-IN')}</span>
+                      </div>
+                    )}
+                    <div className="border-t pt-2 flex justify-between text-sm font-bold">
+                      <span className="text-navy">Total</span>
+                      <span className="text-navy">₹{(totalFee + form.registration_fee).toLocaleString('en-IN')}</span>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      {form.payment_plan === '1_instalment' && '1 payment at start'}
+                      {form.payment_plan === '3_instalments' && '3 payments: start, +4 months, +8 months'}
+                      {form.payment_plan === '10_instalments' && '10 monthly payments'}
+                    </p>
                   </div>
-                  <p className="text-xs text-gray-400">
-                    {form.payment_plan === '1_instalment' && '1 payment at start'}
-                    {form.payment_plan === '3_instalments' && '3 payments: start, +4 months, +8 months'}
-                    {form.payment_plan === '10_instalments' && '10 monthly payments'}
-                  </p>
-                </div>
-              )}
+                )}
 
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={saving || !form.student_id}
-                  className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
-                >
-                  {saving ? 'Creating...' : 'Create Enrolment'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModal(false)}
-                  className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
-                >
-                  Cancel
-                </button>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleStep1Next}
+                    className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 flex items-center justify-center gap-2"
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
-            </form>
+            )}
+
+            {/* ── STEP 2 ── */}
+            {step === 2 && (
+              <div className="space-y-4">
+                {/* Teacher display / picker */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Teacher</label>
+                  {teacherId ? (
+                    <div className="px-3 py-2 bg-gray-50 rounded-lg text-sm text-navy font-medium">
+                      {teacherName}
+                    </div>
+                  ) : (
+                    <select
+                      value={manualTeacherId}
+                      onChange={(e) => setManualTeacherId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="">Select teacher...</option>
+                      {teachers.map(t => (
+                        <option key={t.id} value={t.id}>{t.full_name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {/* Slot picker — only show once teacher is known */}
+                {teacherId && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-2">Schedule Slot</label>
+                    <SlotPicker
+                      teacherId={teacherId}
+                      instruments={instruments}
+                      value={selectedSlot}
+                      onChange={setSelectedSlot}
+                    />
+                  </div>
+                )}
+
+                {generateResult && (
+                  <div className={`rounded-lg p-3 text-sm font-medium ${
+                    generateResult.startsWith('Error') ? 'bg-coral/10 text-coral' : 'bg-teal/10 text-teal'
+                  }`}>
+                    {generateResult}
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setStep(1); setError(null); setGenerateResult(null); }}
+                    className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCreate(undefined as any)}
+                    disabled={saving || !selectedSlot || !teacherId}
+                    className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
+                  >
+                    {saving ? 'Creating...' : 'Save & Generate Lessons'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
