@@ -136,16 +136,27 @@ export function EnrolmentsPage() {
     });
   }
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleCreate() {
     if (!form.student_id || (!form.lesson_rate_id && form.payment_plan !== 'trial')) {
       setError('Please select a student and lesson rate');
       return;
     }
+    if (!selectedSlot) {
+      setError('Please select or create a schedule slot');
+      return;
+    }
+    const resolvedTeacherId = teacherId;
+    if (!resolvedTeacherId) {
+      setError('Please select a teacher');
+      return;
+    }
+
     setSaving(true);
     setError(null);
+    setGenerateResult(null);
+
     try {
-      // Create enrolment
+      // 1. Create enrolment
       const { data: enrolment, error: enrolErr } = await supabase
         .from('student_enrolments')
         .insert({
@@ -165,7 +176,7 @@ export function EnrolmentsPage() {
 
       if (enrolErr) throw enrolErr;
 
-      // Auto-generate payment instalments via DB function
+      // 2. Auto-generate payment instalments
       if (form.payment_plan !== 'trial' && enrolment) {
         const { error: genErr } = await supabase.rpc('generate_instalments', {
           p_enrolment_id: enrolment.id,
@@ -173,14 +184,113 @@ export function EnrolmentsPage() {
         if (genErr) throw genErr;
       }
 
-      setModal(false);
-      setForm({
-        student_id: '', lesson_rate_id: '', payment_plan: '3_instalments',
-        start_date: new Date().toISOString().split('T')[0],
-        end_date: (() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return d.toISOString().split('T')[0]; })(),
-        registration_fee: 0,
-        academic_year: new Date().getFullYear().toString(),
-      });
+      // 3. Assign student to schedule template slot
+      let templateDayOfWeek: number;
+      let templateStartTime: string;
+      let templateEndTime: string | null;
+      let templateInstrumentId: string | null;
+      let templateTitle: string;
+
+      if (selectedSlot.mode === 'existing') {
+        const { data: tpl, error: tplErr } = await supabase
+          .from('teacher_schedule_templates')
+          .select('student_ids')
+          .eq('id', selectedSlot.templateId)
+          .single();
+        if (tplErr) throw tplErr;
+
+        const existingIds: string[] = tpl?.student_ids || [];
+        if (!existingIds.includes(form.student_id)) {
+          const { error: updateErr } = await supabase
+            .from('teacher_schedule_templates')
+            .update({ student_ids: [...existingIds, form.student_id] })
+            .eq('id', selectedSlot.templateId);
+          if (updateErr) throw updateErr;
+        }
+
+        templateDayOfWeek = selectedSlot.dayOfWeek;
+        templateStartTime = selectedSlot.startTime;
+        templateEndTime = selectedSlot.endTime;
+        templateInstrumentId = selectedSlot.instrumentId;
+        templateTitle = selectedSlot.title;
+      } else {
+        const { error: insertErr } = await supabase
+          .from('teacher_schedule_templates')
+          .insert({
+            teacher_id: resolvedTeacherId,
+            day_of_week: selectedSlot.dayOfWeek,
+            start_time: selectedSlot.startTime,
+            end_time: selectedSlot.endTime || null,
+            instrument_id: selectedSlot.instrumentId || null,
+            title: selectedSlot.title || 'Lesson',
+            student_ids: [form.student_id],
+          });
+        if (insertErr) throw insertErr;
+
+        templateDayOfWeek = selectedSlot.dayOfWeek;
+        templateStartTime = selectedSlot.startTime;
+        templateEndTime = selectedSlot.endTime || null;
+        templateInstrumentId = selectedSlot.instrumentId;
+        templateTitle = selectedSlot.title || 'Lesson';
+      }
+
+      // 4. Generate lessons from start_date to end_date, capped at totalLessons
+      const startDate = new Date(form.start_date + 'T00:00:00');
+      const endDate = new Date(form.end_date + 'T00:00:00');
+      let created = 0;
+      let skipped = 0;
+      const current = new Date(startDate);
+
+      while (current <= endDate && created < totalLessons) {
+        if (current.getDay() === templateDayOfWeek) {
+          const dateStr = current.toISOString().split('T')[0];
+
+          const { data: existing } = await supabase
+            .from('lessons')
+            .select('id')
+            .eq('teacher_id', resolvedTeacherId)
+            .eq('date', dateStr)
+            .eq('start_time', templateStartTime)
+            .limit(1);
+
+          if (existing && existing.length > 0) {
+            skipped++;
+          } else {
+            const { data: lesson, error: lessonErr } = await supabase
+              .from('lessons')
+              .insert({
+                teacher_id: resolvedTeacherId,
+                location_id: null,
+                instrument_id: templateInstrumentId || null,
+                lesson_type: 'regular',
+                date: dateStr,
+                start_time: templateStartTime,
+                end_time: templateEndTime,
+                title: templateTitle,
+              })
+              .select()
+              .single();
+
+            if (!lessonErr && lesson) {
+              await supabase.from('lesson_students').insert({
+                lesson_id: lesson.id,
+                student_id: form.student_id,
+              });
+              created++;
+            } else {
+              skipped++;
+            }
+          }
+        }
+        current.setDate(current.getDate() + 1);
+      }
+
+      const resultMsg = `Enrolment created. ${created} lesson${created !== 1 ? 's' : ''} generated${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
+      setGenerateResult(resultMsg);
+
+      // Brief pause so user sees the result, then close
+      await new Promise(r => setTimeout(r, 1800));
+      closeModal();
       fetchAll();
     } catch (err: any) {
       setError(err.message || 'Failed to create enrolment');
@@ -548,7 +658,7 @@ export function EnrolmentsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleCreate(undefined as any)}
+                    onClick={handleCreate}
                     disabled={saving || !selectedSlot || !teacherId}
                     className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
                   >
