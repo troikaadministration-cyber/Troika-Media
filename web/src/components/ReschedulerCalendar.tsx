@@ -48,7 +48,7 @@ export function ReschedulerCalendar({ lesson, onDateSelect }: Props) {
       .lte('date', monthEnd)
       .neq('status', 'cancelled')
       .then(({ data }) => {
-        setLessonDates(new Set((data || []).map((l: any) => l.date)));
+        setLessonDates(new Set((data ?? []).map((l: { date: string }) => l.date)));
       });
   }, [lesson?.teacher_id, month]);
 
