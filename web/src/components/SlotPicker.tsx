@@ -40,8 +40,10 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
     title: '',
   });
 
+  // Fix 1 & 2 — Race condition guard + always run setLoading(false), destructure error
   useEffect(() => {
     if (!teacherId) { setTemplates([]); return; }
+    let ignore = false;
     setLoading(true);
     supabase
       .from('teacher_schedule_templates')
@@ -50,11 +52,20 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
       .eq('is_active', true)
       .order('day_of_week')
       .order('start_time')
-      .then(({ data }) => {
-        setTemplates((data as TeacherScheduleTemplate[]) || []);
+      .then(({ data, error }) => {
+        if (ignore) return;
+        if (!error) setTemplates((data as TeacherScheduleTemplate[]) ?? []);
         setLoading(false);
       });
+    return () => { ignore = true; };
   }, [teacherId]);
+
+  // Fix 3 — Reset newSlot to defaults when value becomes null externally
+  useEffect(() => {
+    if (!value) {
+      setNewSlot({ dayOfWeek: 1, startTime: '09:00', endTime: '10:00', instrumentId: '', title: '' });
+    }
+  }, [value]);
 
   const isNewSelected = value?.mode === 'new';
 
@@ -113,9 +124,10 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
                     isSelected ? 'border-teal bg-teal/5' : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
+                  {/* Fix 5 — Scope radio name to instance */}
                   <input
                     type="radio"
-                    name="slot"
+                    name={`slot-${teacherId}`}
                     checked={isSelected}
                     onChange={() => selectExisting(tpl)}
                     className="text-teal"
@@ -135,14 +147,17 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
         );
       })}
 
-      <label
+      {/* Fix 4 — Replace outer <label> with <div> to avoid nested <label> elements */}
+      <div
         className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
           isNewSelected ? 'border-coral bg-coral/5' : 'border-gray-200 hover:border-gray-300'
         }`}
+        onClick={() => !isNewSelected && updateNewSlot({})}
       >
+        {/* Fix 5 — Scope radio name to instance */}
         <input
           type="radio"
-          name="slot"
+          name={`slot-${teacherId}`}
           checked={isNewSelected}
           onChange={() => updateNewSlot({})}
           className="mt-0.5 text-coral"
@@ -210,7 +225,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
             </div>
           )}
         </div>
-      </label>
+      </div>
     </div>
   );
 }
