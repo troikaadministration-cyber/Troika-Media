@@ -255,3 +255,25 @@ export interface TeacherScheduleTemplate {
   created_at: string;
   updated_at: string;
 }
+
+export interface PendingLesson {
+  id: string;
+  teacher_id: string;
+  instrument_id: string | null;
+  location_id: string | null;
+  title: string;
+  date: string;       // YYYY-MM-DD
+  start_time: string; // HH:MM:SS
+  source_break_id: string;
+  students: Array<{ student_id: string; student: { full_name: string } }>;
+  teacher: { full_name: string };
+  instrument: { name: string; icon: string | null } | null;
+  break: { title: string; end_date: string; student_ids: string[] };
+}
+
+export interface AutoReschedulePreviewItem {
+  original: PendingLesson;
+  newDate: string;   // YYYY-MM-DD, empty string when found=false
+  newTime: string;   // HH:MM:SS, empty string when found=false
+  found: boolean;    // false = no conflict-free slot within 52 weeks
+}
