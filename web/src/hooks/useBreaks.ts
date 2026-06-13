@@ -91,37 +91,5 @@ export function useBreaks() {
     return affected.length;
   }
 
-  async function linkReschedule(pendingLessonId: string) {
-    // Get the break ID from the pending lesson
-    const { data: lesson } = await supabase
-      .from('lessons')
-      .select('source_break_id')
-      .eq('id', pendingLessonId)
-      .single();
-
-    // Mark as rescheduled
-    await supabase
-      .from('lessons')
-      .update({ pending_reschedule: false })
-      .eq('id', pendingLessonId);
-
-    // Increment break's rescheduled count
-    if (lesson?.source_break_id) {
-      const { data: brk } = await supabase
-        .from('scheduled_breaks')
-        .select('total_rescheduled')
-        .eq('id', lesson.source_break_id)
-        .single();
-      if (brk) {
-        await supabase
-          .from('scheduled_breaks')
-          .update({ total_rescheduled: brk.total_rescheduled + 1 })
-          .eq('id', lesson.source_break_id);
-      }
-    }
-
-    await fetchBreaks();
-  }
-
-  return { breaks, pendingRescheduleCount, loading, fetchBreaks, createBreak, previewBreak, linkReschedule };
+  return { breaks, pendingRescheduleCount, loading, fetchBreaks, createBreak, previewBreak };
 }
