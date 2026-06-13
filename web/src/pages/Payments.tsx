@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { usePayments } from '../hooks/usePayments';
 import type { PaymentWithStudent } from '../hooks/usePayments';
+import { supabase } from '../lib/supabase';
 import { DollarSign, AlertTriangle, Clock, CheckCircle, RefreshCw, Download, FileText, MessageCircle } from 'lucide-react';
 
 function buildWhatsAppUrl(
@@ -9,7 +10,8 @@ function buildWhatsAppUrl(
   parentName: string | null,
   amount: number,
   dueDate: string,
-  instalmentNumber: number | null
+  instalmentNumber: number | null,
+  invoiceUrl?: string | null
 ): string {
   const recipient = parentName || studentName;
   const amountStr = amount.toLocaleString('en-IN');
@@ -17,10 +19,11 @@ function buildWhatsAppUrl(
     day: 'numeric', month: 'long', year: 'numeric',
   });
   const instalmentNote = instalmentNumber ? ` (Instalment ${instalmentNumber})` : '';
+  const invoiceLine = invoiceUrl ? `\n\nView your invoice here: ${invoiceUrl}` : '';
   const msg =
-    `Hi ${recipient}, this is a reminder that ${studentName}'s lesson fee${instalmentNote} ` +
+    `Hi ${recipient}, this is a friendly reminder that ${studentName}'s lesson fee${instalmentNote} ` +
     `of ₹${amountStr} is due on ${dueDateStr}. ` +
-    `Please contact us to arrange payment. Thank you!`;
+    `Please arrange payment at your earliest convenience.${invoiceLine}\n\nThank you — Troika Music`;
   const digits = phone.replace(/\D/g, '');
   const normalized = digits.startsWith('91') ? digits : `91${digits}`;
   return `https://wa.me/${normalized}?text=${encodeURIComponent(msg)}`;
@@ -29,6 +32,7 @@ function buildWhatsAppUrl(
 export function PaymentsPage() {
   const { payments, loading, error, verifyPayment, downloadInvoice, refresh } = usePayments();
   const [verifying, setVerifying] = useState<string | null>(null);
+  const [waLoading, setWaLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; url?: string; error?: boolean } | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
@@ -175,24 +179,27 @@ export function PaymentsPage() {
                               <MessageCircle size={12} />
                             </span>
                           );
-                          const url = buildWhatsAppUrl(
-                            phone,
-                            student.full_name,
-                            student.parent_name,
-                            p.amount,
-                            p.due_date,
-                            p.instalment_number
-                          );
                           return (
-                            <a
-                              href={url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-green-600 hover:underline flex items-center gap-0.5 text-xs"
+                            <button
+                              disabled={waLoading === p.id}
+                              onClick={async () => {
+                                setWaLoading(p.id);
+                                let invoiceUrl: string | null = null;
+                                if (p.invoice?.pdf_path) {
+                                  const { data } = await supabase.storage
+                                    .from('invoices')
+                                    .createSignedUrl(p.invoice.pdf_path, 604800);
+                                  invoiceUrl = data?.signedUrl ?? null;
+                                }
+                                const url = buildWhatsAppUrl(phone, student.full_name, student.parent_name, p.amount, p.due_date, p.instalment_number, invoiceUrl);
+                                setWaLoading(null);
+                                window.open(url, '_blank');
+                              }}
+                              className="text-green-600 hover:underline flex items-center gap-0.5 text-xs disabled:opacity-50"
                               title="Send via WhatsApp"
                             >
-                              <MessageCircle size={10} /> Remind
-                            </a>
+                              <MessageCircle size={10} /> {waLoading === p.id ? '...' : 'Remind'}
+                            </button>
                           );
                         })()}
                       </div>
@@ -249,18 +256,26 @@ export function PaymentsPage() {
                         const student = p.student;
                         const phone = student?.parent_phone || student?.phone;
                         if (!phone) return null;
-                        const url = buildWhatsAppUrl(
-                          phone,
-                          student.full_name,
-                          student.parent_name,
-                          p.amount,
-                          p.due_date,
-                          p.instalment_number
-                        );
                         return (
-                          <a href={url} target="_blank" rel="noreferrer" className="text-green-600 font-medium flex items-center gap-1">
-                            <MessageCircle size={10} /> Remind
-                          </a>
+                          <button
+                            disabled={waLoading === p.id}
+                            onClick={async () => {
+                              setWaLoading(p.id);
+                              let invoiceUrl: string | null = null;
+                              if (p.invoice?.pdf_path) {
+                                const { data } = await supabase.storage
+                                  .from('invoices')
+                                  .createSignedUrl(p.invoice.pdf_path, 604800);
+                                invoiceUrl = data?.signedUrl ?? null;
+                              }
+                              const url = buildWhatsAppUrl(phone, student.full_name, student.parent_name, p.amount, p.due_date, p.instalment_number, invoiceUrl);
+                              setWaLoading(null);
+                              window.open(url, '_blank');
+                            }}
+                            className="text-green-600 font-medium flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <MessageCircle size={10} /> {waLoading === p.id ? '...' : 'Remind'}
+                          </button>
                         );
                       })()}
                     </>
