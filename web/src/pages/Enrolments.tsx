@@ -269,8 +269,9 @@ export function EnrolmentsPage() {
           .in('date', targetDates);
 
         const existingDates = new Set((existingLessons || []).map((l: { date: string }) => l.date));
-        const newDates = targetDates.filter(d => !existingDates.has(d)).slice(0, totalLessons);
-        skipped = targetDates.length - newDates.length;
+        const dedupedDates = targetDates.filter(d => !existingDates.has(d));
+        const newDates = dedupedDates.slice(0, totalLessons);
+        skipped = targetDates.length - dedupedDates.length; // only true conflicts, not cap overflow
 
         if (newDates.length > 0) {
           // Batch insert lessons
