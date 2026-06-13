@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { SlotPicker } from '../components/SlotPicker';
+import type { SelectedSlot } from '../components/SlotPicker';
+import type { Profile, Instrument } from '../types';
 import { Plus, X, RefreshCw, BookOpen, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -20,7 +23,7 @@ interface Enrolment {
 }
 
 interface Student { id: string; full_name: string; location_id: string | null; instrument?: { name: string } | null; }
-interface LessonRate { id: string; category: string; rate_per_lesson: number; is_online: boolean; location_id: string | null; teacher?: { full_name: string } | null; }
+interface LessonRate { id: string; teacher_id: string | null; category: string; rate_per_lesson: number; is_online: boolean; location_id: string | null; teacher?: { id: string; full_name: string } | null; }
 const PLAN_OPTIONS = [
   { value: 'trial', label: 'Trial (no payment)' },
   { value: '1_instalment', label: '1 Instalment' },
@@ -37,6 +40,12 @@ export function EnrolmentsPage() {
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [step, setStep] = useState<1 | 2>(1);
+  const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
+  const [manualTeacherId, setManualTeacherId] = useState('');
+  const [teachers, setTeachers] = useState<Profile[]>([]);
+  const [instruments, setInstruments] = useState<Instrument[]>([]);
+  const [generateResult, setGenerateResult] = useState<string | null>(null);
   const navigate = useNavigate();
 
   // Form state
@@ -45,6 +54,11 @@ export function EnrolmentsPage() {
     lesson_rate_id: '',
     payment_plan: '3_instalments',
     start_date: new Date().toISOString().split('T')[0],
+    end_date: (() => {
+      const d = new Date();
+      d.setFullYear(d.getFullYear() + 1);
+      return d.toISOString().split('T')[0];
+    })(),
     registration_fee: 0,
     academic_year: new Date().getFullYear().toString(),
   });
@@ -53,15 +67,19 @@ export function EnrolmentsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [enrolRes, studentRes, rateRes] = await Promise.all([
+      const [enrolRes, studentRes, rateRes, teacherRes, instrumentRes] = await Promise.all([
         supabase.from('student_enrolments').select('*, student:students(id, full_name, instrument:instruments(name))').order('created_at', { ascending: false }),
         supabase.from('students').select('id, full_name, location_id, instrument:instruments(name)').eq('is_active', true).order('full_name'),
-        supabase.from('lesson_rates').select('id, category, rate_per_lesson, is_online, location_id, teacher:profiles(full_name)').order('category'),
+        supabase.from('lesson_rates').select('id, teacher_id, category, rate_per_lesson, is_online, location_id, teacher:profiles(id, full_name)').order('category'),
+        supabase.from('profiles').select('id, full_name, role, email, phone, approved, created_at, updated_at').eq('role', 'teacher').order('full_name'),
+        supabase.from('instruments').select('*').order('name'),
       ]);
       if (enrolRes.error) throw enrolRes.error;
       setEnrolments((enrolRes.data || []) as any);
       setStudents((studentRes.data || []) as any);
       setRates((rateRes.data || []) as any);
+      setTeachers((teacherRes.data as Profile[]) || []);
+      setInstruments((instrumentRes.data || []) as any);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -80,6 +98,43 @@ export function EnrolmentsPage() {
     rates.some(r => r.location_id === selectedStudent.location_id));
   const totalLessons = form.payment_plan === 'trial' ? 1 : 39;
   const totalFee = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
+  const teacherId = (selectedRate as any)?.teacher?.id || selectedRate?.teacher_id || manualTeacherId;
+  const teacherName = teachers.find(t => t.id === teacherId)?.full_name
+    || (selectedRate as any)?.teacher?.full_name
+    || '';
+
+  function handleStep1Next() {
+    if (!form.student_id || (!form.lesson_rate_id && form.payment_plan !== 'trial')) {
+      setError('Please select a student and lesson rate');
+      return;
+    }
+    if (form.end_date <= form.start_date) {
+      setError('End date must be after start date');
+      return;
+    }
+    setError(null);
+    setStep(2);
+  }
+
+  function closeModal() {
+    setModal(false);
+    setStep(1);
+    setSelectedSlot(null);
+    setManualTeacherId('');
+    setGenerateResult(null);
+    setError(null);
+    setForm({
+      student_id: '', lesson_rate_id: '', payment_plan: '3_instalments',
+      start_date: new Date().toISOString().split('T')[0],
+      end_date: (() => {
+        const d = new Date();
+        d.setFullYear(d.getFullYear() + 1);
+        return d.toISOString().split('T')[0];
+      })(),
+      registration_fee: 0,
+      academic_year: new Date().getFullYear().toString(),
+    });
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -121,7 +176,9 @@ export function EnrolmentsPage() {
       setModal(false);
       setForm({
         student_id: '', lesson_rate_id: '', payment_plan: '3_instalments',
-        start_date: new Date().toISOString().split('T')[0], registration_fee: 0,
+        start_date: new Date().toISOString().split('T')[0],
+        end_date: (() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return d.toISOString().split('T')[0]; })(),
+        registration_fee: 0,
         academic_year: new Date().getFullYear().toString(),
       });
       fetchAll();
