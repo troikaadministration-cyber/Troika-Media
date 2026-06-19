@@ -229,7 +229,7 @@ export function TeacherSchedulePage() {
                           <span className="text-sm font-medium text-navy truncate">{name}</span>
                           <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                             <button
-                              onClick={() => markAttendance(ls.id, attended === true ? null : true)}
+                              onClick={() => markAttendance(ls.id, lesson.id, attended === true ? null : true)}
                               title="Present"
                               className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                                 attended === true
@@ -240,7 +240,7 @@ export function TeacherSchedulePage() {
                               <UserCheck size={13} /> Present
                             </button>
                             <button
-                              onClick={() => markAttendance(ls.id, attended === false ? null : false)}
+                              onClick={() => markAttendance(ls.id, lesson.id, attended === false ? null : false)}
                               title="Absent"
                               className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                                 attended === false

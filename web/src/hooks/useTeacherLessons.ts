@@ -76,8 +76,22 @@ export function useTeacherLessons(teacherId: string | undefined, date: string) {
     await fetchLessons();
   }
 
-  async function markAttendance(lessonStudentId: string, attended: boolean | null) {
+  async function markAttendance(lessonStudentId: string, lessonId: string, attended: boolean | null) {
     await supabase.from('lesson_students').update({ attended }).eq('id', lessonStudentId);
+
+    // Auto-complete lesson when all students are marked
+    if (attended !== null) {
+      const { data: allStudents } = await supabase
+        .from('lesson_students')
+        .select('attended')
+        .eq('lesson_id', lessonId);
+
+      const allMarked = allStudents && allStudents.length > 0 && allStudents.every(s => s.attended !== null);
+      if (allMarked) {
+        await supabase.from('lessons').update({ status: 'completed' }).eq('id', lessonId);
+      }
+    }
+
     await fetchLessons();
   }
 
