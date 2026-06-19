@@ -87,14 +87,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:relative lg:translate-x-0
       `}>
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-          <div>
-            <img src="/logo.png" alt="Troika Music Lessons" className="h-10 w-auto" />
-            <span className="inline-block mt-1 text-xs text-teal font-medium">{roleLabel}</span>
+        <div className="relative px-5 pt-6 pb-4 border-b border-gray-100">
+          <div className="flex flex-col items-center">
+            <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto" />
+            <span className="mt-2 text-xs text-teal font-semibold tracking-wide uppercase">{roleLabel}</span>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-gray-400 hover:text-navy"
+            className="lg:hidden absolute top-4 right-4 text-gray-400 hover:text-navy"
             aria-label="Close menu"
           >
             <X size={20} />
