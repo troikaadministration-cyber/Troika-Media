@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
-interface StudentLesson {
+export interface StudentLesson {
   id: string;
   lesson_id: string;
   attended: boolean | null;

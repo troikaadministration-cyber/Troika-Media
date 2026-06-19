@@ -5,7 +5,7 @@ import { useNotifications } from '../../hooks/useNotifications';
 import {
   LayoutDashboard, Calendar, Users, CreditCard, BookOpen,
   LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, CalendarClock,
-  CalendarDays, CalendarOff
+  CalendarDays, CalendarOff, Home
 } from 'lucide-react';
 
 const coordinatorNav = [
@@ -27,7 +27,10 @@ const teacherNav = [
 ];
 
 const studentNav = [
-  { to: '/', label: 'My Lessons', icon: Music },
+  { to: '/', label: 'Home', icon: Home },
+  { to: '/lessons', label: 'My Lessons', icon: Music },
+  { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+  { to: '/payments', label: 'Payments', icon: CreditCard },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {

@@ -17,7 +17,11 @@ const TeachersPage = lazy(() => import('./pages/Teachers').then(m => ({ default:
 const LessonRatesPage = lazy(() => import('./pages/LessonRates').then(m => ({ default: m.LessonRatesPage })));
 const TeacherSchedulePage = lazy(() => import('./pages/TeacherSchedule').then(m => ({ default: m.TeacherSchedulePage })));
 const TeacherCurriculumPage = lazy(() => import('./pages/TeacherCurriculum').then(m => ({ default: m.TeacherCurriculumPage })));
-const StudentLessonsPage = lazy(() => import('./pages/StudentLessons').then(m => ({ default: m.StudentLessonsPage })));
+const StudentShell = lazy(() => import('./pages/student/StudentShell').then(m => ({ default: m.StudentShell })));
+const StudentHomePage = lazy(() => import('./pages/student/StudentHome').then(m => ({ default: m.StudentHome })));
+const StudentLessonsListPage = lazy(() => import('./pages/student/StudentLessonsList').then(m => ({ default: m.StudentLessonsList })));
+const StudentCalendarPage = lazy(() => import('./pages/student/StudentCalendar').then(m => ({ default: m.StudentCalendar })));
+const StudentPaymentsPage = lazy(() => import('./pages/student/StudentPayments').then(m => ({ default: m.StudentPayments })));
 const EnrolmentsPage = lazy(() => import('./pages/Enrolments').then(m => ({ default: m.EnrolmentsPage })));
 const TeacherScheduleAdminPage = lazy(() => import('./pages/TeacherScheduleAdmin').then(m => ({ default: m.TeacherScheduleAdminPage })));
 const TeacherCalendarPage = lazy(() => import('./pages/TeacherCalendar').then(m => ({ default: m.TeacherCalendarPage })));
@@ -204,10 +208,12 @@ export default function App() {
               <Route path="/curriculum" element={<TeacherCurriculumPage />} />
             </>
           ) : profile.role === 'student' ? (
-            <>
-              <Route path="/" element={<StudentLessonsPage />} />
-              <Route path="/lessons" element={<StudentLessonsPage />} />
-            </>
+            <Route element={<StudentShell />}>
+              <Route path="/" element={<StudentHomePage />} />
+              <Route path="/lessons" element={<StudentLessonsListPage />} />
+              <Route path="/calendar" element={<StudentCalendarPage />} />
+              <Route path="/payments" element={<StudentPaymentsPage />} />
+            </Route>
           ) : null}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
