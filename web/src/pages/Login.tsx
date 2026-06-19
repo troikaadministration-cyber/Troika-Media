@@ -18,8 +18,7 @@ export function LoginPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="w-full max-w-md text-center">
-          <h1 className="font-logo text-5xl text-navy mb-2">troika</h1>
-          <p className="text-teal text-lg">music lessons</p>
+          <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto mx-auto mb-2" />
           <div className="mt-8 bg-yellow-light border border-yellow/30 rounded-xl p-6 text-left">
             <p className="font-semibold text-navy text-sm mb-2">Setup Required</p>
             <p className="text-sm text-gray-600">
@@ -74,9 +73,7 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         {/* Branding */}
         <div className="text-center mb-8">
-          <h1 className="font-logo text-5xl text-navy">troika</h1>
-          <p className="text-teal text-lg mt-1">music lessons</p>
-          <p className="text-coral text-sm mt-1">every note counts</p>
+          <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8">

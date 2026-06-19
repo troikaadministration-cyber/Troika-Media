@@ -61,8 +61,7 @@ export function RoleSetupPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <h1 className="font-logo text-5xl text-navy">troika</h1>
-          <p className="text-teal text-lg mt-1">music lessons</p>
+          <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8">

@@ -87,13 +87,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:relative lg:translate-x-0
       `}>
-        <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className="font-logo text-2xl text-navy">troika</h1>
-              <span className="text-xs text-teal font-medium">{roleLabel}</span>
-            </div>
-            <p className="text-xs text-teal mt-0.5">music lessons</p>
+            <img src="/logo.png" alt="Troika Music Lessons" className="h-10 w-auto" />
+            <span className="inline-block mt-1 text-xs text-teal font-medium">{roleLabel}</span>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
@@ -147,7 +144,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-500 hover:text-navy lg:hidden" aria-label="Toggle menu">
             <Menu size={22} />
           </button>
-          <div className="lg:hidden font-logo text-lg text-navy">troika</div>
+          <img src="/logo.png" alt="Troika Music Lessons" className="lg:hidden h-7 w-auto" />
           <div className="hidden lg:block" />
           <div className="flex items-center gap-4">
             <div className="relative" ref={notifRef}>
