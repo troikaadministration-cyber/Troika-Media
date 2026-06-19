@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, AlertTriangle, CheckCircle, Music, X, BookOpen, BookmarkPlus, Trash2, Clock } from 'lucide-react';
+import { ArrowLeft, X, BookOpen, BookmarkPlus, Trash2, Clock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Student, StudentStats, AbsenceCategory, StudentEnrolment } from '../types';
@@ -296,91 +296,97 @@ export function StudentDetailPage() {
   if (loading) return <p className="text-center text-gray-400 py-12">Loading...</p>;
   if (!student) return <p className="text-center text-gray-400 py-12">Student not found</p>;
 
-  const statCards = [
-    { label: 'Total Lessons', value: stats?.total_lessons || 0, icon: Calendar, color: 'text-navy', bg: 'bg-gray-100' },
-    { label: 'Regular', value: stats?.regular_lessons || 0, icon: CheckCircle, color: 'text-teal', bg: 'bg-teal-light' },
-    { label: 'Makeup', value: stats?.makeup_lessons || 0, icon: Music, color: 'text-amber-500', bg: 'bg-amber-50' },
-    { label: 'Charged Absences', value: stats?.charged_absences || 0, icon: AlertTriangle, color: 'text-coral', bg: 'bg-coral-light' },
-  ];
-
-  const infoTiles = [
-    { label: 'Phone',        value: student.phone },
-    { label: 'Email',        value: student.email },
-    { label: 'Payment Plan', value: student.payment_plan?.replace(/_/g, ' ') },
-    { label: 'Parent',       value: student.parent_name },
-    { label: 'Parent Phone', value: student.parent_phone },
-    { label: 'Parent Email', value: student.parent_email },
-  ];
-
   return (
-    <div>
-      <button onClick={() => navigate('/students')} className="flex items-center gap-2 text-sm text-gray-500 hover:text-navy mb-4">
-        <ArrowLeft size={16} /> Back to Students
+    <div className="max-w-3xl mx-auto space-y-5">
+      {/* Back */}
+      <button onClick={() => navigate('/students')} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-navy">
+        <ArrowLeft size={15} /> Students
       </button>
 
-      {/* Profile card */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
-        <div className="flex items-start justify-between mb-4">
+      {/* Header */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-navy">{student.full_name}</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              {student.instrument?.name || ''}{student.location?.name ? ` · ${student.location.name}` : ''} ·{' '}
-              <span className={student.is_active ? 'text-teal font-semibold' : 'text-coral font-semibold'}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-bold text-navy">{student.full_name}</h1>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${student.is_active ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'}`}>
                 {student.is_active ? 'Active' : 'Inactive'}
               </span>
+            </div>
+            <p className="text-sm text-gray-400 mt-0.5">
+              {[student.instrument?.name, student.location?.name].filter(Boolean).join(' · ') || 'No instrument / location set'}
             </p>
           </div>
-          <div className="flex gap-2 flex-shrink-0 flex-wrap">
-            <button onClick={openEdit} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:border-navy hover:text-navy font-medium">
-              Edit
-            </button>
-            <button onClick={openReEnrol}
-              className="flex items-center gap-1.5 border border-teal/30 text-teal rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-teal-light">
-              <BookmarkPlus size={14} /> Re-enrol
-            </button>
-            <button
-              onClick={toggleActive}
-              className={`border rounded-lg px-3 py-1.5 text-sm font-medium ${
-                student.is_active
-                  ? 'border-coral/30 text-coral hover:bg-coral-light'
-                  : 'border-teal/30 text-teal hover:bg-teal-light'
-              }`}
-            >
-              {student.is_active ? 'Deactivate' : 'Activate'}
-            </button>
-            <button onClick={() => setDeleteConfirmOpen(true)}
-              className="flex items-center gap-1.5 border border-red-200 text-red-500 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-red-50">
-              <Trash2 size={14} /> Delete
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button onClick={openEdit} className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:border-gray-300 font-medium">Edit</button>
+            <button onClick={openReEnrol} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal text-white text-sm font-medium hover:bg-teal/90">
+              <BookmarkPlus size={13} /> Re-enrol
             </button>
           </div>
         </div>
 
-        {/* Info tiles */}
-        <div className="grid grid-cols-3 gap-3">
-          {infoTiles.map((tile) => (
-            <div key={tile.label} className="bg-gray-50 rounded-lg p-3">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">{tile.label}</p>
-              <p className="text-sm text-navy font-medium">{tile.value || '—'}</p>
-            </div>
-          ))}
-          {student.notes && (
-            <div className="col-span-3 bg-gray-50 rounded-lg p-3">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Notes</p>
-              <p className="text-sm text-gray-700">{student.notes}</p>
-            </div>
-          )}
+        <div className="mt-4 pt-4 border-t border-gray-50 grid grid-cols-2 gap-5">
+          {/* Student contact */}
+          <div>
+            <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">Student</p>
+            <dl className="space-y-1.5">
+              {[
+                { label: 'Phone', value: student.phone },
+                { label: 'Email', value: student.email },
+                { label: 'Plan',  value: student.payment_plan?.replace(/_/g, ' ') },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex gap-2 text-sm">
+                  <dt className="w-12 text-gray-400 flex-shrink-0">{label}</dt>
+                  <dd className="text-navy font-medium truncate">{value || '—'}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+          {/* Parent contact */}
+          <div>
+            <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">Parent / Guardian</p>
+            <dl className="space-y-1.5">
+              {[
+                { label: 'Name',  value: student.parent_name },
+                { label: 'Phone', value: student.parent_phone },
+                { label: 'Email', value: student.parent_email },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex gap-2 text-sm">
+                  <dt className="w-12 text-gray-400 flex-shrink-0">{label}</dt>
+                  <dd className="text-navy font-medium truncate">{value || '—'}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+
+        {student.notes && (
+          <div className="mt-3 px-3 py-2 bg-gray-50 rounded-lg text-sm text-gray-600 italic">{student.notes}</div>
+        )}
+
+        <div className="mt-4 pt-3 border-t border-gray-50 flex gap-2">
+          <button onClick={toggleActive} className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${
+            student.is_active ? 'border-coral/30 text-coral hover:bg-coral/5' : 'border-teal/30 text-teal hover:bg-teal/5'
+          }`}>
+            {student.is_active ? 'Deactivate' : 'Activate'}
+          </button>
+          <button onClick={() => setDeleteConfirmOpen(true)} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-400 hover:bg-red-50 font-medium">
+            <Trash2 size={11} /> Delete
+          </button>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {statCards.map((card) => (
-          <div key={card.label} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-            <div className={`w-9 h-9 ${card.bg} rounded-lg flex items-center justify-center mb-2`}>
-              <card.icon size={18} className={card.color} />
-            </div>
-            <p className="text-2xl font-bold text-navy">{card.value}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{card.label}</p>
+      {/* Stats strip */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Total',    value: stats?.total_lessons || 0,    color: 'text-navy' },
+          { label: 'Regular',  value: stats?.regular_lessons || 0,  color: 'text-teal' },
+          { label: 'Makeup',   value: stats?.makeup_lessons || 0,   color: 'text-amber-500' },
+          { label: 'Absences', value: stats?.charged_absences || 0, color: 'text-coral' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-white rounded-xl border border-gray-100 p-4 text-center">
+            <p className={`text-2xl font-bold ${color}`}>{value}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{label}</p>
           </div>
         ))}
       </div>
@@ -388,65 +394,56 @@ export function StudentDetailPage() {
       {/* Enrolment */}
       {enrolments.map((enrolment) => {
         const categoryLabel = enrolment.lesson_rate?.category?.replace(/_/g, ' ') || '';
+        const pct = Math.min((enrolment.lessons_used / enrolment.total_lessons) * 100, 100);
         return (
-          <div key={enrolment.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
-            <div className="flex items-center gap-2 mb-3">
-              <BookOpen size={18} className="text-teal" />
-              <h2 className="font-semibold text-navy">
-                Enrolment — {enrolment.academic_year}
-                {categoryLabel && <span className="text-gray-400 font-normal ml-2">({categoryLabel})</span>}
-              </h2>
-            </div>
-            <div className="mb-3">
-              <div className="flex items-center justify-between text-sm mb-1">
-                <span className="text-gray-500">Lessons Used</span>
-                <span className="font-semibold text-navy">{enrolment.lessons_used} / {enrolment.total_lessons}</span>
+          <div key={enrolment.id} className="bg-white rounded-xl border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <BookOpen size={16} className="text-teal" />
+                <h2 className="font-semibold text-navy text-sm">Enrolment {enrolment.academic_year}</h2>
+                {categoryLabel && <span className="text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">{categoryLabel}</span>}
               </div>
-              <div className="w-full bg-gray-100 rounded-full h-3">
-                <div className="bg-teal rounded-full h-3 transition-all"
-                  style={{ width: `${Math.min((enrolment.lessons_used / enrolment.total_lessons) * 100, 100)}%` }} />
-              </div>
-              <p className="text-xs text-gray-400 mt-1">{enrolment.total_lessons - enrolment.lessons_used} lessons remaining</p>
+              <span className="text-xs text-gray-400">{enrolment.total_lessons - enrolment.lessons_used} remaining</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-              <div><p className="text-xs text-gray-400">Rate/Lesson</p><p className="font-semibold text-navy">₹{Number(enrolment.rate_per_lesson).toLocaleString('en-IN')}</p></div>
-              <div><p className="text-xs text-gray-400">Total Fee</p><p className="font-semibold text-navy">₹{Number(enrolment.total_fee).toLocaleString('en-IN')}</p></div>
-              <div><p className="text-xs text-gray-400">Payment Plan</p><p className="font-medium text-gray-700">{enrolment.payment_plan?.replace(/_/g, ' ')}</p></div>
-              <div><p className="text-xs text-gray-400">Start Date</p><p className="font-medium text-gray-700">{new Date(enrolment.start_date).toLocaleDateString()}</p></div>
+            <div className="w-full bg-gray-100 rounded-full h-2 mb-3">
+              <div className="bg-teal h-2 rounded-full transition-all" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="grid grid-cols-4 gap-3 text-sm">
+              <div><p className="text-xs text-gray-400 mb-0.5">Used</p><p className="font-semibold text-navy">{enrolment.lessons_used}/{enrolment.total_lessons}</p></div>
+              <div><p className="text-xs text-gray-400 mb-0.5">Rate</p><p className="font-semibold text-navy">₹{Number(enrolment.rate_per_lesson).toLocaleString('en-IN')}</p></div>
+              <div><p className="text-xs text-gray-400 mb-0.5">Total Fee</p><p className="font-semibold text-navy">₹{Number(enrolment.total_fee).toLocaleString('en-IN')}</p></div>
+              <div><p className="text-xs text-gray-400 mb-0.5">Plan</p><p className="font-medium text-gray-700">{enrolment.payment_plan?.replace(/_/g, ' ')}</p></div>
             </div>
           </div>
         );
       })}
 
       {/* Class Schedule */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-6">
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-xl border border-gray-100">
+        <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Clock size={18} className="text-teal" />
-            <h2 className="font-semibold text-navy">Class Schedule</h2>
+            <Clock size={15} className="text-gray-400" />
+            <h2 className="font-semibold text-navy text-sm">Class Schedule</h2>
           </div>
-          <button onClick={() => openScheduleEdit(null)}
-            className="text-xs font-semibold text-teal border border-teal/30 px-3 py-1.5 rounded-lg hover:bg-teal-light">
-            + Add Class
-          </button>
+          <button onClick={() => openScheduleEdit(null)} className="text-xs font-semibold text-teal hover:underline">+ Add</button>
         </div>
         {schedules.length === 0 ? (
           <p className="text-center text-gray-400 py-6 text-sm">No class slots set up</p>
         ) : (
           <div className="divide-y divide-gray-50">
             {schedules.map((s: any) => (
-              <div key={s.id} className="flex items-center gap-4 px-4 py-3">
-                <div className="w-20 text-center flex-shrink-0">
-                  <p className="text-xs font-bold text-navy">{DAYS[s.day_of_week]}</p>
+              <div key={s.id} className="flex items-center gap-3 px-5 py-3">
+                <div className="w-24 flex-shrink-0">
+                  <p className="text-xs font-semibold text-navy">{DAYS[s.day_of_week]}</p>
                   <p className="text-xs text-gray-400">{s.start_time?.slice(0,5)}{s.end_time ? `–${s.end_time.slice(0,5)}` : ''}</p>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-navy truncate">{s.teacher?.full_name || '—'}</p>
+                  <p className="text-sm text-navy truncate">{s.teacher?.full_name || '—'}</p>
                   <p className="text-xs text-gray-400">{[s.instrument?.name, s.location?.name].filter(Boolean).join(' · ') || '—'}</p>
                 </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <button onClick={() => openScheduleEdit(s)} className="text-xs text-gray-400 hover:text-navy px-2 py-1 rounded hover:bg-gray-100">Edit</button>
-                  <button onClick={() => deleteSchedule(s.id)} className="text-xs text-coral hover:text-coral/70 px-2 py-1 rounded hover:bg-coral-light">Remove</button>
+                <div className="flex gap-1 flex-shrink-0">
+                  <button onClick={() => openScheduleEdit(s)} className="text-xs text-gray-400 hover:text-navy px-2 py-1 rounded hover:bg-gray-50">Edit</button>
+                  <button onClick={() => deleteSchedule(s.id)} className="text-xs text-coral hover:text-coral/70 px-2 py-1 rounded hover:bg-coral/5">Remove</button>
                 </div>
               </div>
             ))}
@@ -455,35 +452,41 @@ export function StudentDetailPage() {
       </div>
 
       {/* Lesson History */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-        <div className="p-4 border-b border-gray-100"><h2 className="font-semibold text-navy">Lesson History</h2></div>
+      <div className="bg-white rounded-xl border border-gray-100">
+        <div className="px-5 py-3.5 border-b border-gray-100">
+          <h2 className="font-semibold text-navy text-sm">Lesson History</h2>
+        </div>
         <div className="divide-y divide-gray-50">
+          {lessons.length === 0 && <p className="text-center text-gray-400 py-8 text-sm">No lessons recorded</p>}
           {lessons.map((item: any) => (
-            <div key={item.id} className="p-4 flex items-center gap-4">
-              <div className={`w-1.5 h-10 rounded-full ${item.attended === true ? 'bg-teal' : item.attended === false ? 'bg-coral' : 'bg-gray-300'}`} />
-              <div className="flex-1">
-                <p className="text-sm font-medium text-navy">{item.lesson?.title || 'Lesson'}</p>
+            <div key={item.id} className="flex items-center gap-3 px-5 py-3">
+              <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${item.attended === true ? 'bg-teal' : item.attended === false ? 'bg-coral' : 'bg-gray-200'}`} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-navy truncate">{item.lesson?.title || 'Lesson'}</p>
                 <p className="text-xs text-gray-400">
-                  {new Date(item.lesson?.date).toLocaleDateString()} · {item.lesson?.start_time?.slice(0, 5)} · {item.lesson?.teacher?.full_name}
+                  {new Date(item.lesson?.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  {item.lesson?.start_time ? ` · ${item.lesson.start_time.slice(0, 5)}` : ''}
+                  {item.lesson?.teacher?.full_name ? ` · ${item.lesson.teacher.full_name}` : ''}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                {item.attended === true && <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-teal-light text-teal">Attended</span>}
+              <div className="flex-shrink-0">
+                {item.attended === true && (
+                  <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-teal/10 text-teal">Attended</span>
+                )}
                 {item.attended === false && (
-                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${item.absence_category === 'charged' ? 'bg-coral-light text-coral' : 'bg-green-50 text-green-600'}`}>
-                    {item.absence_category === 'charged' ? 'Absent (Charged)' : 'Absent (Not Charged)'}
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${item.absence_category === 'charged' ? 'bg-coral/10 text-coral' : 'bg-green-50 text-green-600'}`}>
+                    {item.absence_category === 'charged' ? 'Absent · Charged' : 'Absent · Free'}
                   </span>
                 )}
                 {item.attended === null && (
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => markAttended(item.id)} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-teal text-white hover:bg-teal/80">Attended</button>
-                    <button onClick={() => setAbsenceModal({ lessonStudentId: item.id, studentName: student.full_name })} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-coral text-white hover:bg-coral/80">Absent</button>
+                  <div className="flex gap-1.5">
+                    <button onClick={() => markAttended(item.id)} className="text-xs px-2.5 py-1 rounded-full border border-teal/30 text-teal hover:bg-teal/10 font-medium">Present</button>
+                    <button onClick={() => setAbsenceModal({ lessonStudentId: item.id, studentName: student.full_name })} className="text-xs px-2.5 py-1 rounded-full border border-coral/30 text-coral hover:bg-coral/10 font-medium">Absent</button>
                   </div>
                 )}
               </div>
             </div>
           ))}
-          {lessons.length === 0 && <p className="text-center text-gray-400 py-8 text-sm">No lessons recorded</p>}
         </div>
       </div>
 
