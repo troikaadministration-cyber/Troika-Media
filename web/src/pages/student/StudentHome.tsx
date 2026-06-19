@@ -33,7 +33,7 @@ export function StudentHome() {
   ];
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       {/* Greeting */}
       <div>
         <h1 className="text-2xl font-bold text-navy">{greeting()}, {firstName(studentName)} 👋</h1>

@@ -35,7 +35,7 @@ export function StudentCalendar() {
     .sort((a, b) => a.lesson.date.localeCompare(b.lesson.date));
 
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-navy">Calendar</h1>
         <p className="text-gray-500 text-sm mt-1">All your lessons, month by month.</p>
