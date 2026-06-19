@@ -7,14 +7,14 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   ChevronLeft, ChevronRight, CheckCircle, MapPin, Music2, X,
-  Upload, FileText, CloudUpload, Trash2, RefreshCw, Ban
+  Upload, FileText, CloudUpload, Trash2, RefreshCw, Ban, UserCheck, UserX,
 } from 'lucide-react';
 import type { PieceStatus } from '../types';
 
 export function TeacherSchedulePage() {
   const { profile } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const { lessons, loading, error, refresh, markComplete, markPending, updateNotes, cancelLesson } = useTeacherLessons(profile?.id, selectedDate);
+  const { lessons, loading, error, refresh, markComplete, markPending, updateNotes, cancelLesson, markAttendance } = useTeacherLessons(profile?.id, selectedDate);
   const [cancelModal, setCancelModal] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [confirmDeletePiece, setConfirmDeletePiece] = useState<string | null>(null);
@@ -178,14 +178,11 @@ export function TeacherSchedulePage() {
       ) : (
         <div className="space-y-4">
           {lessons.map((lesson) => {
-            const student = lesson.students?.[0]?.student;
-            const studentName = student?.full_name || 'Unknown';
-            const studentId = lesson.students?.[0]?.student_id || '';
+            const lessonStudents = lesson.students || [];
+            const firstStudentId = lessonStudents[0]?.student_id || '';
+            const firstStudentName = lessonStudents[0]?.student?.full_name || 'Unknown';
             const lessonPieces = expandedPieces.has(lesson.id);
             const isCompleted = lesson.status === 'completed';
-
-            // Count completed lessons for this student (from lesson_students data)
-            const completedBadge = lesson.students?.[0] ? `${lesson.students.length} student${lesson.students.length > 1 ? 's' : ''}` : '';
 
             return (
               <div key={lesson.id} className={`bg-white rounded-xl border-l-4 p-4 sm:p-5 ${isCompleted ? 'border-teal' : 'border-coral'}`}>
@@ -197,14 +194,13 @@ export function TeacherSchedulePage() {
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isCompleted ? 'bg-teal text-white' : 'bg-coral text-white'}`}>
                         {isCompleted ? 'Completed' : 'Pending'}
                       </span>
-                    </div>
-                    <h3 className="font-bold text-navy mt-1">{lesson.title}</h3>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <span className="text-sm text-teal">{studentName}</span>
-                      {completedBadge && (
-                        <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{completedBadge}</span>
+                      {lessonStudents.length > 0 && (
+                        <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                          {lessonStudents.length} student{lessonStudents.length > 1 ? 's' : ''}
+                        </span>
                       )}
                     </div>
+                    <h3 className="font-bold text-navy mt-1">{lesson.title}</h3>
                   </div>
                   <button onClick={() => isCompleted ? markPending(lesson.id) : markComplete(lesson.id)}
                     className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
@@ -222,8 +218,47 @@ export function TeacherSchedulePage() {
                   </div>
                 )}
 
+                {/* Per-student attendance */}
+                {lessonStudents.length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    {lessonStudents.map((ls) => {
+                      const name = ls.student?.full_name || 'Unknown';
+                      const attended = ls.attended;
+                      return (
+                        <div key={ls.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                          <span className="text-sm font-medium text-navy truncate">{name}</span>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                            <button
+                              onClick={() => markAttendance(ls.id, attended === true ? null : true)}
+                              title="Present"
+                              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                                attended === true
+                                  ? 'bg-teal text-white'
+                                  : 'bg-gray-100 text-gray-400 hover:bg-teal/20 hover:text-teal'
+                              }`}
+                            >
+                              <UserCheck size={13} /> Present
+                            </button>
+                            <button
+                              onClick={() => markAttendance(ls.id, attended === false ? null : false)}
+                              title="Absent"
+                              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                                attended === false
+                                  ? 'bg-coral text-white'
+                                  : 'bg-gray-100 text-gray-400 hover:bg-coral/20 hover:text-coral'
+                              }`}
+                            >
+                              <UserX size={13} /> Absent
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {/* Pieces section */}
-                {studentId && (
+                {firstStudentId && (
                   <button onClick={() => togglePieces(lesson.id)}
                     className="mt-3 flex items-center gap-2 text-sm font-medium text-navy bg-cream/50 rounded-lg px-3 py-2 w-full text-left hover:bg-cream">
                     <Music2 size={14} className="text-yellow-600" />
@@ -253,7 +288,7 @@ export function TeacherSchedulePage() {
 
                 {/* Action buttons */}
                 <div className="grid grid-cols-4 gap-2 mt-4">
-                  <button onClick={() => { setRepertoireModal({ studentId, studentName }); }}
+                  <button onClick={() => { setRepertoireModal({ studentId: firstStudentId, studentName: firstStudentName }); }}
                     className="flex flex-col items-center gap-1 py-2.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-xs text-yellow-700 font-medium transition-colors">
                     <Music2 size={16} /> Pieces
                   </button>

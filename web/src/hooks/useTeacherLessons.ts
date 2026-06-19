@@ -76,6 +76,11 @@ export function useTeacherLessons(teacherId: string | undefined, date: string) {
     await fetchLessons();
   }
 
+  async function markAttendance(lessonStudentId: string, attended: boolean | null) {
+    await supabase.from('lesson_students').update({ attended }).eq('id', lessonStudentId);
+    await fetchLessons();
+  }
+
   async function cancelLesson(lessonId: string, userId: string, reason?: string) {
     const updates: Record<string, unknown> = {
       status: 'cancelled',
@@ -87,5 +92,5 @@ export function useTeacherLessons(teacherId: string | undefined, date: string) {
     await fetchLessons();
   }
 
-  return { lessons, loading, error, refresh: fetchLessons, markComplete, markPending, updateNotes, cancelLesson };
+  return { lessons, loading, error, refresh: fetchLessons, markComplete, markPending, updateNotes, cancelLesson, markAttendance };
 }
