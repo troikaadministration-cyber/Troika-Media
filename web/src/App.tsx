@@ -65,10 +65,8 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         <polygon points="12,2 15,9 22,9 16,14 18,22 12,17 6,22 8,14 2,9 9,9" />
       </svg>
 
-      <div className="text-center relative z-10">
-        <h1 className="font-logo text-7xl sm:text-8xl text-navy mb-2 splash-logo drop-shadow-lg">troika</h1>
-        <p className="text-teal text-xl sm:text-2xl font-medium splash-subtitle">music lessons</p>
-        <p className="text-coral text-sm sm:text-base mt-1 splash-tagline">every note counts</p>
+      <div className="text-center relative z-10 splash-logo">
+        <img src="/logo.png" alt="Troika Music Lessons" className="h-28 sm:h-36 w-auto mx-auto drop-shadow-lg" />
       </div>
     </div>
   );
@@ -148,9 +146,8 @@ export default function App() {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <h1 className="font-logo text-5xl text-navy mb-2">troika</h1>
-          <p className="text-teal text-lg">music lessons</p>
-          <div className="mt-4 flex justify-center">
+          <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto mb-5" />
+          <div className="flex justify-center">
             <div className="w-6 h-6 border-2 border-coral border-t-transparent rounded-full animate-spin" />
           </div>
         </div>
