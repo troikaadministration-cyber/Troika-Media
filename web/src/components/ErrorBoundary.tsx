@@ -12,12 +12,18 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('ErrorBoundary caught:', error, info.componentStack);
-    // Auto-reload once on chunk load failure (stale deployment cache)
-    if (error.message?.includes('Failed to fetch dynamically imported module')) {
-      const reloaded = sessionStorage.getItem('chunk_reload');
-      if (!reloaded) {
-        sessionStorage.setItem('chunk_reload', '1');
-        window.location.reload();
+    // Stale deployment: cached main bundle references old chunk hashes that no
+    // longer exist. location.reload() re-uses cached JS, so instead do a
+    // cache-busting navigation — the unique ?_v= param forces the browser to
+    // re-fetch index.html and the new hashed bundles from scratch.
+    if (
+      error.message?.includes('Failed to fetch dynamically imported module') ||
+      error.message?.includes('Importing a module script failed')
+    ) {
+      const attempts = Number(sessionStorage.getItem('chunk_reload') || '0');
+      if (attempts < 2) {
+        sessionStorage.setItem('chunk_reload', String(attempts + 1));
+        window.location.replace('/?_v=' + Date.now());
       }
     }
   }
