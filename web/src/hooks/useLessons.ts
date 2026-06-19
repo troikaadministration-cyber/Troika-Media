@@ -54,7 +54,13 @@ export function useLessons(filters?: {
     title: string;
     student_ids: string[];
   }) {
-    const { student_ids, ...lessonData } = lesson;
+    const { student_ids, ...rest } = lesson;
+    const lessonData = {
+      ...rest,
+      teacher_id: rest.teacher_id || null,
+      instrument_id: rest.instrument_id || null,
+      location_id: rest.location_id || null,
+    };
     const { data, error } = await supabase
       .from('lessons')
       .insert(lessonData)

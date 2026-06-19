@@ -130,7 +130,14 @@ export function SchedulePage() {
     e.preventDefault();
     try {
       const { is_charged, makeup_direction, special_fee_type, special_fee_amount, ...rest } = formData;
-      const lessonData: any = { ...rest, date: selectedDate, is_charged };
+      const lessonData: any = {
+        ...rest,
+        date: selectedDate,
+        is_charged,
+        teacher_id: rest.teacher_id || null,
+        instrument_id: rest.instrument_id || null,
+        location_id: rest.location_id || null,
+      };
       if (makeup_direction) lessonData.makeup_direction = makeup_direction;
       // Teacher-learning makeup: no students, not charged
       if (makeup_direction === 'teacher_learning') {
