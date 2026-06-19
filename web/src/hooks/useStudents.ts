@@ -25,9 +25,16 @@ export function useStudents(filters?: {
       if (filters?.locationId) query = query.eq('location_id', filters.locationId);
       if (filters?.isActive !== undefined) query = query.eq('is_active', filters.isActive);
 
-      const { data, error: err } = await query;
+      const [{ data, error: err }, { data: approvedProfiles }] = await Promise.all([
+        query,
+        supabase.from('profiles').select('id').eq('approved', true),
+      ]);
       if (err) throw err;
-      setStudents((data as Student[]) || []);
+
+      const approvedIds = new Set((approvedProfiles || []).map((p) => p.id));
+      // Show coordinator-created students (no user_id) and self-registered students whose profile is approved
+      const visible = (data || []).filter((s: any) => !s.user_id || approvedIds.has(s.user_id));
+      setStudents((visible as Student[]) || []);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch students');
     } finally {

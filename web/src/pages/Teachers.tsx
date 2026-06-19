@@ -64,6 +64,7 @@ export function TeachersPage() {
           )
         `)
         .eq('role', 'teacher')
+        .eq('approved', true)
         .order('full_name');
 
       if (err) throw err;
