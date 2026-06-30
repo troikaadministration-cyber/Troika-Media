@@ -78,8 +78,8 @@ export function usePendingReschedules() {
       );
       if (lsErr) throw lsErr;
     }
-
-    await supabase.from('lessons').update({ pending_reschedule: false }).eq('id', lessonId);
+    // pending_reschedule is cleared by the resolve_pending_on_makeup DB trigger
+    // when the makeup's lesson_students rows are inserted above.
 
     if (lesson.source_break_id) {
       const { data: brk } = await supabase
@@ -170,10 +170,8 @@ export function usePendingReschedules() {
       if (lsErr) throw lsErr;
     }
 
-    await supabase
-      .from('lessons')
-      .update({ pending_reschedule: false })
-      .in('id', toSchedule.map(p => p.original.id));
+    // pending_reschedule cleared by the resolve_pending_on_makeup DB trigger
+    // on the lesson_students inserts above.
 
     const breakId = toSchedule[0].original.source_break_id;
     const { data: brk } = await supabase

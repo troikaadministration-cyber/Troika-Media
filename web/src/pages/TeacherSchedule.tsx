@@ -7,16 +7,14 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   ChevronLeft, ChevronRight, CheckCircle, MapPin, Music2, X,
-  Upload, FileText, CloudUpload, Trash2, RefreshCw, Ban, UserCheck, UserX,
+  Upload, FileText, CloudUpload, Trash2, RefreshCw, UserCheck, UserX,
 } from 'lucide-react';
 import type { PieceStatus } from '../types';
 
 export function TeacherSchedulePage() {
   const { profile } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const { lessons, loading, error, refresh, markComplete, markPending, updateNotes, cancelLesson, markAttendance } = useTeacherLessons(profile?.id, selectedDate);
-  const [cancelModal, setCancelModal] = useState<string | null>(null);
-  const [cancelReason, setCancelReason] = useState('');
+  const { lessons, loading, error, refresh, markComplete, markPending, updateNotes, markAttendance } = useTeacherLessons(profile?.id, selectedDate);
   const [confirmDeletePiece, setConfirmDeletePiece] = useState<string | null>(null);
 
   // Modal state
@@ -95,10 +93,14 @@ export function TeacherSchedulePage() {
     const path = `${profile.id}/${mediaModal.lessonId}/${Date.now()}_${file.name}`;
     const { error } = await supabase.storage.from('lesson-media').upload(path, file);
     if (!error) {
-      await supabase.from('media_uploads').insert({
+      const { data: media } = await supabase.from('media_uploads').insert({
         lesson_id: mediaModal.lessonId, teacher_id: profile.id,
         file_name: file.name, file_type: file.type, file_size: file.size, supabase_path: path,
-      });
+      }).select('id').single();
+      // Fire-and-forget Drive sync; no-op if Drive isn't configured (row stays unsynced for retry).
+      if (media?.id) {
+        supabase.functions.invoke('sync-to-drive', { body: { media_id: media.id } }).catch(() => {});
+      }
     }
     setUploading(false);
   };
@@ -300,12 +302,6 @@ export function TeacherSchedulePage() {
                     className="flex flex-col items-center gap-1 py-2.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-xs text-coral font-medium transition-colors">
                     <Upload size={16} /> Media
                   </button>
-                  {!isCompleted && (
-                    <button onClick={() => setCancelModal(lesson.id)}
-                      className="flex flex-col items-center gap-1 py-2.5 rounded-lg bg-gray-50 hover:bg-red-50 text-xs text-gray-400 hover:text-red-500 font-medium transition-colors">
-                      <Ban size={16} /> Cancel
-                    </button>
-                  )}
                 </div>
               </div>
             );
@@ -385,49 +381,6 @@ export function TeacherSchedulePage() {
                 <button onClick={() => setNotesModal(null)} className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600">Cancel</button>
                 <button onClick={handleSaveNotes} className="flex-1 py-2.5 rounded-lg bg-coral text-white text-sm font-medium hover:bg-coral/90">Save Note</button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cancel Lesson Modal */}
-      {cancelModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-navy text-lg">Cancel Lesson</h3>
-              <button onClick={() => { setCancelModal(null); setCancelReason(''); }} className="text-gray-400 hover:text-navy"><X size={20} /></button>
-            </div>
-            <p className="text-sm text-gray-500 mb-4">Are you sure you want to cancel this lesson?</p>
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Reason (optional)</label>
-              <textarea
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm resize-none"
-                rows={3}
-                placeholder="Why are you cancelling?"
-              />
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={async () => {
-                  if (cancelModal && profile?.id) {
-                    await cancelLesson(cancelModal, profile.id, cancelReason || undefined);
-                  }
-                  setCancelModal(null);
-                  setCancelReason('');
-                }}
-                className="flex-1 bg-coral text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-coral/90"
-              >
-                Cancel Lesson
-              </button>
-              <button
-                onClick={() => { setCancelModal(null); setCancelReason(''); }}
-                className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
-              >
-                Keep Lesson
-              </button>
             </div>
           </div>
         </div>
