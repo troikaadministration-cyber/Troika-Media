@@ -27,6 +27,7 @@ const TeacherScheduleAdminPage = lazy(() => import('./pages/TeacherScheduleAdmin
 const TeacherCalendarPage = lazy(() => import('./pages/TeacherCalendar').then(m => ({ default: m.TeacherCalendarPage })));
 const BreaksPage = lazy(() => import('./pages/Breaks').then(m => ({ default: m.BreaksPage })));
 const LocationsPage = lazy(() => import('./pages/Locations').then(m => ({ default: m.LocationsPage })));
+const ReportsPage = lazy(() => import('./pages/Reports').then(m => ({ default: m.ReportsPage })));
 
 function PageLoader() {
   return (
@@ -198,6 +199,7 @@ export default function App() {
               <Route path="/teacher-schedules" element={<TeacherScheduleAdminPage />} />
               <Route path="/breaks" element={<BreaksPage />} />
               <Route path="/locations" element={<LocationsPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
             </>
           ) : profile.role === 'teacher' ? (
             <>
