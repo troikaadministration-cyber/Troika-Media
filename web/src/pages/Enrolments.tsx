@@ -6,6 +6,7 @@ import type { SelectedSlot } from '../components/SlotPicker';
 import type { Profile, Instrument } from '../types';
 import { Plus, X, RefreshCw, BookOpen, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { lessonsForPlan } from '../lib/lessonCount';
 
 interface Enrolment {
   id: string;
@@ -96,7 +97,7 @@ export function EnrolmentsPage() {
     : rates;
   const hasLocationRates = !!(selectedStudent?.location_id &&
     rates.some(r => r.location_id === selectedStudent.location_id));
-  const totalLessons = form.payment_plan === 'trial' ? 1 : 39;
+  const totalLessons = lessonsForPlan(form.payment_plan, form.start_date);
   const totalFee = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
   const teacherId = selectedRate?.teacher?.id ?? selectedRate?.teacher_id ?? manualTeacherId ?? '';
   const teacherName = teachers.find(t => t.id === teacherId)?.full_name
@@ -352,7 +353,7 @@ export function EnrolmentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-navy">Enrolments</h1>
-          <p className="text-gray-500 text-sm mt-1">39-lesson plans & payment instalments</p>
+          <p className="text-gray-500 text-sm mt-1">Annual lesson plans & payment instalments</p>
         </div>
         <button
           onClick={() => setModal(true)}
