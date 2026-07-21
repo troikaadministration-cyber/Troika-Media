@@ -72,6 +72,10 @@ export function SchedulePage() {
   const [showForm, setShowForm] = useState(false);
   const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
 
+  // Scheduled breaks — used to grey out the on-break student's lesson slots
+  // (visual reminder that the slot is only temporarily free; not blocked).
+  const [breaks, setBreaks] = useState<{ student_ids: string[]; start_date: string; end_date: string }[]>([]);
+
   // Makeup finder
   const [makeupModal, setMakeupModal] = useState<{ lessonId: string; studentId: string } | null>(null);
   const [makeupMatches, setMakeupMatches] = useState<MakeupMatch[]>([]);
@@ -107,7 +111,21 @@ export function SchedulePage() {
     supabase.from('profiles').select('*').eq('role', 'teacher').then(({ data }) => setTeachers(data || []));
     supabase.from('instruments').select('*').then(({ data }) => setInstruments(data || []));
     supabase.from('students').select('*').eq('is_active', true).order('full_name').then(({ data }) => setAllStudents(data || []));
+    supabase.from('scheduled_breaks').select('student_ids, start_date, end_date').then(({ data }) => setBreaks(data || []));
   }, []);
+
+  // Names of a lesson's students who are on a scheduled break covering the lesson date.
+  function breakStudentsFor(lesson: any): string[] {
+    if (!lesson?.date || !lesson.students?.length) return [];
+    return lesson.students
+      .filter((s: any) =>
+        breaks.some(b =>
+          b.student_ids?.includes(s.student_id) &&
+          b.start_date <= lesson.date && lesson.date <= b.end_date
+        )
+      )
+      .map((s: any) => s.student?.full_name || 'Student');
+  }
 
   const changeDate = (days: number) => {
     const d = new Date(selectedDate);
@@ -497,6 +515,7 @@ export function SchedulePage() {
                 <LessonRow
                   key={lesson.id}
                   lesson={lesson}
+                  breakNames={breakStudentsFor(lesson)}
                   onCancel={() => setCancelModal(lesson.id)}
                   onFindMakeup={(studentId: string) => findMakeupMatches(lesson.id, studentId)}
                 />
@@ -575,11 +594,14 @@ export function SchedulePage() {
                     const leftPct = (lesson._col / lesson._totalCols) * 100;
                     const widthPct = 100 / lesson._totalCols;
 
+                    const onBreak = lesson.status !== 'cancelled' && breakStudentsFor(lesson).length > 0;
                     const colorClass =
                       lesson.status === 'completed'
                         ? 'bg-teal/10 border-teal text-teal'
                         : lesson.status === 'cancelled'
                         ? 'bg-gray-100 border-gray-300 text-gray-400'
+                        : onBreak
+                        ? 'bg-gray-100 border-gray-300 text-gray-400 border-dashed opacity-70'
                         : 'bg-coral/10 border-coral text-coral';
 
                     return (
@@ -597,6 +619,7 @@ export function SchedulePage() {
                           `${lesson.start_time?.slice(0, 5)}${lesson.end_time ? ' – ' + lesson.end_time.slice(0, 5) : ''}`,
                           lesson.title || lesson.instrument?.name,
                           lesson.teacher?.full_name,
+                          onBreak ? `On break: ${breakStudentsFor(lesson).join(', ')} — slot temporarily free` : '',
                         ].filter(Boolean).join(' · ')}
                       >
                         <p className="text-[10px] font-bold leading-tight pt-0.5 truncate">
@@ -726,16 +749,18 @@ export function SchedulePage() {
   );
 }
 
-function LessonRow({ lesson, onCancel, onFindMakeup }: {
+function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup }: {
   lesson: any;
+  breakNames?: string[];
   onCancel: () => void;
   onFindMakeup: (studentId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const students = lesson.students || [];
+  const onBreak = breakNames.length > 0 && lesson.status !== 'cancelled';
 
   return (
-    <div className="p-4 hover:bg-gray-50 transition-colors">
+    <div className={`p-4 hover:bg-gray-50 transition-colors ${onBreak ? 'opacity-50' : ''}`}>
       <div className="flex items-center gap-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         <div className={`w-1.5 h-14 rounded-full ${
           lesson.status === 'completed' ? 'bg-teal' :
@@ -751,6 +776,12 @@ function LessonRow({ lesson, onCancel, onFindMakeup }: {
           <p className="text-xs text-gray-400">{students.length} student(s)</p>
         </div>
         <div className="flex items-center gap-2">
+          {onBreak && (
+            <span className="text-xs font-semibold px-3 py-1 rounded-full bg-yellow-100 text-yellow-700"
+              title={`On break: ${breakNames.join(', ')} — slot temporarily free`}>
+              On break
+            </span>
+          )}
           <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
             lesson.lesson_type === 'regular' ? 'bg-gray-100 text-gray-600' :
             lesson.lesson_type === 'makeup' ? 'bg-amber-50 text-amber-600' :
