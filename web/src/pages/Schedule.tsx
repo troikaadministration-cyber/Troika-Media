@@ -119,7 +119,7 @@ export function SchedulePage() {
   const [formData, setFormData] = useState({
     teacher_id: '', instrument_id: '', location_id: '',
     lesson_type: 'regular' as LessonType,
-    date: selectedDate, start_time: '09:00', end_time: '10:00',
+    date: selectedDate, start_time: '09:00', end_time: '09:45',
     title: '', student_ids: [] as string[],
     is_charged: true, makeup_direction: '' as string,
     special_fee_type: 'regular' as 'regular' | 'complimentary' | 'custom',

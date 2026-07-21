@@ -226,7 +226,7 @@ export function StudentDetailPage() {
       teacher_id: '',
       day_of_week: 1,
       start_time: '09:00',
-      end_time: '10:00',
+      end_time: '09:45',
       instrument_id: '',
       location_id: student?.location_id || '',
     });

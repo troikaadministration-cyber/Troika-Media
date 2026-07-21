@@ -29,7 +29,8 @@ interface ClassRow {
   is_online: boolean;
 }
 
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// 0 = Sunday … 6 = Saturday, matching JS getDay()/getUTCDay() and the rest of the app.
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const ALLOWED_INSTRUMENTS = ['Cello', 'Piano', 'Voice', 'Guitar', 'Violin', 'Viola', 'IGCSE Music', 'Music Theory'];
 
@@ -42,7 +43,7 @@ const PAYMENT_PLANS = [
 
 
 function emptyClass(): ClassRow {
-  return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '', instrument_id: '', is_online: false };
+  return { teacher_id: '', category: '', day_of_week: '1', start_time: '09:00', end_time: '09:45', rate: '', instrument_id: '', is_online: false };
 }
 
 function StepBar({ step }: { step: number }) {
