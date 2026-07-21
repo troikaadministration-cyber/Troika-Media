@@ -124,7 +124,14 @@ the **"Trial" payment-plan option should likely be removed** from enrolment
 Recital tickets, books, exams, etc. **Add-on, customisable** (free-form name +
 amount), payable, shown on invoice.
 
-### Payment plans + discount engine  ⭐ (supersedes the simple discount)
+### Payment plans + discount engine  ✅ DONE (needs migration 00021 applied)
+Final model: ONE primary discount (None / Plan-auto 10·5·0% / Legacy 25% /
+Flat ₹ special) + a **manual Multi-lesson (+5%) toggle** that is the only one
+that stacks. Applied to tuition only. Implemented in web/src/lib/fees.ts
+(`computeDiscount`) across onboarding, enrolments, and re-enrolment.
+
+Original notes:
+### Payment plans + discount engine (superseded the simple 00020 discount)
 Discount components:
 - **Plan discount (auto):** 1 instalment = **10%**, 3 instalments = **5%**,
   10 instalments = **0%**.

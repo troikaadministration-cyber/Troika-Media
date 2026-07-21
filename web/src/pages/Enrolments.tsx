@@ -7,7 +7,7 @@ import type { Profile, Instrument } from '../types';
 import { Plus, X, RefreshCw, BookOpen, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { lessonsForPlan } from '../lib/lessonCount';
-import { applyDiscount, type DiscountKind } from '../lib/fees';
+import { computeDiscount, type DiscountPrimary } from '../lib/fees';
 
 interface Enrolment {
   id: string;
@@ -63,8 +63,9 @@ export function EnrolmentsPage() {
     })(),
     registration_fee: 0,
     rate_override: 0,
-    discount_kind: 'percent' as DiscountKind,
-    discount_value: 0,
+    discount_primary: 'none' as DiscountPrimary,
+    discount_special: 0,
+    discount_multilesson: false,
     academic_year: new Date().getFullYear().toString(),
   });
 
@@ -105,10 +106,15 @@ export function EnrolmentsPage() {
     rates.some(r => r.location_id === selectedStudent.location_id));
   const totalLessons = lessonsForPlan(form.payment_plan, form.start_date);
   const tuition = effectiveRate * totalLessons;
-  const discountedTuition = applyDiscount(tuition, form.discount_kind, form.discount_value || 0);
-  const tuitionDiscount = tuition - discountedTuition;
+  const discount = computeDiscount(tuition, {
+    primary: form.discount_primary,
+    plan: form.payment_plan,
+    specialAmount: form.discount_special || 0,
+    multilesson: form.discount_multilesson,
+  });
+  const tuitionDiscount = discount.discountAmount;
   // total_fee stores discounted tuition; registration fee is separate.
-  const totalFee = discountedTuition;
+  const totalFee = discount.discounted;
   const teacherId = selectedRate?.teacher?.id ?? selectedRate?.teacher_id ?? manualTeacherId ?? '';
   const teacherName = teachers.find(t => t.id === teacherId)?.full_name
     || (selectedRate as any)?.teacher?.full_name
@@ -144,8 +150,9 @@ export function EnrolmentsPage() {
       })(),
       registration_fee: 0,
       rate_override: 0,
-      discount_kind: 'percent',
-      discount_value: 0,
+      discount_primary: 'none',
+      discount_special: 0,
+      discount_multilesson: false,
       academic_year: new Date().getFullYear().toString(),
     });
   }
@@ -188,8 +195,9 @@ export function EnrolmentsPage() {
           rate_per_lesson: effectiveRate,
           total_fee: totalFee,
           registration_fee: form.registration_fee,
-          discount_kind: form.discount_kind,
-          discount_value: form.discount_value || 0,
+          discount_primary: form.discount_primary,
+          discount_multilesson: form.discount_multilesson,
+          discount_value: form.discount_primary === 'special' ? (form.discount_special || 0) : 0,
         })
         .select()
         .single();
@@ -628,24 +636,35 @@ export function EnrolmentsPage() {
 
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Discount (optional)</label>
-                  <div className="flex">
-                    <select
-                      value={form.discount_kind}
-                      onChange={(e) => setForm({ ...form, discount_kind: e.target.value as DiscountKind })}
-                      className="border border-gray-200 rounded-l-lg px-2 py-2 text-sm bg-white"
-                    >
-                      <option value="percent">%</option>
-                      <option value="amount">₹</option>
-                    </select>
+                  <select
+                    value={form.discount_primary}
+                    onChange={(e) => setForm({ ...form, discount_primary: e.target.value as DiscountPrimary })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="none">No discount</option>
+                    <option value="plan">Plan discount (auto)</option>
+                    <option value="legacy">Legacy student (25%)</option>
+                    <option value="special">Flat ₹ special</option>
+                  </select>
+                  {form.discount_primary === 'special' && (
                     <input
                       type="number"
-                      value={form.discount_value}
-                      onChange={(e) => setForm({ ...form, discount_value: Number(e.target.value) })}
-                      className="w-full border border-l-0 border-gray-200 rounded-r-lg px-3 py-2 text-sm"
-                      placeholder="0"
                       min={0}
+                      value={form.discount_special}
+                      onChange={(e) => setForm({ ...form, discount_special: Number(e.target.value) })}
+                      className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      placeholder="Flat ₹ amount"
                     />
-                  </div>
+                  )}
+                  <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={form.discount_multilesson}
+                      onChange={(e) => setForm({ ...form, discount_multilesson: e.target.checked })}
+                      className="rounded border-gray-300 text-teal focus:ring-teal"
+                    />
+                    Multi-lesson (+5%)
+                  </label>
                 </div>
 
                 {/* Fee Summary */}
@@ -658,7 +677,7 @@ export function EnrolmentsPage() {
                     </div>
                     {tuitionDiscount > 0 && (
                       <div className="flex justify-between text-sm text-teal">
-                        <span>Discount{form.discount_kind === 'percent' ? ` (${form.discount_value}%)` : ''}</span>
+                        <span>Discount{discount.pct > 0 ? ` (${discount.pct}%${discount.flat > 0 ? ' + ₹' + discount.flat.toLocaleString('en-IN') : ''})` : discount.flat > 0 ? ` (₹${discount.flat.toLocaleString('en-IN')})` : ''}</span>
                         <span>−₹{tuitionDiscount.toLocaleString('en-IN')}</span>
                       </div>
                     )}

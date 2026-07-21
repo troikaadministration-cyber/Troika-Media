@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { lessonsForPlan } from '../lib/lessonCount';
-import { applyDiscount, type DiscountKind } from '../lib/fees';
+import { computeDiscount, type DiscountPrimary } from '../lib/fees';
 
 interface PendingProfile { id: string; full_name: string; email: string; }
 
@@ -98,8 +98,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     payment_plan: '3_instalments',
     academic_year: new Date().getFullYear().toString(),
     registration_fee: '0',
-    discount_kind: 'percent' as DiscountKind,
-    discount_value: '0',
+    discount_primary: 'none' as DiscountPrimary,
+    discount_special: '0',
+    discount_multilesson: false,
   });
   const [classes, setClasses] = useState<ClassRow[]>([emptyClass()]);
 
@@ -109,7 +110,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setError(null);
       setStudentId(null);
       setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', location_id: '', address: '' });
-      setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0', discount_kind: 'percent', discount_value: '0' });
+      setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0', discount_primary: 'none', discount_special: '0', discount_multilesson: false });
       setClasses([emptyClass()]);
     }
   }, [open, pendingProfile]);
@@ -169,10 +170,15 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   const totalLessons = lessonsForPlan(s2.payment_plan, enrolStartDate);
   const totalRatePerLesson = classes.reduce((sum, c) => sum + (parseFloat(c.rate) || 0), 0);
   const regFee = parseFloat(s2.registration_fee) || 0;
-  const discountValue = parseFloat(s2.discount_value) || 0;
   const tuition = totalRatePerLesson * totalLessons;
-  const discountedTuition = applyDiscount(tuition, s2.discount_kind, discountValue);
-  const tuitionDiscount = tuition - discountedTuition;
+  const discount = computeDiscount(tuition, {
+    primary: s2.discount_primary,
+    plan: s2.payment_plan,
+    specialAmount: parseFloat(s2.discount_special) || 0,
+    multilesson: s2.discount_multilesson,
+  });
+  const discountedTuition = discount.discounted;
+  const tuitionDiscount = discount.discountAmount;
   const totalFee = discountedTuition + regFee;
   // Gate: a lesson rate must be entered before the enrolment can be confirmed.
   const canConfirm = totalRatePerLesson > 0;
@@ -236,8 +242,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         rate_per_lesson: ratePerLesson,
         total_fee: fee,
         registration_fee: regFee,
-        discount_kind: s2.discount_kind,
-        discount_value: skip ? 0 : discountValue,
+        discount_primary: skip ? 'none' : s2.discount_primary,
+        discount_multilesson: skip ? false : s2.discount_multilesson,
+        discount_value: skip ? 0 : (s2.discount_primary === 'special' ? (parseFloat(s2.discount_special) || 0) : 0),
       }).select('id').single();
       if (enrolErr) throw enrolErr;
 
@@ -396,18 +403,26 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Discount (optional)</label>
-                <div className="flex">
-                  <select value={s2.discount_kind}
-                    onChange={e => setS2(p => ({ ...p, discount_kind: e.target.value as DiscountKind }))}
-                    className="border border-gray-200 rounded-l-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none">
-                    <option value="percent">%</option>
-                    <option value="amount">₹</option>
-                  </select>
-                  <input type="number" min={0} value={s2.discount_value}
-                    onChange={e => setS2(p => ({ ...p, discount_value: e.target.value }))}
-                    className="w-full border border-l-0 border-gray-200 rounded-r-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                    placeholder="0" />
-                </div>
+                <select value={s2.discount_primary}
+                  onChange={e => setS2(p => ({ ...p, discount_primary: e.target.value as DiscountPrimary }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                  <option value="none">No discount</option>
+                  <option value="plan">Plan discount (auto)</option>
+                  <option value="legacy">Legacy student (25%)</option>
+                  <option value="special">Flat ₹ special</option>
+                </select>
+                {s2.discount_primary === 'special' && (
+                  <input type="number" min={0} value={s2.discount_special}
+                    onChange={e => setS2(p => ({ ...p, discount_special: e.target.value }))}
+                    className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
+                    placeholder="Flat ₹ amount" />
+                )}
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+                  <input type="checkbox" checked={s2.discount_multilesson}
+                    onChange={e => setS2(p => ({ ...p, discount_multilesson: e.target.checked }))}
+                    className="rounded border-gray-300 text-teal focus:ring-teal" />
+                  Multi-lesson (+5%)
+                </label>
               </div>
             </div>
 
@@ -500,7 +515,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 </div>
                 {tuitionDiscount > 0 && (
                   <div className="flex justify-between text-teal">
-                    <span>Discount{s2.discount_kind === 'percent' ? ` (${discountValue}%)` : ''}</span>
+                    <span>Discount{discount.pct > 0 ? ` (${discount.pct}%${discount.flat > 0 ? ' + ₹' + discount.flat.toLocaleString('en-IN') : ''})` : discount.flat > 0 ? ` (₹${discount.flat.toLocaleString('en-IN')})` : ''}</span>
                     <span>−₹{tuitionDiscount.toLocaleString('en-IN')}</span>
                   </div>
                 )}

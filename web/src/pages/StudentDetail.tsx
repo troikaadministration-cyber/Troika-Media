@@ -6,7 +6,7 @@ type Tab = 'overview' | 'enrolment' | 'schedule' | 'history';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { lessonsForPlan } from '../lib/lessonCount';
-import { applyDiscount, type DiscountKind } from '../lib/fees';
+import { computeDiscount, type DiscountPrimary } from '../lib/fees';
 import type { Student, StudentStats, AbsenceCategory, StudentEnrolment } from '../types';
 
 interface Instrument { id: string; name: string; }
@@ -50,8 +50,9 @@ export function StudentDetailPage() {
     lesson_rate_id: '',
     rate_override: 0,
     registration_fee: 0,
-    discount_kind: 'percent' as DiscountKind,
-    discount_value: 0,
+    discount_primary: 'none' as DiscountPrimary,
+    discount_special: 0,
+    discount_multilesson: false,
   });
   const [reEnrolSaving, setReEnrolSaving] = useState(false);
   const [reEnrolError, setReEnrolError] = useState<string | null>(null);
@@ -168,8 +169,9 @@ export function StudentDetailPage() {
       lesson_rate_id: '',
       rate_override: 0,
       registration_fee: 0,
-      discount_kind: 'percent',
-      discount_value: 0,
+      discount_primary: 'none',
+      discount_special: 0,
+      discount_multilesson: false,
     });
     setReEnrolError(null);
     setReEnrolOpen(true);
@@ -186,7 +188,12 @@ export function StudentDetailPage() {
       const effectiveRate = reEnrolForm.rate_override || 0;
       const tuition = effectiveRate * totalLessons;
       // total_fee stores discounted tuition; registration fee is separate.
-      const totalFee = applyDiscount(tuition, reEnrolForm.discount_kind, reEnrolForm.discount_value || 0);
+      const totalFee = computeDiscount(tuition, {
+        primary: reEnrolForm.discount_primary,
+        plan: reEnrolForm.payment_plan,
+        specialAmount: reEnrolForm.discount_special || 0,
+        multilesson: reEnrolForm.discount_multilesson,
+      }).discounted;
 
       const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
         student_id: id,
@@ -199,8 +206,9 @@ export function StudentDetailPage() {
         rate_per_lesson: effectiveRate,
         total_fee: totalFee,
         registration_fee: reEnrolForm.registration_fee,
-        discount_kind: reEnrolForm.discount_kind,
-        discount_value: reEnrolForm.discount_value || 0,
+        discount_primary: reEnrolForm.discount_primary,
+        discount_multilesson: reEnrolForm.discount_multilesson,
+        discount_value: reEnrolForm.discount_primary === 'special' ? (reEnrolForm.discount_special || 0) : 0,
       }).select('id').single();
       if (enrolErr) throw enrolErr;
 
@@ -765,18 +773,26 @@ export function StudentDetailPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Discount (optional)</label>
-                <div className="flex">
-                  <select value={reEnrolForm.discount_kind}
-                    onChange={e => setReEnrolForm(p => ({ ...p, discount_kind: e.target.value as DiscountKind }))}
-                    className="border border-gray-200 rounded-l-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none">
-                    <option value="percent">%</option>
-                    <option value="amount">₹</option>
-                  </select>
-                  <input type="number" min={0} value={reEnrolForm.discount_value}
-                    onChange={e => setReEnrolForm(p => ({ ...p, discount_value: Number(e.target.value) }))}
-                    className="w-full border border-l-0 border-gray-200 rounded-r-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                    placeholder="0" />
-                </div>
+                <select value={reEnrolForm.discount_primary}
+                  onChange={e => setReEnrolForm(p => ({ ...p, discount_primary: e.target.value as DiscountPrimary }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                  <option value="none">No discount</option>
+                  <option value="plan">Plan discount (auto)</option>
+                  <option value="legacy">Legacy student (25%)</option>
+                  <option value="special">Flat ₹ special</option>
+                </select>
+                {reEnrolForm.discount_primary === 'special' && (
+                  <input type="number" min={0} value={reEnrolForm.discount_special}
+                    onChange={e => setReEnrolForm(p => ({ ...p, discount_special: Number(e.target.value) }))}
+                    className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
+                    placeholder="Flat ₹ amount" />
+                )}
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+                  <input type="checkbox" checked={reEnrolForm.discount_multilesson}
+                    onChange={e => setReEnrolForm(p => ({ ...p, discount_multilesson: e.target.checked }))}
+                    className="rounded border-gray-300 text-teal focus:ring-teal" />
+                  Multi-lesson (+5%)
+                </label>
               </div>
             </div>
             <div className="flex gap-3 pt-2">
