@@ -157,6 +157,8 @@ serve(async (req) => {
       : "";
     const lessonsCompleted = enrolment ? enrolment.lessons_used : "";
     const planLabel = payment.plan?.replace(/_/g, " ");
+    // Misc charge (recital tickets, books, exam fee, ...): label set, plan null.
+    const isMiscCharge = !!payment.label;
 
     // Build multi-enrolment summary if more than one
     const multiEnrolmentHtml = (enrolmentList && enrolmentList.length > 1)
@@ -217,8 +219,10 @@ serve(async (req) => {
     </div>
     <div class="details-col" style="text-align:right;">
       <strong>Payment Details</strong>
-      <span style="font-size:15px;font-weight:600;color:#1a1a2e;">Plan: ${planLabel}</span><br/>
-      Instalment: ${payment.instalment_number} of ${totalInstalments || payment.instalment_number}<br/>
+      ${isMiscCharge
+        ? `<span style="font-size:15px;font-weight:600;color:#1a1a2e;">${payment.label}</span><br/>`
+        : `<span style="font-size:15px;font-weight:600;color:#1a1a2e;">Plan: ${planLabel}</span><br/>
+      Instalment: ${payment.instalment_number} of ${totalInstalments || payment.instalment_number}<br/>`}
       Academic Year: ${enrolment?.academic_year || currentYear}
       ${lessonsCompleted !== "" ? "<br/>Lessons Completed: <strong>" + lessonsCompleted + "</strong>" : ""}
       ${lessonsRemaining !== "" ? "<br/>Lessons Remaining: <strong>" + lessonsRemaining + "</strong> / " + (enrolment?.total_lessons || 39) : ""}
@@ -235,11 +239,13 @@ serve(async (req) => {
     <tbody>
       <tr>
         <td>
-          ${lessonCategory ? lessonCategory + " — " : ""}${instrumentName ? instrumentName + " lessons" : "Music lessons"}<br/>
+          ${isMiscCharge
+            ? payment.label
+            : `${lessonCategory ? lessonCategory + " — " : ""}${instrumentName ? instrumentName + " lessons" : "Music lessons"}<br/>
           <span style="font-size:12px;color:#999;">
             ${ratePerLesson ? "Rate: ₹" + Number(ratePerLesson).toLocaleString("en-IN") + "/lesson" : ""}
             ${enrolment ? " × " + enrolment.total_lessons + " lessons" : ""}
-          </span>
+          </span>`}
         </td>
         <td class="amount">₹${Number(payment.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
       </tr>

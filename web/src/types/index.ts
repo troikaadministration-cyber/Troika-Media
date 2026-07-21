@@ -142,7 +142,8 @@ export interface Notification {
 export interface PaymentRecord {
   id: string;
   student_id: string;
-  plan: PaymentPlan;
+  plan: PaymentPlan | null;
+  label: string | null;
   amount: number;
   instalment_number: number;
   due_date: string;
