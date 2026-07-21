@@ -62,6 +62,7 @@ export function EnrolmentsPage() {
       return d.toISOString().split('T')[0];
     })(),
     registration_fee: 0,
+    rate_override: 0,
     discount_kind: 'percent' as DiscountKind,
     discount_value: 0,
     academic_year: new Date().getFullYear().toString(),
@@ -94,6 +95,8 @@ export function EnrolmentsPage() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const selectedRate = rates.find(r => r.id === form.lesson_rate_id);
+  // Per-student rate: defaults to the rate-card value but can be overridden.
+  const effectiveRate = form.rate_override || 0;
   const selectedStudent = students.find(s => s.id === form.student_id);
   const filteredRates = selectedStudent?.location_id
     ? rates.filter(r => r.location_id === selectedStudent.location_id || r.location_id === null)
@@ -101,7 +104,7 @@ export function EnrolmentsPage() {
   const hasLocationRates = !!(selectedStudent?.location_id &&
     rates.some(r => r.location_id === selectedStudent.location_id));
   const totalLessons = lessonsForPlan(form.payment_plan, form.start_date);
-  const tuition = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
+  const tuition = effectiveRate * totalLessons;
   const discountedTuition = applyDiscount(tuition, form.discount_kind, form.discount_value || 0);
   const tuitionDiscount = tuition - discountedTuition;
   // total_fee stores discounted tuition; registration fee is separate.
@@ -140,6 +143,7 @@ export function EnrolmentsPage() {
         return d.toISOString().split('T')[0];
       })(),
       registration_fee: 0,
+      rate_override: 0,
       discount_kind: 'percent',
       discount_value: 0,
       academic_year: new Date().getFullYear().toString(),
@@ -181,7 +185,7 @@ export function EnrolmentsPage() {
           lessons_used: 0,
           start_date: form.start_date,
           payment_plan: form.payment_plan,
-          rate_per_lesson: selectedRate?.rate_per_lesson || 0,
+          rate_per_lesson: effectiveRate,
           total_fee: totalFee,
           registration_fee: form.registration_fee,
           discount_kind: form.discount_kind,
@@ -533,7 +537,10 @@ export function EnrolmentsPage() {
                   )}
                   <select
                     value={form.lesson_rate_id}
-                    onChange={(e) => setForm({ ...form, lesson_rate_id: e.target.value })}
+                    onChange={(e) => {
+                      const picked = rates.find(r => r.id === e.target.value);
+                      setForm({ ...form, lesson_rate_id: e.target.value, rate_override: picked?.rate_per_lesson || 0 });
+                    }}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   >
                     <option value="">Select rate...</option>
@@ -546,6 +553,22 @@ export function EnrolmentsPage() {
                       </option>
                     ))}
                   </select>
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Rate per lesson (₹) — editable for this student</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={form.rate_override}
+                      onChange={(e) => setForm({ ...form, rate_override: Number(e.target.value) })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      placeholder="0"
+                    />
+                    {selectedRate && effectiveRate !== selectedRate.rate_per_lesson && (
+                      <p className="text-xs text-yellow-600 mt-1">
+                        Overriding rate-card default of ₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')}.
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -630,7 +653,7 @@ export function EnrolmentsPage() {
                   <div className="bg-gray-50 rounded-xl p-4 space-y-2">
                     <h4 className="text-xs font-semibold text-gray-500 uppercase">Fee Summary</h4>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')} × {totalLessons} lessons</span>
+                      <span className="text-gray-500">₹{effectiveRate.toLocaleString('en-IN')} × {totalLessons} lessons</span>
                       <span className="font-medium text-navy">₹{tuition.toLocaleString('en-IN')}</span>
                     </div>
                     {tuitionDiscount > 0 && (

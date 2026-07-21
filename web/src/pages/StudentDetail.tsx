@@ -48,6 +48,7 @@ export function StudentDetailPage() {
     academic_year: new Date().getFullYear().toString(),
     payment_plan: '3_instalments',
     lesson_rate_id: '',
+    rate_override: 0,
     registration_fee: 0,
     discount_kind: 'percent' as DiscountKind,
     discount_value: 0,
@@ -165,6 +166,7 @@ export function StudentDetailPage() {
       academic_year: new Date().getFullYear().toString(),
       payment_plan: '3_instalments',
       lesson_rate_id: '',
+      rate_override: 0,
       registration_fee: 0,
       discount_kind: 'percent',
       discount_value: 0,
@@ -179,10 +181,10 @@ export function StudentDetailPage() {
     setReEnrolSaving(true);
     setReEnrolError(null);
     try {
-      const selectedRate = rates.find(r => r.id === reEnrolForm.lesson_rate_id);
       const reEnrolStartDate = new Date().toISOString().split('T')[0];
       const totalLessons = lessonsForPlan(reEnrolForm.payment_plan, reEnrolStartDate);
-      const tuition = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
+      const effectiveRate = reEnrolForm.rate_override || 0;
+      const tuition = effectiveRate * totalLessons;
       // total_fee stores discounted tuition; registration fee is separate.
       const totalFee = applyDiscount(tuition, reEnrolForm.discount_kind, reEnrolForm.discount_value || 0);
 
@@ -194,7 +196,7 @@ export function StudentDetailPage() {
         lessons_used: 0,
         start_date: reEnrolStartDate,
         payment_plan: reEnrolForm.payment_plan,
-        rate_per_lesson: selectedRate?.rate_per_lesson || 0,
+        rate_per_lesson: effectiveRate,
         total_fee: totalFee,
         registration_fee: reEnrolForm.registration_fee,
         discount_kind: reEnrolForm.discount_kind,
@@ -734,7 +736,10 @@ export function StudentDetailPage() {
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Lesson Rate</label>
                 <select value={reEnrolForm.lesson_rate_id}
-                  onChange={e => setReEnrolForm(p => ({ ...p, lesson_rate_id: e.target.value }))}
+                  onChange={e => {
+                    const picked = rates.find(r => r.id === e.target.value);
+                    setReEnrolForm(p => ({ ...p, lesson_rate_id: e.target.value, rate_override: picked?.rate_per_lesson || 0 }));
+                  }}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none">
                   <option value="">Select rate...</option>
                   {rates.map(r => (
@@ -743,6 +748,13 @@ export function StudentDetailPage() {
                     </option>
                   ))}
                 </select>
+                <div className="mt-2">
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Rate per lesson (₹) — editable</label>
+                  <input type="number" min={0} value={reEnrolForm.rate_override}
+                    onChange={e => setReEnrolForm(p => ({ ...p, rate_override: Number(e.target.value) }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
+                    placeholder="0" />
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Registration Fee (₹)</label>
