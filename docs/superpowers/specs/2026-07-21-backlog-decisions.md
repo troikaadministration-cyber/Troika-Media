@@ -30,7 +30,7 @@ hard-coded 39. Single source of truth: `web/src/lib/lessonCount.ts`
 
 ## 🔜 Ready to build (decisions locked)
 
-### Discount on enrolment
+### Discount on enrolment  ✅ DONE (needs migration 00020 applied)
 - Coordinator picks **either a percentage or a flat amount** (toggle).
 - **No discount type/name** — just the value.
 - **Optional**: "no discount" (blank/0) is allowed.
@@ -40,7 +40,7 @@ hard-coded 39. Single source of truth: `web/src/lib/lessonCount.ts`
 - Requires migration: add `discount_kind` ('percent'|'amount') +
   `discount_value` to `student_enrolments`.
 
-### Confirm & Finish gate
+### Confirm & Finish gate  ✅ DONE
 - Onboarding "Confirm & Finish" stays disabled until a **lesson rate** is
   entered. Discount is **not** required. Trial exempt.
 

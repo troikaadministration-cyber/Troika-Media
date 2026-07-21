@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { lessonsForPlan } from '../lib/lessonCount';
+import { applyDiscount, type DiscountKind } from '../lib/fees';
 
 interface PendingProfile { id: string; full_name: string; email: string; }
 
@@ -97,6 +98,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     payment_plan: '3_instalments',
     academic_year: new Date().getFullYear().toString(),
     registration_fee: '0',
+    discount_kind: 'percent' as DiscountKind,
+    discount_value: '0',
   });
   const [classes, setClasses] = useState<ClassRow[]>([emptyClass()]);
 
@@ -106,7 +109,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setError(null);
       setStudentId(null);
       setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', location_id: '', address: '' });
-      setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0' });
+      setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0', discount_kind: 'percent', discount_value: '0' });
       setClasses([emptyClass()]);
     }
   }, [open, pendingProfile]);
@@ -166,7 +169,13 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   const totalLessons = lessonsForPlan(s2.payment_plan, enrolStartDate);
   const totalRatePerLesson = classes.reduce((sum, c) => sum + (parseFloat(c.rate) || 0), 0);
   const regFee = parseFloat(s2.registration_fee) || 0;
-  const totalFee = totalRatePerLesson * totalLessons + regFee;
+  const discountValue = parseFloat(s2.discount_value) || 0;
+  const tuition = totalRatePerLesson * totalLessons;
+  const discountedTuition = applyDiscount(tuition, s2.discount_kind, discountValue);
+  const tuitionDiscount = tuition - discountedTuition;
+  const totalFee = discountedTuition + regFee;
+  // Gate: a lesson rate must be entered before the enrolment can be confirmed.
+  const canConfirm = totalRatePerLesson > 0;
 
   async function handleConfirm(skip = false) {
     setSaving(true);
@@ -213,7 +222,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       }
 
       const ratePerLesson = skip ? 0 : totalRatePerLesson;
-      const fee = skip ? 0 : totalFee;
+      // total_fee holds discounted tuition only; registration_fee is separate.
+      const fee = skip ? 0 : discountedTuition;
 
       const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
         student_id: resolvedStudentId,
@@ -226,6 +236,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         rate_per_lesson: ratePerLesson,
         total_fee: fee,
         registration_fee: regFee,
+        discount_kind: s2.discount_kind,
+        discount_value: skip ? 0 : discountValue,
       }).select('id').single();
       if (enrolErr) throw enrolErr;
 
@@ -382,6 +394,21 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
                   placeholder="0" />
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Discount (optional)</label>
+                <div className="flex">
+                  <select value={s2.discount_kind}
+                    onChange={e => setS2(p => ({ ...p, discount_kind: e.target.value as DiscountKind }))}
+                    className="border border-gray-200 rounded-l-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                    <option value="percent">%</option>
+                    <option value="amount">₹</option>
+                  </select>
+                  <input type="number" min={0} value={s2.discount_value}
+                    onChange={e => setS2(p => ({ ...p, discount_value: e.target.value }))}
+                    className="w-full border border-l-0 border-gray-200 rounded-r-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
+                    placeholder="0" />
+                </div>
+              </div>
             </div>
 
             {/* Class rows */}
@@ -469,8 +496,14 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 <p className="text-xs font-bold text-gray-500 uppercase">Fee Summary</p>
                 <div className="flex justify-between text-gray-600">
                   <span>₹{totalRatePerLesson.toLocaleString('en-IN')} × {totalLessons} lessons</span>
-                  <span>₹{(totalRatePerLesson * totalLessons).toLocaleString('en-IN')}</span>
+                  <span>₹{tuition.toLocaleString('en-IN')}</span>
                 </div>
+                {tuitionDiscount > 0 && (
+                  <div className="flex justify-between text-teal">
+                    <span>Discount{s2.discount_kind === 'percent' ? ` (${discountValue}%)` : ''}</span>
+                    <span>−₹{tuitionDiscount.toLocaleString('en-IN')}</span>
+                  </div>
+                )}
                 {regFee > 0 && (
                   <div className="flex justify-between text-gray-600">
                     <span>Registration fee</span>
@@ -489,8 +522,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 <button onClick={() => setStep(0)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-navy"><ChevronLeft size={16} /> Back</button>
                 <button onClick={() => handleConfirm(true)} disabled={saving} className="text-sm text-gray-400 hover:text-gray-600 underline">Skip for now</button>
               </div>
-              <button onClick={() => handleConfirm(false)} disabled={saving}
-                className="bg-teal text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
+              <button onClick={() => handleConfirm(false)} disabled={saving || !canConfirm}
+                title={!canConfirm ? 'Enter a lesson rate to confirm' : undefined}
+                className="bg-teal text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50 disabled:cursor-not-allowed">
                 {saving ? 'Saving...' : 'Confirm & Finish'}
               </button>
             </div>
