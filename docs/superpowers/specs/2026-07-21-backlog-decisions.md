@@ -98,6 +98,55 @@ hard-coded 39. Single source of truth: `web/src/lib/lessonCount.ts`
 
 ---
 
+## Round 2 decisions (2026-07-21, later)
+
+### Breaks greyed — refined
+Only grey the **specific lesson slot of the student who is on break** (break
+date range covers that lesson's date). Do **not** grey the whole day or block
+the time — it's a visual reminder to the admin that the slot is *temporarily*
+free.
+
+### Locations — purpose
+For **scheduling + reporting**. Distinct locations: Online, Student's home,
+Links, Edvin. Manage as named records; lessons already carry `location_id`, so
+reports group by location. (Assumption: name-based, keep the existing `is_online`
+flag; no per-location address needed unless requested.)
+
+### Trial / Demo — off platform
+Demo/trial students are **not on this platform at all**. There is no in-app
+trial to convert. On real enrolment: **registration fee + payment-plan
+selection** applied like any paid enrolment.
+→ Implication: the "Trial → payment plan conversion" item is **dropped**, and
+the **"Trial" payment-plan option should likely be removed** from enrolment
+(CONFIRM).
+
+### Misc charges — customisable add-ons
+Recital tickets, books, exams, etc. **Add-on, customisable** (free-form name +
+amount), payable, shown on invoice.
+
+### Payment plans + discount engine  ⭐ (supersedes the simple discount)
+Discount components:
+- **Plan discount (auto):** 1 instalment = **10%**, 3 instalments = **5%**,
+  10 instalments = **0%**.
+- **Multi-lesson discount:** additional **5%**.
+- **Legacy student discount:** **25%**.
+- **Flat special discount:** a **₹ amount** entered manually.
+OPEN: do the percentages **stack** (sum, applied to tuition, then flat ₹
+subtracted)? what triggers **multi-lesson** (≥2 classes/week? manual)? is
+**legacy** a manual per-student flag?
+
+### Per-student editable rate  ⭐
+Later joiners may be quoted a **higher fee**, so the **per-lesson rate must be
+editable per student** on the enrolment (override the rate-card default). Old
+students keep their stored rate (grandfathered).
+
+### Block teacher time — deferred
+User says it was misunderstood; will re-explain. **Parked** pending re-spec.
+
+### Reporting — metrics
+Ship: **outstanding dues**, **lessons delivered vs remaining**, **revenue
+collected**. Dashboard + CSV.
+
 ## ⛔ Blockers / open questions
 
 1. **Who applies Supabase migrations?** Most items above need schema changes.
