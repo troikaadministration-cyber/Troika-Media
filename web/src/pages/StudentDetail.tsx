@@ -5,6 +5,7 @@ import { ArrowLeft, X, BookOpen, BookmarkPlus, Trash2, Clock, User, CalendarDays
 type Tab = 'overview' | 'enrolment' | 'schedule' | 'history';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { lessonsForPlan } from '../lib/lessonCount';
 import type { Student, StudentStats, AbsenceCategory, StudentEnrolment } from '../types';
 
 interface Instrument { id: string; name: string; }
@@ -174,7 +175,8 @@ export function StudentDetailPage() {
     setReEnrolError(null);
     try {
       const selectedRate = rates.find(r => r.id === reEnrolForm.lesson_rate_id);
-      const totalLessons = reEnrolForm.payment_plan === 'trial' ? 1 : 39;
+      const reEnrolStartDate = new Date().toISOString().split('T')[0];
+      const totalLessons = lessonsForPlan(reEnrolForm.payment_plan, reEnrolStartDate);
       const totalFee = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
 
       const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
@@ -183,7 +185,7 @@ export function StudentDetailPage() {
         lesson_rate_id: reEnrolForm.lesson_rate_id || null,
         total_lessons: totalLessons,
         lessons_used: 0,
-        start_date: new Date().toISOString().split('T')[0],
+        start_date: reEnrolStartDate,
         payment_plan: reEnrolForm.payment_plan,
         rate_per_lesson: selectedRate?.rate_per_lesson || 0,
         total_fee: totalFee,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { lessonsForPlan } from '../lib/lessonCount';
 
 interface PendingProfile { id: string; full_name: string; email: string; }
 
@@ -39,7 +40,6 @@ const PAYMENT_PLANS = [
   { value: '10_instalments', label: '10 Instalments' },
 ];
 
-const TOTAL_LESSONS = (plan: string) => plan === 'trial' ? 1 : 39;
 
 function emptyClass(): ClassRow {
   return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '', instrument_id: '', is_online: false };
@@ -161,7 +161,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     }));
   }
 
-  const totalLessons = TOTAL_LESSONS(s2.payment_plan);
+  const enrolStartDate = new Date().toISOString().split('T')[0];
+  const totalLessons = lessonsForPlan(s2.payment_plan, enrolStartDate);
   const totalRatePerLesson = classes.reduce((sum, c) => sum + (parseFloat(c.rate) || 0), 0);
   const regFee = parseFloat(s2.registration_fee) || 0;
   const totalFee = totalRatePerLesson * totalLessons + regFee;
@@ -219,7 +220,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         lesson_rate_id: null,
         total_lessons: totalLessons,
         lessons_used: 0,
-        start_date: new Date().toISOString().split('T')[0],
+        start_date: enrolStartDate,
         payment_plan: s2.payment_plan,
         rate_per_lesson: ratePerLesson,
         total_fee: fee,
