@@ -73,10 +73,13 @@ serve(async (req) => {
       .eq("payment_id", payment_id)
       .single();
 
-    if (existingInvoice) {
+    // Only treat a *complete* invoice (with a generated PDF) as final. A row
+    // with no pdf_path is a stale placeholder (e.g. an old "PENDING" cron row
+    // or a failed prior attempt) — delete it and regenerate the real invoice.
+    if (existingInvoice && existingInvoice.pdf_path) {
       const { data: signedUrl } = await supabase.storage
         .from("invoices")
-        .createSignedUrl(existingInvoice.pdf_path || "", 3600);
+        .createSignedUrl(existingInvoice.pdf_path, 3600);
       return new Response(
         JSON.stringify({
           invoice_id: existingInvoice.id,
@@ -88,6 +91,9 @@ serve(async (req) => {
           headers: { ...corsHeaders(req), "Content-Type": "application/json" },
         }
       );
+    }
+    if (existingInvoice && !existingInvoice.pdf_path) {
+      await supabase.from("invoices").delete().eq("id", existingInvoice.id);
     }
 
     // 1. Fetch payment with student and enrolment details

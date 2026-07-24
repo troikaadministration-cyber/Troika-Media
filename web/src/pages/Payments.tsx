@@ -31,7 +31,7 @@ function buildWhatsAppUrl(
 }
 
 export function PaymentsPage() {
-  const { payments, loading, error, verifyPayment, downloadInvoice, refresh } = usePayments();
+  const { payments, loading, error, verifyPayment, generateInvoice, downloadInvoice, refresh } = usePayments();
   const [verifying, setVerifying] = useState<string | null>(null);
   const [waLoading, setWaLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; url?: string; error?: boolean } | null>(null);
@@ -80,14 +80,21 @@ export function PaymentsPage() {
     setVerifying(id);
     try {
       const result = await verifyPayment(id);
-      setToast({
-        message: `Invoice ${result?.invoice_number || ''} generated`,
-        url: result?.pdf_url,
-      });
-      setTimeout(() => setToast(null), 5000);
+      if (result.invoiceError) {
+        setToast({
+          message: `Payment marked paid, but the invoice failed to generate (${result.invoiceError}). Use "Generate invoice" to retry.`,
+          error: true,
+        });
+      } else {
+        setToast({
+          message: `Payment marked paid. Invoice ${result.invoice?.invoice_number || ''} generated.`,
+          url: result.invoice?.pdf_url,
+        });
+      }
+      setTimeout(() => setToast(null), 6000);
     } catch (err: any) {
-      setToast({ message: err.message || 'Failed to verify payment' });
-      setTimeout(() => setToast(null), 5000);
+      setToast({ message: err.message || 'Failed to mark payment as paid', error: true });
+      setTimeout(() => setToast(null), 6000);
     } finally {
       setVerifying(null);
     }
@@ -96,6 +103,19 @@ export function PaymentsPage() {
   async function handleDownload(invoiceId: string) {
     const url = await downloadInvoice(invoiceId);
     if (url) window.open(url, '_blank');
+  }
+
+  async function handleGenerateInvoice(id: string) {
+    setVerifying(id);
+    try {
+      const inv = await generateInvoice(id);
+      setToast({ message: `Invoice ${inv?.invoice_number || ''} generated.`, url: inv?.pdf_url });
+    } catch (e: any) {
+      setToast({ message: e.message || 'Invoice generation failed', error: true });
+    } finally {
+      setVerifying(null);
+      setTimeout(() => setToast(null), 6000);
+    }
   }
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-gray-400">Loading...</p></div>;
@@ -204,7 +224,13 @@ export function PaymentsPage() {
                         {invoice.invoice_number}
                       </button>
                     ) : isPaid ? (
-                      <span className="text-xs text-gray-400">—</span>
+                      <button
+                        onClick={() => handleGenerateInvoice(p.id)}
+                        disabled={verifying === p.id}
+                        className="text-xs text-coral hover:underline disabled:opacity-50"
+                      >
+                        {verifying === p.id ? 'Generating...' : 'Generate invoice'}
+                      </button>
                     ) : null}
                   </td>
                   <td className="px-5 py-3">

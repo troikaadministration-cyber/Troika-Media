@@ -180,6 +180,7 @@ export function EnrolmentsPage() {
     let createdEnrolmentId: string | null = null;
     let createdTemplateId: string | null = null;        // set if new template was inserted
     let templateStudentUndo: { id: string; ids: string[] } | null = null; // set if existing was updated
+    let createdLessonIds: string[] = [];                // generated lessons, for rollback
 
     try {
       // 1. Create enrolment
@@ -206,15 +207,11 @@ export function EnrolmentsPage() {
       if (enrolErr) throw enrolErr;
       createdEnrolmentId = enrolment.id;
 
-      // 2. Auto-generate payment instalments
-      if (form.payment_plan !== 'trial') {
-        const { error: genErr } = await supabase.rpc('generate_instalments', {
-          p_enrolment_id: enrolment.id,
-        });
-        if (genErr) throw genErr;
-      }
+      // Instalments are generated LAST (see below) so a failure in the
+      // scheduling steps can't leave orphan payment_records that a retry would
+      // then duplicate.
 
-      // 3. Assign student to schedule template slot
+      // 2. Assign student to schedule template slot
       let templateDayOfWeek: number;
       let templateStartTime: string;
       let templateEndTime: string | null;
@@ -326,8 +323,18 @@ export function EnrolmentsPage() {
               })));
             if (lsErr) throw lsErr;
             created = insertedLessons.length;
+            createdLessonIds = insertedLessons.map((l: { id: string }) => l.id);
           }
         }
+      }
+
+      // 5. Auto-generate payment instalments — the last step, so any earlier
+      // failure rolls back cleanly without leaving duplicate-able instalments.
+      if (form.payment_plan !== 'trial') {
+        const { error: genErr } = await supabase.rpc('generate_instalments', {
+          p_enrolment_id: enrolment.id,
+        });
+        if (genErr) throw genErr;
       }
 
       const resultMsg = `Enrolment created. ${created} lesson${created !== 1 ? 's' : ''} generated${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
@@ -338,7 +345,13 @@ export function EnrolmentsPage() {
       closeModal();
       fetchAll();
     } catch (err: any) {
-      // Compensating delete if enrolment was created but later steps failed
+      // Compensating delete if enrolment was created but later steps failed.
+      // Delete generated lessons first (and their student links) so they don't
+      // orphan, then the template, then the enrolment.
+      if (createdLessonIds.length > 0) {
+        await supabase.from('lesson_students').delete().in('lesson_id', createdLessonIds);
+        await supabase.from('lessons').delete().in('id', createdLessonIds);
+      }
       if (createdEnrolmentId) {
         await supabase.from('student_enrolments').delete().eq('id', createdEnrolmentId);
       }

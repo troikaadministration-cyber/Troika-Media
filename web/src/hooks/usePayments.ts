@@ -44,6 +44,10 @@ export function usePayments() {
 
   useEffect(() => { fetchPayments(); }, [fetchPayments]);
 
+  // Marks the payment paid. Invoice generation is best-effort: if it fails the
+  // payment is still recorded as paid and the caller gets an `invoiceError` to
+  // surface (with a retry via generateInvoice), rather than the whole action
+  // throwing and hiding that the money was recorded.
   async function verifyPayment(id: string) {
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -55,16 +59,29 @@ export function usePayments() {
         verified_by: user?.id || null,
       })
       .eq('id', id);
-    if (error) throw error;
+    if (error) throw error; // marking paid genuinely failed — surface it
 
     const { data: invoiceData, error: fnErr } = await supabase.functions.invoke(
       'generate-invoice',
       { body: { payment_id: id } }
     );
-    if (fnErr) throw fnErr;
 
     await fetchPayments();
-    return invoiceData;
+    if (fnErr) {
+      return { paid: true, invoice: null, invoiceError: fnErr.message || 'Invoice generation failed' };
+    }
+    return { paid: true, invoice: invoiceData, invoiceError: null };
+  }
+
+  // Retry invoice generation for a payment already marked paid.
+  async function generateInvoice(id: string) {
+    const { data, error: fnErr } = await supabase.functions.invoke(
+      'generate-invoice',
+      { body: { payment_id: id } }
+    );
+    if (fnErr) throw fnErr;
+    await fetchPayments();
+    return data;
   }
 
   async function downloadInvoice(invoiceId: string) {
@@ -89,5 +106,5 @@ export function usePayments() {
     await fetchPayments();
   }
 
-  return { payments, loading, error, verifyPayment, downloadInvoice, sendReminder, refresh: fetchPayments };
+  return { payments, loading, error, verifyPayment, generateInvoice, downloadInvoice, sendReminder, refresh: fetchPayments };
 }
