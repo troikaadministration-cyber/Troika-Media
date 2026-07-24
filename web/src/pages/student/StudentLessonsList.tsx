@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { Music } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
-import { LessonRow, CancelLessonModal, toCancelTarget, type CancelTarget } from '../../components/student/shared';
+import { LessonRow } from '../../components/student/shared';
 
 export function StudentLessonsList() {
-  const { upcoming, past, studentName } = useStudentPortal();
+  const { upcoming, past } = useStudentPortal();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
-  const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
 
   const list = tab === 'upcoming' ? upcoming : past;
 
@@ -40,14 +39,11 @@ export function StudentLessonsList() {
                 key={item.id}
                 item={item}
                 variant={tab}
-                onCancel={tab === 'upcoming' ? (it) => setCancelTarget(toCancelTarget(it, studentName)) : undefined}
               />
             ))}
           </div>
         )}
       </div>
-
-      <CancelLessonModal target={cancelTarget} onClose={() => setCancelTarget(null)} />
     </div>
   );
 }

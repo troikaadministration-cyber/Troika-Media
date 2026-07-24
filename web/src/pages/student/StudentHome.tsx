@@ -1,17 +1,14 @@
 import { toDateStr } from '../../lib/dates';
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Calendar, CreditCard, Music, MapPin, ChevronRight,
-  CheckCircle, XCircle, CalendarClock, Ban, Sparkles, AlertCircle, Clock,
+  CheckCircle, XCircle, CalendarClock, Sparkles, AlertCircle, Clock,
 } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
-import { CancelLessonModal, toCancelTarget, type CancelTarget } from '../../components/student/shared';
 import { greeting, firstName, fmtDate, fmtTime, fmtMoney } from './format';
 
 export function StudentHome() {
   const { upcoming, past, totalCompleted, enrolments, payments, studentName } = useStudentPortal();
-  const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
 
   const next = upcoming.find((i) => i.lesson.status !== 'cancelled') || null;
   const nextTeacher = next ? ((next.lesson.teacher as any)?.full_name as string | undefined) : undefined;
@@ -64,14 +61,6 @@ export function StudentHome() {
                 {nextLocation && <span className="flex items-center gap-1"><MapPin size={13} />{nextLocation}</span>}
               </div>
             </div>
-            {next.lesson.status === 'scheduled' && (
-              <button
-                onClick={() => setCancelTarget(toCancelTarget(next, studentName))}
-                className="flex items-center gap-1.5 text-xs font-medium bg-white/15 hover:bg-white/25 text-white px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
-              >
-                <Ban size={13} /> Cancel
-              </button>
-            )}
           </div>
         </div>
       ) : (
@@ -141,8 +130,6 @@ export function StudentHome() {
           <QuickLink to="/payments" icon={CreditCard} title="Payments" desc="Fees & invoices" />
         </div>
       </div>
-
-      <CancelLessonModal target={cancelTarget} onClose={() => setCancelTarget(null)} />
     </div>
   );
 }

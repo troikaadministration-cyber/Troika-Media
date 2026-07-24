@@ -271,31 +271,33 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               is_active: true,
             };
           });
-          // is_online is not stored in templates table — track separately for lesson generation
-          const templateIsOnline = validClasses.map(cls => cls.is_online);
           const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(templateRows);
           if (schedErr) throw schedErr;
 
-          // Auto-generate lessons from today → May 31 of academic year
-          const startDate = new Date();
-          const endDate = new Date(`${s2.academic_year}-05-31T00:00:00`);
-          const current = new Date(startDate);
-          while (current <= endDate) {
+          // Auto-generate up to `totalLessons` lessons per class, rolling forward
+          // from today (not a fixed May-31 window, which was a no-op after May).
+          const perTemplateCreated = new Array(templateRows.length).fill(0);
+          const current = new Date();
+          current.setHours(0, 0, 0, 0);
+          const safetyEnd = new Date(current);
+          safetyEnd.setDate(safetyEnd.getDate() + 400); // ~13-month hard stop
+          while (current <= safetyEnd && perTemplateCreated.some((n) => n < totalLessons)) {
             const dayOfWeek = current.getDay();
             const dateStr = toDateStr(current);
             for (let ti = 0; ti < templateRows.length; ti++) {
+              if (perTemplateCreated[ti] >= totalLessons) continue;
               const tpl = templateRows[ti];
               if (tpl.day_of_week !== dayOfWeek) continue;
               const { data: existing } = await supabase
                 .from('lessons').select('id')
                 .eq('teacher_id', tpl.teacher_id).eq('date', dateStr).eq('start_time', tpl.start_time)
                 .limit(1);
-              if (existing && existing.length > 0) continue;
+              if (existing && existing.length > 0) { perTemplateCreated[ti]++; continue; }
               const { data: lesson } = await supabase.from('lessons').insert({
                 teacher_id: tpl.teacher_id,
                 location_id: tpl.location_id,
                 instrument_id: tpl.instrument_id,
-                lesson_type: templateIsOnline[ti] ? 'regular' : 'regular',
+                lesson_type: 'regular',
                 date: dateStr,
                 start_time: tpl.start_time,
                 end_time: tpl.end_time,
@@ -303,6 +305,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               }).select('id').single();
               if (lesson) {
                 await supabase.from('lesson_students').insert({ lesson_id: lesson.id, student_id: resolvedStudentId });
+                perTemplateCreated[ti]++;
               }
             }
             current.setDate(current.getDate() + 1);

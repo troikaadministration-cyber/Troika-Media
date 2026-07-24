@@ -64,7 +64,7 @@ export function StudentShell() {
     return () => { active = false; };
   }, [profile?.id]);
 
-  const { upcoming, past, loading, totalCompleted, cancelLesson, refresh } = useStudentLessons(studentId);
+  const { upcoming, past, loading, totalCompleted, refresh } = useStudentLessons(studentId);
 
   if (!lookupDone) return <CenterSpinner />;
 
@@ -93,7 +93,6 @@ export function StudentShell() {
         past,
         totalCompleted,
         loadingLessons: loading,
-        cancelLesson,
         refresh,
       }}
     >
