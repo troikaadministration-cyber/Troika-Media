@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { PaymentRecord } from '../types';
@@ -49,7 +50,7 @@ export function usePayments() {
     const { error } = await supabase
       .from('payment_records')
       .update({
-        paid_date: new Date().toISOString().split('T')[0],
+        paid_date: toDateStr(new Date()),
         verified_at: new Date().toISOString(),
         verified_by: user?.id || null,
       })

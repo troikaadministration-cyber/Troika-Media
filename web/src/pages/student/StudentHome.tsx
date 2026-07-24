@@ -1,3 +1,4 @@
+import { toDateStr } from '../../lib/dates';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -20,7 +21,7 @@ export function StudentHome() {
   const primary = enrolments[0] || null;
   const remaining = primary ? primary.total_lessons - primary.lessons_used : null;
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateStr(new Date());
   const paidCount = payments.filter((p) => p.paid_date).length;
   const overdue = payments.filter((p) => !p.paid_date && p.due_date < today);
   const nextPay = payments.find((p) => !p.paid_date && p.due_date >= today);

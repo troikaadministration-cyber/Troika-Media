@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -55,11 +56,11 @@ export function EnrolmentsPage() {
     student_id: '',
     lesson_rate_id: '',
     payment_plan: '3_instalments',
-    start_date: new Date().toISOString().split('T')[0],
+    start_date: toDateStr(new Date()),
     end_date: (() => {
       const d = new Date();
       d.setFullYear(d.getFullYear() + 1);
-      return d.toISOString().split('T')[0];
+      return toDateStr(d);
     })(),
     registration_fee: 0,
     rate_override: 0,
@@ -142,11 +143,11 @@ export function EnrolmentsPage() {
     setError(null);
     setForm({
       student_id: '', lesson_rate_id: '', payment_plan: '3_instalments',
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: toDateStr(new Date()),
       end_date: (() => {
         const d = new Date();
         d.setFullYear(d.getFullYear() + 1);
-        return d.toISOString().split('T')[0];
+        return toDateStr(d);
       })(),
       registration_fee: 0,
       rate_override: 0,
@@ -275,7 +276,7 @@ export function EnrolmentsPage() {
       const current = new Date(startDate);
       while (current <= endDate) {
         if (current.getDay() === templateDayOfWeek) {
-          targetDates.push(current.toISOString().split('T')[0]);
+          targetDates.push(toDateStr(current));
         }
         current.setDate(current.getDate() + 1);
       }

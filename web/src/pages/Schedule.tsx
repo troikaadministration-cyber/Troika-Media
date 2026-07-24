@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { Plus, ChevronLeft, ChevronRight, Filter, X, UserSearch, Calendar as CalIcon, Ban } from 'lucide-react';
 import { useLessons } from '../hooks/useLessons';
@@ -63,7 +64,7 @@ function computeOverlapLayout(lessons: any[]) {
 // ─────────────────────────────────────────────────────────────
 
 export function SchedulePage() {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(toDateStr(new Date()));
   const [teacherFilter, setTeacherFilter] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('');
   const [teachers, setTeachers] = useState<Profile[]>([]);
@@ -130,7 +131,7 @@ export function SchedulePage() {
   const changeDate = (days: number) => {
     const d = new Date(selectedDate);
     d.setDate(d.getDate() + days);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    setSelectedDate(toDateStr(d));
   };
 
   // Form state
@@ -217,25 +218,25 @@ export function SchedulePage() {
     const d = new Date(date);
     const day = d.getDay(); // 0 = Sunday
     d.setDate(d.getDate() - day); // subtract to reach Sunday
-    return d.toISOString().split('T')[0];
+    return toDateStr(d);
   }
   function getWeekEnd(date: string) {
     const d = new Date(date);
     const day = d.getDay(); // 0 = Sunday
     d.setDate(d.getDate() + (6 - day)); // add to reach Saturday
-    return d.toISOString().split('T')[0];
+    return toDateStr(d);
   }
   function getWeekDays(date: string) {
     const start = new Date(getWeekStart(date));
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(start);
       d.setDate(d.getDate() + i);
-      return d.toISOString().split('T')[0];
+      return toDateStr(d);
     });
   }
 
   const displayLessons = viewMode === 'day' ? lessons : weekLessons;
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = toDateStr(new Date());
 
   return (
     <div>
@@ -270,7 +271,7 @@ export function SchedulePage() {
               <ChevronRight size={18} />
             </button>
             <button
-              onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
+              onClick={() => setSelectedDate(toDateStr(new Date()))}
               className="text-sm text-teal font-medium hover:underline"
             >
               Today

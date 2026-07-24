@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
@@ -37,7 +38,7 @@ export function useStudentLessons(studentId: string | undefined) {
     setLoading(true);
     setError(null);
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = toDateStr(new Date());
 
       const [upcomingRes, pastRes] = await Promise.all([
         supabase

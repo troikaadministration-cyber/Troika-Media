@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect } from 'react';
 import { usePayments } from '../hooks/usePayments';
 import type { PaymentWithStudent } from '../hooks/usePayments';
@@ -40,7 +41,7 @@ export function PaymentsPage() {
   const [chargeOpen, setChargeOpen] = useState(false);
   const [chargeSaving, setChargeSaving] = useState(false);
   const [charge, setCharge] = useState({
-    student_id: '', label: '', amount: '', due_date: new Date().toISOString().split('T')[0],
+    student_id: '', label: '', amount: '', due_date: toDateStr(new Date()),
   });
 
   useEffect(() => {
@@ -66,11 +67,11 @@ export function PaymentsPage() {
     if (err) { setToast({ message: err.message, error: true }); return; }
     setToast({ message: 'Charge added' });
     setChargeOpen(false);
-    setCharge({ student_id: '', label: '', amount: '', due_date: new Date().toISOString().split('T')[0] });
+    setCharge({ student_id: '', label: '', amount: '', due_date: toDateStr(new Date()) });
     refresh();
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateStr(new Date());
   const overdue = payments.filter((p) => !p.paid_date && p.due_date < today);
   const upcoming = payments.filter((p) => !p.paid_date && p.due_date >= today);
   const paid = payments.filter((p) => p.paid_date);

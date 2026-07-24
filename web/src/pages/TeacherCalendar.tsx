@@ -43,7 +43,7 @@ export function TeacherCalendarPage() {
   const navigate = useNavigate();
 
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const todayStr = toDateStr(today.getFullYear(), today.getMonth(), today.getDate());
 
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth()); // 0-based
@@ -162,7 +162,7 @@ export function TeacherCalendarPage() {
         ) : (
           <div className="grid grid-cols-7">
             {cells.map((cell, idx) => {
-              const cellStr = cell.date.toISOString().split('T')[0];
+              const cellStr = toDateStr(cell.date.getFullYear(), cell.date.getMonth(), cell.date.getDate());
               const cellLessons = byDate[cellStr] ?? [];
               const isToday = cellStr === todayStr;
               const isSelected = cellStr === selectedDate;

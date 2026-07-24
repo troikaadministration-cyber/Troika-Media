@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -166,7 +167,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     }));
   }
 
-  const enrolStartDate = new Date().toISOString().split('T')[0];
+  const enrolStartDate = toDateStr(new Date());
   const totalLessons = lessonsForPlan(s2.payment_plan, enrolStartDate);
   const totalRatePerLesson = classes.reduce((sum, c) => sum + (parseFloat(c.rate) || 0), 0);
   const regFee = parseFloat(s2.registration_fee) || 0;
@@ -281,7 +282,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
           const current = new Date(startDate);
           while (current <= endDate) {
             const dayOfWeek = current.getDay();
-            const dateStr = current.toISOString().split('T')[0];
+            const dateStr = toDateStr(current);
             for (let ti = 0; ti < templateRows.length; ti++) {
               const tpl = templateRows[ti];
               if (tpl.day_of_week !== dayOfWeek) continue;

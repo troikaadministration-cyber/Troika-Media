@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useTeacherLessons } from '../hooks/useTeacherLessons';
@@ -13,7 +14,7 @@ import type { PieceStatus } from '../types';
 
 export function TeacherSchedulePage() {
   const { profile } = useAuth();
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(toDateStr(new Date()));
   const { lessons, loading, error, refresh, markComplete, markPending, updateNotes, markAttendance } = useTeacherLessons(profile?.id, selectedDate);
   const [confirmDeletePiece, setConfirmDeletePiece] = useState<string | null>(null);
 
@@ -38,10 +39,10 @@ export function TeacherSchedulePage() {
   function shiftDate(days: number) {
     const d = new Date(selectedDate + 'T00:00:00');
     d.setDate(d.getDate() + days);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    setSelectedDate(toDateStr(d));
   }
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = toDateStr(new Date());
   const isToday = selectedDate === todayStr;
   const dateLabel = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
   const completedCount = lessons.filter((l) => l.status === 'completed').length;

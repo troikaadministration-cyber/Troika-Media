@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { BarChart3, IndianRupee, AlertCircle, GraduationCap, Download, RefreshCw } from 'lucide-react';
@@ -49,7 +50,7 @@ export function ReportsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateStr(new Date());
 
   const totals = useMemo(() => {
     let collected = 0, outstanding = 0, overdue = 0;

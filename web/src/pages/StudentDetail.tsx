@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, X, BookOpen, BookmarkPlus, Trash2, Clock, User, CalendarDays, History } from 'lucide-react';
@@ -183,7 +184,7 @@ export function StudentDetailPage() {
     setReEnrolSaving(true);
     setReEnrolError(null);
     try {
-      const reEnrolStartDate = new Date().toISOString().split('T')[0];
+      const reEnrolStartDate = toDateStr(new Date());
       const totalLessons = lessonsForPlan(reEnrolForm.payment_plan, reEnrolStartDate);
       const effectiveRate = reEnrolForm.rate_override || 0;
       const tuition = effectiveRate * totalLessons;
