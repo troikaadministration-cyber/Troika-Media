@@ -288,12 +288,17 @@ export function StudentDetailPage() {
   }
 
   async function toggleStudentInstrument(instrId: string) {
-    if (studentInstruments.includes(instrId)) {
-      await supabase.from('student_instruments').delete().eq('student_id', id!).eq('instrument_id', instrId);
-    } else {
-      await supabase.from('student_instruments').insert({ student_id: id, instrument_id: instrId });
+    const has = studentInstruments.includes(instrId);
+    // Optimistic update so the chip responds instantly.
+    setStudentInstruments(prev => has ? prev.filter(x => x !== instrId) : [...prev, instrId]);
+    const { error } = has
+      ? await supabase.from('student_instruments').delete().eq('student_id', id!).eq('instrument_id', instrId)
+      : await supabase.from('student_instruments').insert({ student_id: id, instrument_id: instrId });
+    if (error) {
+      // Revert and surface the reason (e.g. a permission error) instead of failing silently.
+      setStudentInstruments(prev => has ? [...prev, instrId] : prev.filter(x => x !== instrId));
+      setEditError(`Couldn't update instruments: ${error.message}`);
     }
-    fetchStudentInstruments();
   }
 
   async function saveEdit() {
@@ -726,6 +731,11 @@ export function StudentDetailPage() {
               <h3 className="font-semibold text-navy text-lg">Re-enrol — {student.full_name}</h3>
               <button onClick={() => setReEnrolOpen(false)} className="text-gray-400 hover:text-navy"><X size={20} /></button>
             </div>
+            <p className="text-xs text-gray-500 -mt-2">
+              Starts a fresh enrolment (new academic year, plan or rate) and generates its payment instalments.
+              It does <span className="font-semibold">not</span> create lessons or a schedule slot — use the{' '}
+              <span className="font-semibold">Enrolments</span> page for that.
+            </p>
             {reEnrolError && <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600">{reEnrolError}</div>}
             <div className="grid grid-cols-2 gap-3">
               <div>
