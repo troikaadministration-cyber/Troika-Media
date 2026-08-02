@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -29,7 +30,7 @@ export function DashboardPage() {
   const [lessonsLoading, setLessonsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateStr(new Date());
 
   useEffect(() => {
     // Fetch everything in one parallel batch (was 5 separate round-trips)

@@ -36,7 +36,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
   const [newSlot, setNewSlot] = useState({
     dayOfWeek: 1,
     startTime: '09:00',
-    endTime: '10:00',
+    endTime: '09:45',
     instrumentId: '',
     title: '',
   });
@@ -70,7 +70,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
   // Fix 3 — Reset newSlot to defaults when value becomes null externally
   useEffect(() => {
     if (!value) {
-      setNewSlot({ dayOfWeek: 1, startTime: '09:00', endTime: '10:00', instrumentId: '', title: '' });
+      setNewSlot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:45', instrumentId: '', title: '' });
     }
   }, [value]);
 

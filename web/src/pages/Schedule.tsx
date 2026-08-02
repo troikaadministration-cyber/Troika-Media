@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { Plus, ChevronLeft, ChevronRight, Filter, X, UserSearch, Calendar as CalIcon, Ban } from 'lucide-react';
 import { useLessons } from '../hooks/useLessons';
@@ -63,7 +64,7 @@ function computeOverlapLayout(lessons: any[]) {
 // ─────────────────────────────────────────────────────────────
 
 export function SchedulePage() {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(toDateStr(new Date()));
   const [teacherFilter, setTeacherFilter] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('');
   const [teachers, setTeachers] = useState<Profile[]>([]);
@@ -71,6 +72,10 @@ export function SchedulePage() {
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
+
+  // Scheduled breaks — used to grey out the on-break student's lesson slots
+  // (visual reminder that the slot is only temporarily free; not blocked).
+  const [breaks, setBreaks] = useState<{ student_ids: string[]; start_date: string; end_date: string }[]>([]);
 
   // Makeup finder
   const [makeupModal, setMakeupModal] = useState<{ lessonId: string; studentId: string } | null>(null);
@@ -107,19 +112,33 @@ export function SchedulePage() {
     supabase.from('profiles').select('*').eq('role', 'teacher').then(({ data }) => setTeachers(data || []));
     supabase.from('instruments').select('*').then(({ data }) => setInstruments(data || []));
     supabase.from('students').select('*').eq('is_active', true).order('full_name').then(({ data }) => setAllStudents(data || []));
+    supabase.from('scheduled_breaks').select('student_ids, start_date, end_date').then(({ data }) => setBreaks(data || []));
   }, []);
+
+  // Names of a lesson's students who are on a scheduled break covering the lesson date.
+  function breakStudentsFor(lesson: any): string[] {
+    if (!lesson?.date || !lesson.students?.length) return [];
+    return lesson.students
+      .filter((s: any) =>
+        breaks.some(b =>
+          b.student_ids?.includes(s.student_id) &&
+          b.start_date <= lesson.date && lesson.date <= b.end_date
+        )
+      )
+      .map((s: any) => s.student?.full_name || 'Student');
+  }
 
   const changeDate = (days: number) => {
     const d = new Date(selectedDate);
     d.setDate(d.getDate() + days);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    setSelectedDate(toDateStr(d));
   };
 
   // Form state
   const [formData, setFormData] = useState({
     teacher_id: '', instrument_id: '', location_id: '',
     lesson_type: 'regular' as LessonType,
-    date: selectedDate, start_time: '09:00', end_time: '10:00',
+    date: selectedDate, start_time: '09:00', end_time: '09:45',
     title: '', student_ids: [] as string[],
     is_charged: true, makeup_direction: '' as string,
     special_fee_type: 'regular' as 'regular' | 'complimentary' | 'custom',
@@ -199,25 +218,25 @@ export function SchedulePage() {
     const d = new Date(date);
     const day = d.getDay(); // 0 = Sunday
     d.setDate(d.getDate() - day); // subtract to reach Sunday
-    return d.toISOString().split('T')[0];
+    return toDateStr(d);
   }
   function getWeekEnd(date: string) {
     const d = new Date(date);
     const day = d.getDay(); // 0 = Sunday
     d.setDate(d.getDate() + (6 - day)); // add to reach Saturday
-    return d.toISOString().split('T')[0];
+    return toDateStr(d);
   }
   function getWeekDays(date: string) {
     const start = new Date(getWeekStart(date));
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(start);
       d.setDate(d.getDate() + i);
-      return d.toISOString().split('T')[0];
+      return toDateStr(d);
     });
   }
 
   const displayLessons = viewMode === 'day' ? lessons : weekLessons;
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = toDateStr(new Date());
 
   return (
     <div>
@@ -252,7 +271,7 @@ export function SchedulePage() {
               <ChevronRight size={18} />
             </button>
             <button
-              onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
+              onClick={() => setSelectedDate(toDateStr(new Date()))}
               className="text-sm text-teal font-medium hover:underline"
             >
               Today
@@ -497,6 +516,7 @@ export function SchedulePage() {
                 <LessonRow
                   key={lesson.id}
                   lesson={lesson}
+                  breakNames={breakStudentsFor(lesson)}
                   onCancel={() => setCancelModal(lesson.id)}
                   onFindMakeup={(studentId: string) => findMakeupMatches(lesson.id, studentId)}
                 />
@@ -575,11 +595,14 @@ export function SchedulePage() {
                     const leftPct = (lesson._col / lesson._totalCols) * 100;
                     const widthPct = 100 / lesson._totalCols;
 
+                    const onBreak = lesson.status !== 'cancelled' && breakStudentsFor(lesson).length > 0;
                     const colorClass =
                       lesson.status === 'completed'
                         ? 'bg-teal/10 border-teal text-teal'
                         : lesson.status === 'cancelled'
                         ? 'bg-gray-100 border-gray-300 text-gray-400'
+                        : onBreak
+                        ? 'bg-gray-100 border-gray-300 text-gray-400 border-dashed opacity-70'
                         : 'bg-coral/10 border-coral text-coral';
 
                     return (
@@ -597,6 +620,7 @@ export function SchedulePage() {
                           `${lesson.start_time?.slice(0, 5)}${lesson.end_time ? ' – ' + lesson.end_time.slice(0, 5) : ''}`,
                           lesson.title || lesson.instrument?.name,
                           lesson.teacher?.full_name,
+                          onBreak ? `On break: ${breakStudentsFor(lesson).join(', ')} — slot temporarily free` : '',
                         ].filter(Boolean).join(' · ')}
                       >
                         <p className="text-[10px] font-bold leading-tight pt-0.5 truncate">
@@ -726,16 +750,18 @@ export function SchedulePage() {
   );
 }
 
-function LessonRow({ lesson, onCancel, onFindMakeup }: {
+function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup }: {
   lesson: any;
+  breakNames?: string[];
   onCancel: () => void;
   onFindMakeup: (studentId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const students = lesson.students || [];
+  const onBreak = breakNames.length > 0 && lesson.status !== 'cancelled';
 
   return (
-    <div className="p-4 hover:bg-gray-50 transition-colors">
+    <div className={`p-4 hover:bg-gray-50 transition-colors ${onBreak ? 'opacity-50' : ''}`}>
       <div className="flex items-center gap-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         <div className={`w-1.5 h-14 rounded-full ${
           lesson.status === 'completed' ? 'bg-teal' :
@@ -751,6 +777,12 @@ function LessonRow({ lesson, onCancel, onFindMakeup }: {
           <p className="text-xs text-gray-400">{students.length} student(s)</p>
         </div>
         <div className="flex items-center gap-2">
+          {onBreak && (
+            <span className="text-xs font-semibold px-3 py-1 rounded-full bg-yellow-100 text-yellow-700"
+              title={`On break: ${breakNames.join(', ')} — slot temporarily free`}>
+              On break
+            </span>
+          )}
           <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
             lesson.lesson_type === 'regular' ? 'bg-gray-100 text-gray-600' :
             lesson.lesson_type === 'makeup' ? 'bg-amber-50 text-amber-600' :

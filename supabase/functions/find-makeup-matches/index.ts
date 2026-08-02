@@ -36,6 +36,17 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
+    // Only coordinators may search makeup matches — the response contains PII
+    // (names, locations, absence stats) for the whole roster.
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+    if (!profile || profile.role !== 'coordinator') {
+      throw new Error('Unauthorized');
+    }
+
     const { lesson_id } = await req.json();
     if (!lesson_id) throw new Error('lesson_id is required');
 

@@ -1,3 +1,4 @@
+import { toDateStr } from '../../lib/dates';
 import { BookOpen, CreditCard, FileText, AlertCircle, Clock } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
 import { fmtDate, fmtMoney } from './format';
@@ -5,7 +6,7 @@ import { fmtDate, fmtMoney } from './format';
 export function StudentPayments() {
   const { enrolments, payments } = useStudentPortal();
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = toDateStr(new Date());
   const overdue = payments.filter((p) => !p.paid_date && p.due_date < today);
   const nextPay = payments.find((p) => !p.paid_date && p.due_date >= today);
   const paidCount = payments.filter((p) => p.paid_date).length;

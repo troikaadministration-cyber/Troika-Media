@@ -1,7 +1,9 @@
+import { toDateStr } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { lessonsForPlan } from '../lib/lessonCount';
+import { computeDiscount, type DiscountPrimary } from '../lib/fees';
 
 interface PendingProfile { id: string; full_name: string; email: string; }
 
@@ -29,7 +31,8 @@ interface ClassRow {
   is_online: boolean;
 }
 
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// 0 = Sunday … 6 = Saturday, matching JS getDay()/getUTCDay() and the rest of the app.
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const ALLOWED_INSTRUMENTS = ['Cello', 'Piano', 'Voice', 'Guitar', 'Violin', 'Viola', 'IGCSE Music', 'Music Theory'];
 
@@ -42,7 +45,7 @@ const PAYMENT_PLANS = [
 
 
 function emptyClass(): ClassRow {
-  return { teacher_id: '', category: '', day_of_week: '0', start_time: '09:00', end_time: '10:00', rate: '', instrument_id: '', is_online: false };
+  return { teacher_id: '', category: '', day_of_week: '1', start_time: '09:00', end_time: '09:45', rate: '', instrument_id: '', is_online: false };
 }
 
 function StepBar({ step }: { step: number }) {
@@ -96,6 +99,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     payment_plan: '3_instalments',
     academic_year: new Date().getFullYear().toString(),
     registration_fee: '0',
+    discount_primary: 'none' as DiscountPrimary,
+    discount_special: '0',
+    discount_multilesson: false,
   });
   const [classes, setClasses] = useState<ClassRow[]>([emptyClass()]);
 
@@ -105,7 +111,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setError(null);
       setStudentId(null);
       setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', location_id: '', address: '' });
-      setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0' });
+      setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0', discount_primary: 'none', discount_special: '0', discount_multilesson: false });
       setClasses([emptyClass()]);
     }
   }, [open, pendingProfile]);
@@ -161,11 +167,22 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     }));
   }
 
-  const enrolStartDate = new Date().toISOString().split('T')[0];
+  const enrolStartDate = toDateStr(new Date());
   const totalLessons = lessonsForPlan(s2.payment_plan, enrolStartDate);
   const totalRatePerLesson = classes.reduce((sum, c) => sum + (parseFloat(c.rate) || 0), 0);
   const regFee = parseFloat(s2.registration_fee) || 0;
-  const totalFee = totalRatePerLesson * totalLessons + regFee;
+  const tuition = totalRatePerLesson * totalLessons;
+  const discount = computeDiscount(tuition, {
+    primary: s2.discount_primary,
+    plan: s2.payment_plan,
+    specialAmount: parseFloat(s2.discount_special) || 0,
+    multilesson: s2.discount_multilesson,
+  });
+  const discountedTuition = discount.discounted;
+  const tuitionDiscount = discount.discountAmount;
+  const totalFee = discountedTuition + regFee;
+  // Gate: a lesson rate must be entered before the enrolment can be confirmed.
+  const canConfirm = totalRatePerLesson > 0;
 
   async function handleConfirm(skip = false) {
     setSaving(true);
@@ -212,7 +229,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       }
 
       const ratePerLesson = skip ? 0 : totalRatePerLesson;
-      const fee = skip ? 0 : totalFee;
+      // total_fee holds discounted tuition only; registration_fee is separate.
+      const fee = skip ? 0 : discountedTuition;
 
       const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
         student_id: resolvedStudentId,
@@ -225,6 +243,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         rate_per_lesson: ratePerLesson,
         total_fee: fee,
         registration_fee: regFee,
+        discount_primary: skip ? 'none' : s2.discount_primary,
+        discount_multilesson: skip ? false : s2.discount_multilesson,
+        discount_value: skip ? 0 : (s2.discount_primary === 'special' ? (parseFloat(s2.discount_special) || 0) : 0),
       }).select('id').single();
       if (enrolErr) throw enrolErr;
 
@@ -250,31 +271,33 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               is_active: true,
             };
           });
-          // is_online is not stored in templates table — track separately for lesson generation
-          const templateIsOnline = validClasses.map(cls => cls.is_online);
           const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(templateRows);
           if (schedErr) throw schedErr;
 
-          // Auto-generate lessons from today → May 31 of academic year
-          const startDate = new Date();
-          const endDate = new Date(`${s2.academic_year}-05-31T00:00:00`);
-          const current = new Date(startDate);
-          while (current <= endDate) {
+          // Auto-generate up to `totalLessons` lessons per class, rolling forward
+          // from today (not a fixed May-31 window, which was a no-op after May).
+          const perTemplateCreated = new Array(templateRows.length).fill(0);
+          const current = new Date();
+          current.setHours(0, 0, 0, 0);
+          const safetyEnd = new Date(current);
+          safetyEnd.setDate(safetyEnd.getDate() + 400); // ~13-month hard stop
+          while (current <= safetyEnd && perTemplateCreated.some((n) => n < totalLessons)) {
             const dayOfWeek = current.getDay();
-            const dateStr = current.toISOString().split('T')[0];
+            const dateStr = toDateStr(current);
             for (let ti = 0; ti < templateRows.length; ti++) {
+              if (perTemplateCreated[ti] >= totalLessons) continue;
               const tpl = templateRows[ti];
               if (tpl.day_of_week !== dayOfWeek) continue;
               const { data: existing } = await supabase
                 .from('lessons').select('id')
                 .eq('teacher_id', tpl.teacher_id).eq('date', dateStr).eq('start_time', tpl.start_time)
                 .limit(1);
-              if (existing && existing.length > 0) continue;
+              if (existing && existing.length > 0) { perTemplateCreated[ti]++; continue; }
               const { data: lesson } = await supabase.from('lessons').insert({
                 teacher_id: tpl.teacher_id,
                 location_id: tpl.location_id,
                 instrument_id: tpl.instrument_id,
-                lesson_type: templateIsOnline[ti] ? 'regular' : 'regular',
+                lesson_type: 'regular',
                 date: dateStr,
                 start_time: tpl.start_time,
                 end_time: tpl.end_time,
@@ -282,6 +305,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               }).select('id').single();
               if (lesson) {
                 await supabase.from('lesson_students').insert({ lesson_id: lesson.id, student_id: resolvedStudentId });
+                perTemplateCreated[ti]++;
               }
             }
             current.setDate(current.getDate() + 1);
@@ -381,6 +405,29 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
                   placeholder="0" />
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Discount (optional)</label>
+                <select value={s2.discount_primary}
+                  onChange={e => setS2(p => ({ ...p, discount_primary: e.target.value as DiscountPrimary }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                  <option value="none">No discount</option>
+                  <option value="plan">Plan discount (auto)</option>
+                  <option value="legacy">Legacy student (25%)</option>
+                  <option value="special">Flat ₹ special</option>
+                </select>
+                {s2.discount_primary === 'special' && (
+                  <input type="number" min={0} value={s2.discount_special}
+                    onChange={e => setS2(p => ({ ...p, discount_special: e.target.value }))}
+                    className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
+                    placeholder="Flat ₹ amount" />
+                )}
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+                  <input type="checkbox" checked={s2.discount_multilesson}
+                    onChange={e => setS2(p => ({ ...p, discount_multilesson: e.target.checked }))}
+                    className="rounded border-gray-300 text-teal focus:ring-teal" />
+                  Multi-lesson (+5%)
+                </label>
+              </div>
             </div>
 
             {/* Class rows */}
@@ -468,8 +515,14 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 <p className="text-xs font-bold text-gray-500 uppercase">Fee Summary</p>
                 <div className="flex justify-between text-gray-600">
                   <span>₹{totalRatePerLesson.toLocaleString('en-IN')} × {totalLessons} lessons</span>
-                  <span>₹{(totalRatePerLesson * totalLessons).toLocaleString('en-IN')}</span>
+                  <span>₹{tuition.toLocaleString('en-IN')}</span>
                 </div>
+                {tuitionDiscount > 0 && (
+                  <div className="flex justify-between text-teal">
+                    <span>Discount{discount.pct > 0 ? ` (${discount.pct}%${discount.flat > 0 ? ' + ₹' + discount.flat.toLocaleString('en-IN') : ''})` : discount.flat > 0 ? ` (₹${discount.flat.toLocaleString('en-IN')})` : ''}</span>
+                    <span>−₹{tuitionDiscount.toLocaleString('en-IN')}</span>
+                  </div>
+                )}
                 {regFee > 0 && (
                   <div className="flex justify-between text-gray-600">
                     <span>Registration fee</span>
@@ -488,8 +541,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 <button onClick={() => setStep(0)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-navy"><ChevronLeft size={16} /> Back</button>
                 <button onClick={() => handleConfirm(true)} disabled={saving} className="text-sm text-gray-400 hover:text-gray-600 underline">Skip for now</button>
               </div>
-              <button onClick={() => handleConfirm(false)} disabled={saving}
-                className="bg-teal text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
+              <button onClick={() => handleConfirm(false)} disabled={saving || !canConfirm}
+                title={!canConfirm ? 'Enter a lesson rate to confirm' : undefined}
+                className="bg-teal text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50 disabled:cursor-not-allowed">
                 {saving ? 'Saving...' : 'Confirm & Finish'}
               </button>
             </div>

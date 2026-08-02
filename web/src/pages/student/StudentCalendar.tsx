@@ -1,3 +1,4 @@
+import { toDateStr } from '../../lib/dates';
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
@@ -15,7 +16,7 @@ export function StudentCalendar() {
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = toDateStr(new Date());
 
   const lessonsByDate: Record<string, typeof allLessons> = {};
   for (const item of allLessons) {

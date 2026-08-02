@@ -5,19 +5,22 @@ import { useNotifications } from '../../hooks/useNotifications';
 import {
   LayoutDashboard, Calendar, Users, CreditCard, BookOpen,
   LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, CalendarClock,
-  CalendarDays, CalendarOff, Home
+  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList
 } from 'lucide-react';
 
 const coordinatorNav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/schedule', label: 'Schedule', icon: Calendar },
   { to: '/students', label: 'Students', icon: Users },
+  { to: '/enrolments', label: 'Enrolments', icon: ClipboardList },
   { to: '/teachers', label: 'Teachers', icon: GraduationCap },
   { to: '/teacher-schedules', label: 'Teacher Schedules', icon: CalendarClock },
   { to: '/payments', label: 'Payments', icon: CreditCard },
   { to: '/lesson-rates', label: 'Lesson Rates', icon: IndianRupee },
   { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
   { to: '/breaks', label: 'Breaks', icon: CalendarOff },
+  { to: '/locations', label: 'Locations', icon: MapPin },
+  { to: '/reports', label: 'Reports', icon: BarChart3 },
 ];
 
 const teacherNav = [

@@ -86,30 +86,12 @@ serve(async (req) => {
         .update({ reminder_sent: true })
         .eq('id', payment.id);
 
-      // Auto-generate PENDING invoice if due date is today
-      if (payment.due_date === todayStr) {
-        // Check if invoice already exists
-        const { data: existing } = await supabase
-          .from('invoices')
-          .select('id')
-          .eq('payment_id', payment.id)
-          .maybeSingle();
-
-        if (!existing) {
-          const { data: invoiceNumber } = await supabase.rpc('next_invoice_number');
-          if (invoiceNumber) {
-            await supabase.from('invoices').insert({
-              invoice_number: invoiceNumber,
-              payment_id: payment.id,
-              student_id: payment.student_id,
-              amount: payment.amount,
-              currency: 'INR',
-              description: `PENDING — Instalment #${payment.instalment_number}`,
-              issued_date: todayStr,
-            });
-          }
-        }
-      }
+      // NOTE: invoices are created only when a payment is actually verified
+      // (generate-invoice). Previously this cron inserted a placeholder
+      // "PENDING" invoice on the due date, which generate-invoice's idempotency
+      // check then returned instead of building the real paid invoice — so the
+      // customer never received a proper invoice/PDF/email. Do not create
+      // invoices here.
     }
 
     return new Response(

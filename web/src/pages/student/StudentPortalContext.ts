@@ -23,14 +23,6 @@ export interface Payment {
   invoice?: { id: string; invoice_number: string } | null;
 }
 
-export interface CancelLessonOptions {
-  teacherId: string | null;
-  date: string;
-  startTime: string;
-  studentName: string;
-  reason?: string;
-}
-
 export interface StudentPortalValue {
   studentId: string;
   studentName: string;
@@ -41,7 +33,6 @@ export interface StudentPortalValue {
   past: StudentLesson[];
   totalCompleted: number;
   loadingLessons: boolean;
-  cancelLesson: (lessonId: string, userId: string, options: CancelLessonOptions) => Promise<void>;
   refresh: () => void;
 }
 

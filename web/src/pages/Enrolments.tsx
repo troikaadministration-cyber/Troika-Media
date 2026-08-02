@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -7,6 +8,7 @@ import type { Profile, Instrument } from '../types';
 import { Plus, X, RefreshCw, BookOpen, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { lessonsForPlan } from '../lib/lessonCount';
+import { computeDiscount, type DiscountPrimary } from '../lib/fees';
 
 interface Enrolment {
   id: string;
@@ -54,13 +56,17 @@ export function EnrolmentsPage() {
     student_id: '',
     lesson_rate_id: '',
     payment_plan: '3_instalments',
-    start_date: new Date().toISOString().split('T')[0],
+    start_date: toDateStr(new Date()),
     end_date: (() => {
       const d = new Date();
       d.setFullYear(d.getFullYear() + 1);
-      return d.toISOString().split('T')[0];
+      return toDateStr(d);
     })(),
     registration_fee: 0,
+    rate_override: 0,
+    discount_primary: 'none' as DiscountPrimary,
+    discount_special: 0,
+    discount_multilesson: false,
     academic_year: new Date().getFullYear().toString(),
   });
 
@@ -91,6 +97,8 @@ export function EnrolmentsPage() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const selectedRate = rates.find(r => r.id === form.lesson_rate_id);
+  // Per-student rate: defaults to the rate-card value but can be overridden.
+  const effectiveRate = form.rate_override || 0;
   const selectedStudent = students.find(s => s.id === form.student_id);
   const filteredRates = selectedStudent?.location_id
     ? rates.filter(r => r.location_id === selectedStudent.location_id || r.location_id === null)
@@ -98,7 +106,16 @@ export function EnrolmentsPage() {
   const hasLocationRates = !!(selectedStudent?.location_id &&
     rates.some(r => r.location_id === selectedStudent.location_id));
   const totalLessons = lessonsForPlan(form.payment_plan, form.start_date);
-  const totalFee = selectedRate ? selectedRate.rate_per_lesson * totalLessons : 0;
+  const tuition = effectiveRate * totalLessons;
+  const discount = computeDiscount(tuition, {
+    primary: form.discount_primary,
+    plan: form.payment_plan,
+    specialAmount: form.discount_special || 0,
+    multilesson: form.discount_multilesson,
+  });
+  const tuitionDiscount = discount.discountAmount;
+  // total_fee stores discounted tuition; registration fee is separate.
+  const totalFee = discount.discounted;
   const teacherId = selectedRate?.teacher?.id ?? selectedRate?.teacher_id ?? manualTeacherId ?? '';
   const teacherName = teachers.find(t => t.id === teacherId)?.full_name
     || (selectedRate as any)?.teacher?.full_name
@@ -126,13 +143,17 @@ export function EnrolmentsPage() {
     setError(null);
     setForm({
       student_id: '', lesson_rate_id: '', payment_plan: '3_instalments',
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: toDateStr(new Date()),
       end_date: (() => {
         const d = new Date();
         d.setFullYear(d.getFullYear() + 1);
-        return d.toISOString().split('T')[0];
+        return toDateStr(d);
       })(),
       registration_fee: 0,
+      rate_override: 0,
+      discount_primary: 'none',
+      discount_special: 0,
+      discount_multilesson: false,
       academic_year: new Date().getFullYear().toString(),
     });
   }
@@ -159,6 +180,7 @@ export function EnrolmentsPage() {
     let createdEnrolmentId: string | null = null;
     let createdTemplateId: string | null = null;        // set if new template was inserted
     let templateStudentUndo: { id: string; ids: string[] } | null = null; // set if existing was updated
+    let createdLessonIds: string[] = [];                // generated lessons, for rollback
 
     try {
       // 1. Create enrolment
@@ -172,9 +194,12 @@ export function EnrolmentsPage() {
           lessons_used: 0,
           start_date: form.start_date,
           payment_plan: form.payment_plan,
-          rate_per_lesson: selectedRate?.rate_per_lesson || 0,
+          rate_per_lesson: effectiveRate,
           total_fee: totalFee,
           registration_fee: form.registration_fee,
+          discount_primary: form.discount_primary,
+          discount_multilesson: form.discount_multilesson,
+          discount_value: form.discount_primary === 'special' ? (form.discount_special || 0) : 0,
         })
         .select()
         .single();
@@ -182,15 +207,11 @@ export function EnrolmentsPage() {
       if (enrolErr) throw enrolErr;
       createdEnrolmentId = enrolment.id;
 
-      // 2. Auto-generate payment instalments
-      if (form.payment_plan !== 'trial') {
-        const { error: genErr } = await supabase.rpc('generate_instalments', {
-          p_enrolment_id: enrolment.id,
-        });
-        if (genErr) throw genErr;
-      }
+      // Instalments are generated LAST (see below) so a failure in the
+      // scheduling steps can't leave orphan payment_records that a retry would
+      // then duplicate.
 
-      // 3. Assign student to schedule template slot
+      // 2. Assign student to schedule template slot
       let templateDayOfWeek: number;
       let templateStartTime: string;
       let templateEndTime: string | null;
@@ -252,7 +273,7 @@ export function EnrolmentsPage() {
       const current = new Date(startDate);
       while (current <= endDate) {
         if (current.getDay() === templateDayOfWeek) {
-          targetDates.push(current.toISOString().split('T')[0]);
+          targetDates.push(toDateStr(current));
         }
         current.setDate(current.getDate() + 1);
       }
@@ -302,8 +323,18 @@ export function EnrolmentsPage() {
               })));
             if (lsErr) throw lsErr;
             created = insertedLessons.length;
+            createdLessonIds = insertedLessons.map((l: { id: string }) => l.id);
           }
         }
+      }
+
+      // 5. Auto-generate payment instalments — the last step, so any earlier
+      // failure rolls back cleanly without leaving duplicate-able instalments.
+      if (form.payment_plan !== 'trial') {
+        const { error: genErr } = await supabase.rpc('generate_instalments', {
+          p_enrolment_id: enrolment.id,
+        });
+        if (genErr) throw genErr;
       }
 
       const resultMsg = `Enrolment created. ${created} lesson${created !== 1 ? 's' : ''} generated${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
@@ -314,7 +345,13 @@ export function EnrolmentsPage() {
       closeModal();
       fetchAll();
     } catch (err: any) {
-      // Compensating delete if enrolment was created but later steps failed
+      // Compensating delete if enrolment was created but later steps failed.
+      // Delete generated lessons first (and their student links) so they don't
+      // orphan, then the template, then the enrolment.
+      if (createdLessonIds.length > 0) {
+        await supabase.from('lesson_students').delete().in('lesson_id', createdLessonIds);
+        await supabase.from('lessons').delete().in('id', createdLessonIds);
+      }
       if (createdEnrolmentId) {
         await supabase.from('student_enrolments').delete().eq('id', createdEnrolmentId);
       }
@@ -522,7 +559,10 @@ export function EnrolmentsPage() {
                   )}
                   <select
                     value={form.lesson_rate_id}
-                    onChange={(e) => setForm({ ...form, lesson_rate_id: e.target.value })}
+                    onChange={(e) => {
+                      const picked = rates.find(r => r.id === e.target.value);
+                      setForm({ ...form, lesson_rate_id: e.target.value, rate_override: picked?.rate_per_lesson || 0 });
+                    }}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   >
                     <option value="">Select rate...</option>
@@ -535,6 +575,22 @@ export function EnrolmentsPage() {
                       </option>
                     ))}
                   </select>
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Rate per lesson (₹) — editable for this student</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={form.rate_override}
+                      onChange={(e) => setForm({ ...form, rate_override: Number(e.target.value) })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      placeholder="0"
+                    />
+                    {selectedRate && effectiveRate !== selectedRate.rate_per_lesson && (
+                      <p className="text-xs text-yellow-600 mt-1">
+                        Overriding rate-card default of ₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')}.
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -592,14 +648,53 @@ export function EnrolmentsPage() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Discount (optional)</label>
+                  <select
+                    value={form.discount_primary}
+                    onChange={(e) => setForm({ ...form, discount_primary: e.target.value as DiscountPrimary })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="none">No discount</option>
+                    <option value="plan">Plan discount (auto)</option>
+                    <option value="legacy">Legacy student (25%)</option>
+                    <option value="special">Flat ₹ special</option>
+                  </select>
+                  {form.discount_primary === 'special' && (
+                    <input
+                      type="number"
+                      min={0}
+                      value={form.discount_special}
+                      onChange={(e) => setForm({ ...form, discount_special: Number(e.target.value) })}
+                      className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      placeholder="Flat ₹ amount"
+                    />
+                  )}
+                  <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={form.discount_multilesson}
+                      onChange={(e) => setForm({ ...form, discount_multilesson: e.target.checked })}
+                      className="rounded border-gray-300 text-teal focus:ring-teal"
+                    />
+                    Multi-lesson (+5%)
+                  </label>
+                </div>
+
                 {/* Fee Summary */}
                 {selectedRate && form.payment_plan !== 'trial' && (
                   <div className="bg-gray-50 rounded-xl p-4 space-y-2">
                     <h4 className="text-xs font-semibold text-gray-500 uppercase">Fee Summary</h4>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')} × {totalLessons} lessons</span>
-                      <span className="font-medium text-navy">₹{totalFee.toLocaleString('en-IN')}</span>
+                      <span className="text-gray-500">₹{effectiveRate.toLocaleString('en-IN')} × {totalLessons} lessons</span>
+                      <span className="font-medium text-navy">₹{tuition.toLocaleString('en-IN')}</span>
                     </div>
+                    {tuitionDiscount > 0 && (
+                      <div className="flex justify-between text-sm text-teal">
+                        <span>Discount{discount.pct > 0 ? ` (${discount.pct}%${discount.flat > 0 ? ' + ₹' + discount.flat.toLocaleString('en-IN') : ''})` : discount.flat > 0 ? ` (₹${discount.flat.toLocaleString('en-IN')})` : ''}</span>
+                        <span>−₹{tuitionDiscount.toLocaleString('en-IN')}</span>
+                      </div>
+                    )}
                     {form.registration_fee > 0 && (
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500">Registration fee</span>

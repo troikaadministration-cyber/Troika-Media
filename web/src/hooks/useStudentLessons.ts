@@ -1,3 +1,4 @@
+import { toDateStr } from '../lib/dates';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
@@ -37,7 +38,7 @@ export function useStudentLessons(studentId: string | undefined) {
     setLoading(true);
     setError(null);
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = toDateStr(new Date());
 
       const [upcomingRes, pastRes] = await Promise.all([
         supabase
@@ -79,46 +80,5 @@ export function useStudentLessons(studentId: string | undefined) {
 
   useEffect(() => { fetchLessons(); }, [fetchLessons]);
 
-  async function cancelLesson(
-    lessonId: string,
-    userId: string,
-    options: {
-      teacherId: string | null;
-      date: string;
-      startTime: string;
-      studentName: string;
-      reason?: string;
-    }
-  ) {
-    const updates: Record<string, unknown> = {
-      status: 'cancelled',
-      cancelled_by_role: 'student',
-      cancelled_by_user_id: userId,
-    };
-    if (options.reason) updates.cancel_reason = options.reason;
-
-    const { error } = await supabase.from('lessons').update(updates).eq('id', lessonId);
-    if (error) throw error;
-
-    if (options.teacherId) {
-      const dateLabel = new Date(options.date + 'T00:00:00').toLocaleDateString('en-IN', {
-        weekday: 'long', month: 'short', day: 'numeric',
-      });
-      try {
-        await supabase.from('notifications').insert({
-          user_id: options.teacherId,
-          type: 'lesson_cancelled',
-          title: 'Lesson cancelled by student',
-          body: `${options.studentName} cancelled their lesson on ${dateLabel} at ${options.startTime.slice(0, 5)}`,
-          read: false,
-        });
-      } catch {
-        // fire-and-forget — lesson is already cancelled
-      }
-    }
-
-    await fetchLessons();
-  }
-
-  return { upcoming, past, loading, error, totalCompleted, cancelLesson, refresh: fetchLessons };
+  return { upcoming, past, loading, error, totalCompleted, refresh: fetchLessons };
 }
