@@ -11,31 +11,43 @@ import {
 } from 'lucide-react';
 
 const coordinatorNav = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/schedule', label: 'Schedule', icon: Calendar },
-  { to: '/students', label: 'Students', icon: Users },
-  { to: '/enrolments', label: 'Enrolments', icon: ClipboardList },
-  { to: '/teachers', label: 'Teachers', icon: GraduationCap },
-  { to: '/teacher-schedules', label: 'Teacher Schedules', icon: CalendarClock },
-  { to: '/payments', label: 'Payments', icon: CreditCard },
-  { to: '/lesson-rates', label: 'Lesson Rates', icon: IndianRupee },
-  { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
-  { to: '/breaks', label: 'Breaks', icon: CalendarOff },
-  { to: '/locations', label: 'Locations', icon: MapPin },
-  { to: '/reports', label: 'Reports', icon: BarChart3 },
+  { group: 'Main', items: [
+    { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/schedule', label: 'Schedule', icon: Calendar },
+    { to: '/students', label: 'Students', icon: Users },
+    { to: '/enrolments', label: 'Enrolments', icon: ClipboardList },
+  ]},
+  { group: 'Teaching', items: [
+    { to: '/teachers', label: 'Teachers', icon: GraduationCap },
+    { to: '/teacher-schedules', label: 'Teacher Schedules', icon: CalendarClock },
+    { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
+  ]},
+  { group: 'Finance', items: [
+    { to: '/payments', label: 'Payments', icon: CreditCard },
+    { to: '/lesson-rates', label: 'Lesson Rates', icon: IndianRupee },
+    { to: '/reports', label: 'Reports', icon: BarChart3 },
+  ]},
+  { group: 'Studio', items: [
+    { to: '/locations', label: 'Locations', icon: MapPin },
+    { to: '/breaks', label: 'Breaks', icon: CalendarOff },
+  ]},
 ];
 
 const teacherNav = [
-  { to: '/', label: 'Schedule', icon: Calendar },
-  { to: '/calendar', label: 'Calendar', icon: CalendarDays },
-  { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
+  { group: '', items: [
+    { to: '/', label: 'Schedule', icon: Calendar },
+    { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+    { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
+  ]},
 ];
 
 const studentNav = [
-  { to: '/', label: 'Home', icon: Home },
-  { to: '/lessons', label: 'My Lessons', icon: Music },
-  { to: '/calendar', label: 'Calendar', icon: CalendarDays },
-  { to: '/payments', label: 'Payments', icon: CreditCard },
+  { group: '', items: [
+    { to: '/', label: 'Home', icon: Home },
+    { to: '/lessons', label: 'My Lessons', icon: Music },
+    { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+    { to: '/payments', label: 'Payments', icon: CreditCard },
+  ]},
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -126,23 +138,32 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {navItems.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) =>
-                `relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive
-                    ? 'bg-teal/10 text-teal font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-teal'
-                    : 'text-gray-600 font-medium hover:bg-black/5 hover:text-navy'
-                }`
-              }
-            >
-              <Icon size={18} strokeWidth={1.9} />
-              <span>{label}</span>
-            </NavLink>
+        <nav className="flex-1 px-3 py-4 overflow-y-auto">
+          {navItems.map((section, si) => (
+            <div key={si} className={si > 0 ? 'mt-4' : ''}>
+              {section.group && (
+                <p className="px-3 pb-1.5 text-[10.5px] font-bold uppercase tracking-[0.07em] text-gray-400">{section.group}</p>
+              )}
+              <div className="space-y-0.5">
+                {section.items.map(({ to, label, icon: Icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === '/'}
+                    className={({ isActive }) =>
+                      `relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-teal/10 text-teal font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-teal'
+                          : 'text-gray-600 font-medium hover:bg-black/5 hover:text-navy'
+                      }`
+                    }
+                  >
+                    <Icon size={18} strokeWidth={1.9} />
+                    <span>{label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
@@ -262,7 +283,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        pages={navItems.map(({ label, to }) => ({ label, to }))}
+        pages={navItems.flatMap((s) => s.items).map(({ label, to }) => ({ label, to }))}
         canSearchStudents={profile?.role !== 'student'}
       />
     </div>
