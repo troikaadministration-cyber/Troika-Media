@@ -199,6 +199,15 @@ export function SchedulePage() {
     await cancelLesson(lessonId, undefined, reason);
   }
 
+  async function handleSetStatus(lessonId: string, status: 'completed' | 'scheduled') {
+    // When marking completed, default any un-marked students to attended so the
+    // lesson actually counts toward lessons_used (absences are marked separately).
+    if (status === 'completed') {
+      await supabase.from('lesson_students').update({ attended: true }).eq('lesson_id', lessonId).is('attended', null);
+    }
+    await updateLesson(lessonId, { status } as any);
+  }
+
   async function findMakeupMatches(lessonId: string, studentId: string) {
     setMakeupModal({ lessonId, studentId });
     setMakeupLoading(true);
@@ -519,6 +528,7 @@ export function SchedulePage() {
                   breakNames={breakStudentsFor(lesson)}
                   onCancel={() => setCancelModal(lesson.id)}
                   onFindMakeup={(studentId: string) => findMakeupMatches(lesson.id, studentId)}
+                  onSetStatus={(status) => handleSetStatus(lesson.id, status)}
                 />
               ))}
             </div>
@@ -750,11 +760,12 @@ export function SchedulePage() {
   );
 }
 
-function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup }: {
+function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup, onSetStatus }: {
   lesson: any;
   breakNames?: string[];
   onCancel: () => void;
   onFindMakeup: (studentId: string) => void;
+  onSetStatus: (status: 'completed' | 'scheduled') => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const students = lesson.students || [];
@@ -820,14 +831,31 @@ function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup }: {
               </div>
             </div>
           ))}
-          {lesson.status === 'scheduled' && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onCancel(); }}
-              className="text-xs text-gray-500 hover:text-coral mt-1"
-            >
-              Cancel this lesson
-            </button>
-          )}
+          <div className="flex items-center gap-4 mt-1">
+            {lesson.status === 'completed' ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onSetStatus('scheduled'); }}
+                className="text-xs text-gray-500 hover:text-navy"
+              >
+                Reopen (mark not completed)
+              </button>
+            ) : lesson.status === 'scheduled' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onSetStatus('completed'); }}
+                className="text-xs font-semibold text-teal hover:underline"
+              >
+                Mark completed
+              </button>
+            )}
+            {lesson.status === 'scheduled' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                className="text-xs text-gray-500 hover:text-coral"
+              >
+                Cancel this lesson
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
