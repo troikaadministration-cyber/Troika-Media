@@ -5,7 +5,10 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
+import { initTheme } from './lib/theme';
 import './index.css';
+
+initTheme();
 
 // Vite fires this before React even mounts — handle stale chunks at the earliest point.
 window.addEventListener('vite:preloadError', () => {

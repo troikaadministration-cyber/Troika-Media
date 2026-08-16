@@ -50,7 +50,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
     <div className={`h-screen flex items-center justify-center bg-gray-50 overflow-hidden relative transition-opacity duration-500 ${fadeOut ? 'opacity-0' : 'opacity-100'}`}>
       {/* Burst ring */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-72 h-72 rounded-full border-4 border-dashed border-coral/20 splash-burst" />
+        <div className="w-72 h-72 rounded-full border border-teal/20 splash-burst" />
       </div>
 
       {/* Stars */}
