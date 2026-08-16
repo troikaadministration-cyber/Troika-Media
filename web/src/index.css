@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  color-scheme: light;
   --teal: #1F9488;
   /* Warm-neutral ramp + ink as space-separated RGB (consumed by Tailwind). */
   --c-navy: 23 23 31;
@@ -22,6 +23,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --c-navy: 240 240 242;          /* ink → near-white */
   --c-gray-50: 27 28 33;          /* lightest light-bg → dark subtle surface */
   --c-gray-100: 38 39 46;
@@ -53,6 +55,12 @@ body {
 /* In dark mode, solid white card surfaces + white glass flip to dark tokens.
    (text-white / border-white are untouched, so on-accent text stays white.) */
 .dark .bg-white { background-color: var(--surface) !important; }
+/* `bg-navy` is a solid dark chip in light mode with white text on it. In dark
+   the navy token flips to near-white, so bg-navy + text-white would be invisible
+   (white on white). Pin these solid accent chips/buttons to a dark slate so the
+   white text stays readable — active filters, segmented controls, Export CSV, badges. */
+.dark .bg-navy { background-color: #34353d !important; }
+.dark .hover\:bg-navy\/90:hover { background-color: #3f4049 !important; }
 .dark .bg-white\/70,
 .dark .bg-white\/80,
 .dark .bg-white\/90 { background-color: rgb(var(--glass) / 0.72) !important; }
