@@ -94,7 +94,7 @@ export function TeacherApprovalPanel({ open, profile, onClose, onComplete }: Pro
               type="email"
               value={profile.email}
               readOnly
-              className="w-full border border-gray-100 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
+              className="w-full border border-black/5 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
             />
           </div>
 
@@ -110,7 +110,7 @@ export function TeacherApprovalPanel({ open, profile, onClose, onComplete }: Pro
           </div>
         </div>
 
-        <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-100">
+        <div className="flex items-center justify-between mt-6 pt-4 border-t border-black/5">
           <button
             onClick={handleDeny}
             disabled={saving}

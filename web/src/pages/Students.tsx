@@ -108,7 +108,7 @@ export function StudentsPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
+      <div className="bg-white rounded-xl shadow-sm border border-black/5 p-4 mb-6">
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex-1 min-w-[200px] relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -140,17 +140,17 @@ export function StudentsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-black/5 overflow-hidden">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-gray-100 bg-gray-50/50">
+            <tr className="border-b border-black/5 bg-gray-50/50">
               <th className="text-left text-xs font-semibold text-gray-500 uppercase px-5 py-3">Student</th>
               <th className="text-left text-xs font-semibold text-gray-500 uppercase px-5 py-3">Instrument · Location</th>
               <th className="text-left text-xs font-semibold text-gray-500 uppercase px-5 py-3">Contact</th>
               <th className="text-left text-xs font-semibold text-gray-500 uppercase px-5 py-3">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
+          <tbody className="divide-y divide-black/5">
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i}>

@@ -42,8 +42,8 @@ export function StudentCalendar() {
         <p className="text-gray-500 text-sm mt-1">All your lessons, month by month.</p>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-xl border border-black/5 overflow-hidden">
+        <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between">
           <button onClick={() => setCalMonth(new Date(year, month - 1, 1))} className="p-1.5 rounded-lg hover:bg-gray-100" aria-label="Previous month">
             <ChevronLeft size={18} className="text-gray-500" />
           </button>
@@ -109,7 +109,7 @@ export function StudentCalendar() {
           </div>
 
           {/* Legend */}
-          <div className="flex items-center gap-4 mt-4 pt-3 border-t border-gray-100 justify-center">
+          <div className="flex items-center gap-4 mt-4 pt-3 border-t border-black/5 justify-center">
             <div className="flex items-center gap-1.5 text-[10px] text-gray-500"><div className="w-2 h-2 rounded-full bg-teal" />Attended</div>
             <div className="flex items-center gap-1.5 text-[10px] text-gray-500"><div className="w-2 h-2 rounded-full bg-coral" />Missed</div>
             <div className="flex items-center gap-1.5 text-[10px] text-gray-500"><div className="w-2 h-2 rounded-full bg-teal/50" />Upcoming</div>
@@ -119,7 +119,7 @@ export function StudentCalendar() {
           {monthLessons.length === 0 ? (
             <p className="text-center text-gray-400 text-sm mt-4">No lessons this month</p>
           ) : (
-            <div className="mt-4 divide-y divide-gray-50">
+            <div className="mt-4 divide-y divide-black/5">
               {monthLessons.map((item) => {
                 const teacher = (item.lesson.teacher as any)?.full_name as string | undefined;
                 const location = (item.lesson.location as any)?.name as string | undefined;

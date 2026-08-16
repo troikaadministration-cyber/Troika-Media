@@ -126,7 +126,7 @@ export function LocationsPage() {
           No locations yet. Add one to get started.
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 divide-y divide-gray-100">
+        <div className="bg-white rounded-2xl border border-black/5 divide-y divide-black/5">
           {locations.map((loc) => (
             <div key={loc.id} className="flex items-center justify-between px-5 py-3.5">
               <div>

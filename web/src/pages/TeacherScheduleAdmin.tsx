@@ -163,7 +163,7 @@ export function TeacherScheduleAdminPage() {
       </div>
 
       {/* Teacher selector */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 sm:p-5">
+      <div className="bg-white rounded-xl border border-black/5 p-4 sm:p-5">
         <label className="block text-sm font-medium text-gray-700 mb-2">Select Teacher</label>
         <select
           value={selectedTeacher}
@@ -197,20 +197,20 @@ export function TeacherScheduleAdminPage() {
       {/* Calendar grid */}
       {selectedTeacher && !loading && (
         templates.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
+          <div className="bg-white rounded-xl border border-black/5 p-8 text-center">
             <Calendar size={40} className="text-gray-300 mx-auto mb-3" />
             <p className="text-gray-500 text-sm">No schedule slots set up for {teacherName}</p>
             <p className="text-gray-400 text-xs mt-1">Click "Add Slot" to create recurring time slots</p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div className="bg-white rounded-xl border border-black/5 overflow-hidden">
             {/* Day headers */}
-            <div className="grid border-b border-gray-100" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
+            <div className="grid border-b border-black/5" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
               <div className="py-3" />
               {DAYS_ORDER.map((day) => {
                 const count = templatesByDay[day]?.length ?? 0;
                 return (
-                  <div key={day} className="py-3 text-center border-l border-gray-100">
+                  <div key={day} className="py-3 text-center border-l border-black/5">
                     <p className="text-xs font-semibold text-navy">{DAY_SHORT[day]}</p>
                     {count > 0 && (
                       <span className="inline-block mt-0.5 text-xs text-coral font-medium">{count}</span>
@@ -246,7 +246,7 @@ export function TeacherScheduleAdminPage() {
                 {DAYS_ORDER.map((day) => {
                   const daySlots = templatesByDay[day] || [];
                   return (
-                    <div key={day} className="relative border-l border-gray-100">
+                    <div key={day} className="relative border-l border-black/5">
                       {/* Hour lines */}
                       {HOURS.map((_, i) => (
                         <div
@@ -337,7 +337,7 @@ export function TeacherScheduleAdminPage() {
             onKeyDown={(e) => { if (e.key === 'Escape') setShowCreate(false); }}
             className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto"
           >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
               <h2 id="create-slot-title" className="font-semibold text-navy">Add Weekly Slot</h2>
               <button onClick={() => setShowCreate(false)} className="text-gray-400 hover:text-navy">
                 <X size={20} />

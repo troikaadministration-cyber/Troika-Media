@@ -82,7 +82,7 @@ function PendingApproval({ onSignOut }: { onSignOut: () => void }) {
           <h1 className="font-logo text-5xl text-navy">troika</h1>
           <p className="text-teal text-lg mt-1">music lessons</p>
         </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-8">
           <div className="w-16 h-16 bg-yellow/10 rounded-full flex items-center justify-center mx-auto mb-4">
             <Clock size={32} className="text-yellow-600" />
           </div>
@@ -112,7 +112,7 @@ function AccountDenied({ onSignOut }: { onSignOut: () => void }) {
           <h1 className="font-logo text-5xl text-navy">troika</h1>
           <p className="text-teal text-lg mt-1">music lessons</p>
         </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-8">
           <div className="w-16 h-16 bg-coral/10 rounded-full flex items-center justify-center mx-auto mb-4">
             <XCircle size={32} className="text-coral" />
           </div>

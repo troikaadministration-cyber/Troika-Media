@@ -145,7 +145,7 @@ export function BreaksPage() {
             const pct = brk.total_cancelled > 0 ? Math.round((brk.total_rescheduled / brk.total_cancelled) * 100) : 0;
             const pendingForBreak = brk.total_cancelled - brk.total_rescheduled;
             return (
-              <div key={brk.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <div key={brk.id} className="bg-white rounded-xl shadow-sm border border-black/5 p-5">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-semibold text-navy">{brk.title}</h3>
                   <span className="text-xs text-gray-500">

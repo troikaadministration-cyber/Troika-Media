@@ -53,8 +53,8 @@ export function PendingRescheduleList({
   return (
     <div className="space-y-4 overflow-y-auto">
       {groups.map(group => (
-        <div key={group.breakId} className="border border-gray-100 rounded-xl overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 bg-white border-b border-gray-100">
+        <div key={group.breakId} className="border border-black/5 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 bg-white border-b border-black/5">
             <span className="text-base">{group.isSchoolWide ? '🏫' : '👤'}</span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-navy truncate">{group.breakTitle}</p>
@@ -64,7 +64,7 @@ export function PendingRescheduleList({
             </div>
           </div>
 
-          <div className="divide-y divide-gray-100 bg-gray-50">
+          <div className="divide-y divide-black/5 bg-gray-50">
             {group.lessons.map(lesson => {
               const studentName = lesson.students[0]?.student?.full_name ?? 'Unknown Student';
               const extraStudents = lesson.students.length - 1;
@@ -97,7 +97,7 @@ export function PendingRescheduleList({
             })}
           </div>
 
-          <div className="px-4 py-3 bg-white border-t border-gray-100">
+          <div className="px-4 py-3 bg-white border-t border-black/5">
             <button
               onClick={() => onAutoReschedule(group.breakId)}
               disabled={autoRescheduleLoadingId === group.breakId}

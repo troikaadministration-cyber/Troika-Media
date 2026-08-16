@@ -76,7 +76,7 @@ export function LoginPage() {
           <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto" />
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-6 sm:p-8">
           <h2 className="text-xl font-bold text-navy mb-1">{isSignUp ? 'Create Account' : 'Welcome'}</h2>
           <p className="text-gray-500 text-sm mb-6">{isSignUp ? 'Sign up to get started' : 'Sign in to access your portal'}</p>
 

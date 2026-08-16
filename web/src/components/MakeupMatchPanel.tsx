@@ -133,7 +133,7 @@ export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPa
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-xl max-h-[85vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
           <h2 className="font-semibold text-navy">Find Makeup Match</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-navy"><X size={20} /></button>
         </div>
@@ -193,7 +193,7 @@ export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPa
               </p>
               <div className="space-y-2">
                 {data.matches.map((match) => (
-                  <div key={match.id} className="border border-gray-100 rounded-xl p-3 hover:border-gray-200 transition-colors">
+                  <div key={match.id} className="border border-black/5 rounded-xl p-3 hover:border-gray-200 transition-colors">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -242,7 +242,7 @@ export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPa
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-100">
+        <div className="px-6 py-4 border-t border-black/5">
           <button
             onClick={onClose}
             className="w-full py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
