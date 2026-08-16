@@ -61,6 +61,26 @@ body {
 .dark .border-black\/5 { border-color: rgba(255,255,255,0.08) !important; }
 .dark .border-black\/10 { border-color: rgba(255,255,255,0.12) !important; }
 
+/* The logo is a dark raster asset — invert it to white in dark mode so it's visible. */
+.dark img[src*="logo"] { filter: brightness(0) invert(1); }
+
+/* Solid light tint backgrounds become dark translucent tints in dark mode, so
+   any text on them (accent-colored or theme-flipped) stays readable. */
+.dark .bg-teal-light   { background-color: rgba(55,179,162,0.16) !important; }
+.dark .bg-coral-light  { background-color: rgba(232,96,76,0.16) !important; }
+.dark .bg-yellow-light { background-color: rgba(224,165,42,0.16) !important; }
+.dark .bg-amber-50     { background-color: rgba(224,165,42,0.15) !important; }
+.dark .bg-amber-100    { background-color: rgba(224,165,42,0.20) !important; }
+.dark .bg-red-50       { background-color: rgba(229,106,84,0.15) !important; }
+.dark .bg-blue-50      { background-color: rgba(90,150,225,0.16) !important; }
+.dark .bg-purple-50    { background-color: rgba(168,130,224,0.16) !important; }
+.dark .bg-orange-50    { background-color: rgba(224,140,42,0.16) !important; }
+.dark .bg-yellow-100   { background-color: rgba(224,165,42,0.18) !important; }
+/* Keep amber/red text legible on the darkened tints. */
+.dark .text-amber-600, .dark .text-amber-700 { color: #e3b155 !important; }
+.dark .text-red-600, .dark .text-red-700 { color: #f08a76 !important; }
+.dark .text-yellow-600, .dark .text-yellow-700 { color: #e3b155 !important; }
+
 /* Tighter tracking on headings — a hallmark of native Apple type. */
 h1, h2, h3, h4 { letter-spacing: -0.02em; }
 
