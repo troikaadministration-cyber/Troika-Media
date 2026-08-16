@@ -2,6 +2,7 @@ import { toDateStr } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { Plus, ChevronLeft, ChevronRight, Filter, X, UserSearch, Calendar as CalIcon, Ban } from 'lucide-react';
 import { useLessons } from '../hooks/useLessons';
+import { SkeletonList } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import type { Profile, Instrument, LessonType, Student } from '../types';
 
@@ -516,7 +517,7 @@ export function SchedulePage() {
           </div>
 
           {loading ? (
-            <p className="text-center text-gray-400 py-12">Loading...</p>
+            <div className="p-2"><SkeletonList rows={5} /></div>
           ) : lessons.length === 0 ? (
             <p className="text-center text-gray-400 py-12">No lessons on this date</p>
           ) : (

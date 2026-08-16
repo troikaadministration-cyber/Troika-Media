@@ -10,6 +10,7 @@ import {
   ChevronLeft, ChevronRight, CheckCircle, MapPin, Music2, X,
   Upload, FileText, CloudUpload, Trash2, RefreshCw, UserCheck, UserX,
 } from 'lucide-react';
+import { SkeletonList } from '../components/Skeleton';
 import type { PieceStatus } from '../types';
 
 export function TeacherSchedulePage() {
@@ -175,7 +176,7 @@ export function TeacherSchedulePage() {
       <h2 className="font-bold text-navy text-lg">Today's Classes</h2>
 
       {loading ? (
-        <div className="text-center py-8 text-gray-400 text-sm">Loading...</div>
+        <SkeletonList rows={4} />
       ) : lessons.length === 0 ? (
         <div className="text-center py-8 text-gray-400 text-sm">No classes on this day</div>
       ) : (

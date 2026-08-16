@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useCurriculum } from '../hooks/useCurriculum';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Search, Lightbulb, Calendar, BookOpen, Trash2, RefreshCw } from 'lucide-react';
+import { SkeletonList } from '../components/Skeleton';
 import type { ResourceType } from '../types';
 
 export function TeacherCurriculumPage() {
@@ -101,7 +102,7 @@ export function TeacherCurriculumPage() {
       <p className="text-sm text-navy font-medium">{resources.length} resources found</p>
 
       {loading ? (
-        <div className="text-center py-12 text-gray-400 text-sm">Loading...</div>
+        <SkeletonList rows={5} />
       ) : (
         <div className="space-y-3">
           {resources.map((r) => (

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useTeacherLessonsRange } from '../hooks/useTeacherLessonsRange';
 import { ChevronLeft, ChevronRight, CheckCircle, Clock, Ban, MapPin, ArrowRight } from 'lucide-react';
+import { Skeleton } from '../components/Skeleton';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -156,9 +157,7 @@ export function TeacherCalendarPage() {
 
         {/* Calendar grid */}
         {loading ? (
-          <div className="h-64 flex items-center justify-center text-gray-300 text-sm">
-            <div className="w-5 h-5 border-2 border-coral border-t-transparent rounded-full animate-spin" />
-          </div>
+          <div className="p-4"><Skeleton className="h-64 w-full rounded-xl" /></div>
         ) : (
           <div className="grid grid-cols-7">
             {cells.map((cell, idx) => {

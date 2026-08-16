@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CalendarOff, Plus, X, AlertTriangle, Eye, ChevronDown, ChevronUp } from 'lucide-react';
+import { SkeletonList } from '../components/Skeleton';
 import { useBreaks } from '../hooks/useBreaks';
 import { usePendingReschedules } from '../hooks/usePendingReschedules';
 import { useAuth } from '../hooks/useAuth';
@@ -132,7 +133,7 @@ export function BreaksPage() {
       )}
 
       {loading ? (
-        <p className="text-center text-gray-400 py-12">Loading...</p>
+        <SkeletonList rows={4} />
       ) : breaks.length === 0 ? (
         <div className="text-center py-16">
           <CalendarOff size={40} className="text-gray-300 mx-auto mb-3" />
@@ -191,7 +192,7 @@ export function BreaksPage() {
 
           {showPendingSection && (
             pendingLoading ? (
-              <p className="text-sm text-gray-400">Loading...</p>
+              <SkeletonList rows={2} />
             ) : pendingError ? (
               <p className="text-sm text-red-500">{pendingError}</p>
             ) : pendingLessons.length === 0 ? (

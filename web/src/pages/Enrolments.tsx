@@ -8,6 +8,7 @@ import type { Profile, Instrument } from '../types';
 import { Plus, X, RefreshCw, BookOpen, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { lessonsForPlan } from '../lib/lessonCount';
+import { SkeletonList } from '../components/Skeleton';
 import { computeDiscount, type DiscountPrimary } from '../lib/fees';
 
 interface Enrolment {
@@ -431,7 +432,7 @@ export function EnrolmentsPage() {
       )}
 
       {loading ? (
-        <div className="text-center text-gray-400 py-12 text-sm">Loading...</div>
+        <SkeletonList rows={5} />
       ) : enrolments.length === 0 ? (
         <div className="text-center py-16">
           <BookOpen size={40} className="text-gray-300 mx-auto mb-3" />

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Search, Mail, Phone, MapPin, Music, Calendar, RefreshCw } from 'lucide-react';
 import { TeacherApprovalPanel } from '../components/TeacherApprovalPanel';
+import { SkeletonList } from '../components/Skeleton';
 
 interface PendingProfile { id: string; full_name: string; email: string; }
 
@@ -104,7 +105,7 @@ export function TeachersPage() {
     t.email.toLowerCase().includes(search.toLowerCase())
   );
 
-  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-gray-400">Loading...</p></div>;
+  if (loading) return <SkeletonList rows={6} />;
 
   return (
     <div className="space-y-4">
