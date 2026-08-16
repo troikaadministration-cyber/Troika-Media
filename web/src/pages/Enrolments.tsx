@@ -197,6 +197,7 @@ export function EnrolmentsPage() {
           rate_per_lesson: effectiveRate,
           total_fee: totalFee,
           registration_fee: form.registration_fee,
+          instrument_id: selectedSlot.instrumentId || null,
           discount_primary: form.discount_primary,
           discount_multilesson: form.discount_multilesson,
           discount_value: form.discount_primary === 'special' ? (form.discount_special || 0) : 0,

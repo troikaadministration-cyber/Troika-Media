@@ -141,3 +141,11 @@ CREATE POLICY "Students read own invoice files" ON storage.objects
         AND s.user_id = auth.uid()
     )
   );
+
+
+-- ── 6. Tag each enrolment with its instrument/class ─────────────────────────
+-- A student can enrol in several classes (Guitar, Violin, Voice…). Each is its
+-- own enrolment; this column records which instrument it is for so the classes
+-- are distinguishable in the UI.
+ALTER TABLE student_enrolments
+  ADD COLUMN IF NOT EXISTS instrument_id UUID REFERENCES instruments(id) ON DELETE SET NULL;
