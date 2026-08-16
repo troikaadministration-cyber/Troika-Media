@@ -8,14 +8,37 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.43.0';
 
-const allowedOrigin = Deno.env.get('ALLOWED_ORIGIN') || '';
+// Origins allowed to call this function. Comma-separated list in the
+// ALLOWED_ORIGIN secret (e.g. "https://troika-media-web.vercel.app").
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGIN") || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+function isAllowedOrigin(origin: string): boolean {
+  if (!origin) return false;
+  // No allowlist configured -> allow any origin. Requests are still
+  // authenticated via the JWT + role checks below, so CORS is not the
+  // security boundary here; this just prevents an unset secret from
+  // silently breaking every call.
+  if (allowedOrigins.length === 0) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  // Allow Vercel preview deployments so a changed URL never breaks CORS.
+  try {
+    if (new URL(origin).hostname.endsWith(".vercel.app")) return true;
+  } catch (_) { /* not a URL */ }
+  return false;
+}
 
 function corsHeaders(req: Request) {
-  const origin = req.headers.get('origin') || '';
-  const allowed = allowedOrigin && origin === allowedOrigin ? origin : '';
+  const origin = req.headers.get("origin") || "";
+  const allowed = isAllowedOrigin(origin) ? origin : "";
   return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type",
+    "Vary": "Origin",
   };
 }
 
