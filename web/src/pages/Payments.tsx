@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { usePayments } from '../hooks/usePayments';
 import type { PaymentWithStudent } from '../hooks/usePayments';
 import { supabase } from '../lib/supabase';
+import { openInvoiceHtml } from '../lib/invoice';
 import { DollarSign, AlertTriangle, Clock, CheckCircle, RefreshCw, Download, FileText, MessageCircle, Plus, X } from 'lucide-react';
 import { SkeletonCards, SkeletonList } from '../components/Skeleton';
 
@@ -103,7 +104,7 @@ export function PaymentsPage() {
 
   async function handleDownload(invoiceId: string) {
     const url = await downloadInvoice(invoiceId);
-    if (url) window.open(url, '_blank');
+    if (url) await openInvoiceHtml(url);
   }
 
   async function handleGenerateInvoice(id: string) {

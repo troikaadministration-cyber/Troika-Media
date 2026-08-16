@@ -316,7 +316,7 @@ serve(async (req) => {
     const { error: uploadErr } = await supabase.storage
       .from("invoices")
       .upload(storagePath, pdfContent, {
-        contentType: "text/html",
+        contentType: "text/html; charset=utf-8",
         upsert: true,
       });
 
@@ -373,7 +373,8 @@ serve(async (req) => {
             <p style="color:#999;font-size:12px;margin-top:30px;">Troika Music · System-generated invoice</p>
           </div>`;
 
-        const htmlBase64 = btoa(html);
+        // btoa() throws on characters >255 (e.g. ₹). Encode to UTF-8 bytes first.
+        const htmlBase64 = btoa(unescape(encodeURIComponent(html)));
 
         await fetch("https://api.resend.com/emails", {
           method: "POST",

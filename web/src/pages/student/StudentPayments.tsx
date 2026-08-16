@@ -2,6 +2,7 @@ import { toDateStr } from '../../lib/dates';
 import { BookOpen, CreditCard, AlertCircle, Clock, Download } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
 import { supabase } from '../../lib/supabase';
+import { openInvoiceHtml } from '../../lib/invoice';
 import { fmtDate, fmtMoney } from './format';
 
 export function StudentPayments() {
@@ -10,7 +11,7 @@ export function StudentPayments() {
   async function downloadInvoice(pdfPath: string | null) {
     if (!pdfPath) return;
     const { data } = await supabase.storage.from('invoices').createSignedUrl(pdfPath, 3600);
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+    if (data?.signedUrl) await openInvoiceHtml(data.signedUrl);
   }
 
   const today = toDateStr(new Date());

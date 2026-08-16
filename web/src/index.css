@@ -84,6 +84,12 @@ body {
 .dark .bg-purple-50    { background-color: rgba(168,130,224,0.16) !important; }
 .dark .bg-orange-50    { background-color: rgba(224,140,42,0.16) !important; }
 .dark .bg-yellow-100   { background-color: rgba(224,165,42,0.18) !important; }
+/* `cream` is a fixed light tan that never flips, so `bg-cream text-navy` chips
+   (curriculum concept tags, teacher schedule notes) turned near-white-on-cream
+   and vanished in dark mode. Darken the cream to a warm translucent tint. */
+.dark .bg-cream        { background-color: rgba(224,165,42,0.14) !important; }
+.dark .bg-cream\/50    { background-color: rgba(224,165,42,0.10) !important; }
+.dark .bg-cream\/30    { background-color: rgba(224,165,42,0.08) !important; }
 /* Keep amber/red text legible on the darkened tints. */
 .dark .text-amber-600, .dark .text-amber-700 { color: #e3b155 !important; }
 .dark .text-red-600, .dark .text-red-700 { color: #f08a76 !important; }
