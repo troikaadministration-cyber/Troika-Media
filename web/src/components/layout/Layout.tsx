@@ -3,10 +3,11 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useNotifications } from '../../hooks/useNotifications';
 import { CommandPalette } from '../CommandPalette';
+import { setTheme } from '../../lib/theme';
 import {
   LayoutDashboard, Calendar, Users, CreditCard, BookOpen,
   LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, CalendarClock,
-  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList, Search
+  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList, Search, Sun, Moon
 } from 'lucide-react';
 
 const coordinatorNav = [
@@ -43,6 +44,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+
+  const toggleTheme = () => {
+    const next = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
+    setTheme(next);
+    setDark(next === 'dark');
+  };
   const notifRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -178,6 +186,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Search size={15} />
               <span className="text-[12.5px]">Search</span>
               <span className="text-[11px] font-semibold bg-white/80 border border-black/5 rounded px-1 py-px">⌘K</span>
+            </button>
+            <button
+              onClick={toggleTheme}
+              className="text-gray-500 hover:text-navy p-1.5 rounded-lg hover:bg-black/5"
+              aria-label="Toggle theme"
+              title="Toggle light / dark"
+            >
+              {dark ? <Sun size={19} /> : <Moon size={19} />}
             </button>
             <div className="relative" ref={notifRef}>
               <button

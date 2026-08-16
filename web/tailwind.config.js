@@ -1,5 +1,7 @@
 /** @type {import('tailwindcss').Config} */
+const rgb = (v) => `rgb(var(${v}) / <alpha-value>)`;
 export default {
+  darkMode: 'class',
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
@@ -13,24 +15,25 @@ export default {
           light: '#E6F4F1',
         },
         cream: '#FDF6E3',
-        navy: '#17171F',
+        // navy (ink) + the gray ramp are token-driven so they flip in dark mode
+        // app-wide without touching components. white/teal/coral stay literal so
+        // on-accent text (text-white on buttons) is never remapped.
+        navy: rgb('--c-navy'),
         yellow: {
           DEFAULT: '#C98A00', // warning only (muted from bright)
           light: '#FBF3E0',
         },
-        // Warm-neutral gray ramp — replaces Tailwind's cool default so 90% of
-        // the UI reads warm and considered rather than clinical.
         gray: {
-          50: '#FAFAF9',
-          100: '#F5F5F3',
-          200: '#EAE9E6',
-          300: '#D8D6D1',
-          400: '#A8A59E',
-          500: '#78756E',
-          600: '#57544E',
-          700: '#413E39',
-          800: '#28251F',
-          900: '#1A1813',
+          50: rgb('--c-gray-50'),
+          100: rgb('--c-gray-100'),
+          200: rgb('--c-gray-200'),
+          300: rgb('--c-gray-300'),
+          400: rgb('--c-gray-400'),
+          500: rgb('--c-gray-500'),
+          600: rgb('--c-gray-600'),
+          700: rgb('--c-gray-700'),
+          800: rgb('--c-gray-800'),
+          900: rgb('--c-gray-900'),
         },
       },
       fontFamily: {
