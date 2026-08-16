@@ -63,8 +63,8 @@ export function TeacherApprovalPanel({ open, profile, onClose, onComplete }: Pro
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-navy">Review Teacher Application</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-navy"><X size={20} /></button>

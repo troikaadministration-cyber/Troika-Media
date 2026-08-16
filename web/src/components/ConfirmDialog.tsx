@@ -11,8 +11,8 @@ export function ConfirmDialog({ open, title, message, confirmLabel = 'Delete', o
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-sm p-6 space-y-4">
         <h3 className="font-semibold text-navy text-lg">{title}</h3>
         <p className="text-sm text-gray-500">{message}</p>
         <div className="flex gap-3">

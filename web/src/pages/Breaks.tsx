@@ -239,8 +239,8 @@ export function BreaksPage() {
 
       {/* Auto-reschedule preview modal */}
       {autoPreview && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 max-h-[80vh] flex flex-col">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-md p-6 max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
               <h3 className="font-semibold text-navy">Auto-Reschedule: {autoPreviewBreakTitle}</h3>
               <button onClick={() => { setAutoPreview(null); setAutoError(null); }} className="text-gray-400 hover:text-navy">
@@ -294,8 +294,8 @@ export function BreaksPage() {
 
       {/* Create break modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-navy text-lg">Schedule Break</h3>
               <button onClick={() => { setShowForm(false); setPreview(null); }} className="text-gray-400 hover:text-navy"><X size={20} /></button>

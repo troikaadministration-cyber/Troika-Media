@@ -367,7 +367,7 @@ export function PaymentsPage() {
 
       {/* Add misc charge modal */}
       {chargeOpen && (
-        <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-navy text-lg">Add charge</h3>

@@ -625,7 +625,7 @@ function AdminModal({ open, onClose, locations, instruments, categories,
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: 'rgba(0,0,0,0.35)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="text-base font-bold text-navy">Manage</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-navy">
