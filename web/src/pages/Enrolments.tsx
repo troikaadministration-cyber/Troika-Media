@@ -49,6 +49,8 @@ export function EnrolmentsPage() {
   const [teachers, setTeachers] = useState<Profile[]>([]);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [generateResult, setGenerateResult] = useState<string | null>(null);
+  const [classDone, setClassDone] = useState(false);   // a class was just created; offer "add another"
+  const [addedCount, setAddedCount] = useState(0);      // classes created this session
   const navigate = useNavigate();
 
   // Form state
@@ -134,6 +136,26 @@ export function EnrolmentsPage() {
     setStep(2);
   }
 
+  // Reset only the class-specific fields, keeping the student, year and plan, so
+  // the coordinator can add another class (e.g. Violin after Guitar) in one pass.
+  function resetForNextClass() {
+    setStep(1);
+    setSelectedSlot(null);
+    setManualTeacherId('');
+    setGenerateResult(null);
+    setError(null);
+    setClassDone(false);
+    setForm(f => ({
+      ...f,
+      lesson_rate_id: '',
+      rate_override: 0,
+      registration_fee: 0,
+      discount_primary: 'none',
+      discount_special: 0,
+      discount_multilesson: false,
+    }));
+  }
+
   function closeModal() {
     setModal(false);
     setStep(1);
@@ -141,6 +163,8 @@ export function EnrolmentsPage() {
     setManualTeacherId('');
     setGenerateResult(null);
     setError(null);
+    setClassDone(false);
+    setAddedCount(0);
     setForm({
       student_id: '', lesson_rate_id: '', payment_plan: '3_instalments',
       start_date: toDateStr(new Date()),
@@ -338,12 +362,10 @@ export function EnrolmentsPage() {
         if (genErr) throw genErr;
       }
 
-      const resultMsg = `Enrolment created. ${created} lesson${created !== 1 ? 's' : ''} generated${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
-      setGenerateResult(resultMsg);
-
-      // Brief pause so user sees the result, then close
-      await new Promise(r => setTimeout(r, 1800));
-      closeModal();
+      const instrName = instruments.find(i => i.id === selectedSlot?.instrumentId)?.name || 'Class';
+      setGenerateResult(`${instrName} added — ${created} lesson${created !== 1 ? 's' : ''} generated${skipped > 0 ? `, ${skipped} skipped` : ''}.`);
+      setAddedCount(c => c + 1);
+      setClassDone(true);   // show the "add another class / done" choice
       fetchAll();
     } catch (err: any) {
       // Compensating delete if enrolment was created but later steps failed.
@@ -775,26 +797,46 @@ export function EnrolmentsPage() {
                     generateResult.startsWith('Error') ? 'bg-coral/10 text-coral' : 'bg-teal/10 text-teal'
                   }`}>
                     {generateResult}
+                    {addedCount > 1 && <span className="text-teal/70"> ({addedCount} classes added so far)</span>}
                   </div>
                 )}
 
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => { setStep(1); setError(null); setGenerateResult(null); }}
-                    className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
-                  >
-                    ← Back
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCreate}
-                    disabled={saving || !selectedSlot || !teacherId}
-                    className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
-                  >
-                    {saving ? 'Creating...' : 'Save & Generate Lessons'}
-                  </button>
-                </div>
+                {classDone ? (
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={resetForNextClass}
+                      className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90"
+                    >
+                      + Add another class for {selectedStudent?.full_name?.split(' ')[0] || 'this student'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { fetchAll(); closeModal(); }}
+                      className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setStep(1); setError(null); setGenerateResult(null); }}
+                      className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
+                    >
+                      ← Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreate}
+                      disabled={saving || !selectedSlot || !teacherId}
+                      className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
+                    >
+                      {saving ? 'Creating...' : 'Save & Generate Lessons'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
