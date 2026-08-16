@@ -85,12 +85,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Sidebar */}
       <aside className={`
-        fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 flex flex-col
+        fixed inset-y-0 left-0 z-50 w-64 bg-white/70 backdrop-blur-xl border-r border-black/5 flex flex-col
         transform transition-transform duration-200 ease-in-out
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:relative lg:translate-x-0
       `}>
-        <div className="relative px-5 pt-6 pb-4 border-b border-gray-100">
+        <div className="relative px-5 pt-6 pb-4 border-b border-black/5">
           <div className="flex flex-col items-center">
             <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto" />
             <span className="mt-2 text-xs text-teal font-semibold tracking-wide uppercase">{roleLabel}</span>
@@ -111,30 +111,36 @@ export function Layout({ children }: { children: React.ReactNode }) {
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                `relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                   isActive
-                    ? 'bg-coral/10 text-coral'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-navy'
+                    ? 'bg-teal/10 text-teal font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-teal'
+                    : 'text-gray-600 font-medium hover:bg-black/5 hover:text-navy'
                 }`
               }
             >
-              <Icon size={20} />
+              <Icon size={18} strokeWidth={1.9} />
               <span>{label}</span>
             </NavLink>
           ))}
         </nav>
 
-        <div className="p-4 border-t border-gray-100">
-          {profile && (
-            <p className="text-sm font-medium text-navy mb-2 truncate">{profile.full_name}</p>
-          )}
-          <button
-            onClick={handleSignOut}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 w-full transition-colors"
-          >
-            <LogOut size={20} />
-            <span>Sign Out</span>
-          </button>
+        <div className="p-3 border-t border-black/5">
+          <div className="flex items-center gap-3 px-2 py-2 rounded-xl bg-black/[0.03] border border-black/5">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-500 to-gray-700 grid place-items-center text-white text-xs font-bold flex-shrink-0">
+              {(profile?.full_name || '?').split(' ').map(n => n[0]).slice(0, 2).join('')}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold text-navy truncate leading-tight">{profile?.full_name || 'Account'}</p>
+              <p className="text-[11px] text-gray-500 leading-tight">{roleLabel}</p>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="text-gray-400 hover:text-coral p-1.5 rounded-lg hover:bg-coral/10"
+              aria-label="Sign out"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -143,7 +149,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:bg-coral focus:text-white focus:px-4 focus:py-2 focus:rounded-lg">
           Skip to content
         </a>
-        <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between flex-shrink-0">
+        <header className="bg-white/70 backdrop-blur-xl border-b border-black/5 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between flex-shrink-0 sticky top-0 z-30">
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-500 hover:text-navy lg:hidden" aria-label="Toggle menu">
             <Menu size={22} />
           </button>
