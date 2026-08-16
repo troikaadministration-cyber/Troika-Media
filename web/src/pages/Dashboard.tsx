@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Users, Calendar, GraduationCap, CreditCard, Clock, MapPin, CheckCircle, RefreshCw } from 'lucide-react';
+import { Skeleton } from '../components/Skeleton';
 
 interface DashboardStats {
   activeStudents: number;
@@ -106,7 +107,14 @@ export function DashboardPage() {
           <button onClick={() => navigate('/schedule')} className="text-sm text-teal hover:underline">View all</button>
         </div>
         {lessonsLoading ? (
-          <div className="p-8 text-center text-gray-400 text-sm">Loading lessons...</div>
+          <div className="p-4 space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <Skeleton className="h-10 w-14 rounded-lg" />
+                <div className="flex-1"><Skeleton className="h-3.5 w-40 mb-2" /><Skeleton className="h-3 w-24" /></div>
+              </div>
+            ))}
+          </div>
         ) : todayLessons.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">No lessons scheduled for today</div>
         ) : (

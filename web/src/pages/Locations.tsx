@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MapPin, Plus, Pencil, Trash2, X, RefreshCw } from 'lucide-react';
+import { SkeletonList } from '../components/Skeleton';
 
 interface LocationRow {
   id: string;
@@ -119,9 +120,7 @@ export function LocationsPage() {
       )}
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="w-6 h-6 border-2 border-teal border-t-transparent rounded-full animate-spin" />
-        </div>
+        <SkeletonList rows={5} />
       ) : locations.length === 0 ? (
         <div className="text-center text-gray-400 py-16 border border-dashed border-gray-200 rounded-2xl">
           No locations yet. Add one to get started.

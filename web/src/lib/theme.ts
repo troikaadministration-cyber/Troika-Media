@@ -5,7 +5,8 @@ export type Theme = 'light' | 'dark' | 'system';
 const KEY = 'troika_theme';
 
 export function getTheme(): Theme {
-  return (localStorage.getItem(KEY) as Theme) || 'system';
+  // Default to light; dark only when the user explicitly chooses it.
+  return (localStorage.getItem(KEY) as Theme) || 'light';
 }
 
 function systemDark(): boolean {

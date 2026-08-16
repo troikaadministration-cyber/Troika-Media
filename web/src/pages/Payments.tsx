@@ -4,6 +4,7 @@ import { usePayments } from '../hooks/usePayments';
 import type { PaymentWithStudent } from '../hooks/usePayments';
 import { supabase } from '../lib/supabase';
 import { DollarSign, AlertTriangle, Clock, CheckCircle, RefreshCw, Download, FileText, MessageCircle, Plus, X } from 'lucide-react';
+import { SkeletonCards, SkeletonList } from '../components/Skeleton';
 
 function buildWhatsAppUrl(
   phone: string,
@@ -118,7 +119,12 @@ export function PaymentsPage() {
     }
   }
 
-  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-gray-400">Loading...</p></div>;
+  if (loading) return (
+    <div className="space-y-6">
+      <SkeletonCards count={3} className="grid-cols-1 sm:grid-cols-3" />
+      <SkeletonList rows={6} />
+    </div>
+  );
 
   if (error) return (
     <div className="bg-coral/10 border border-coral/20 rounded-xl p-4 flex items-center justify-between">

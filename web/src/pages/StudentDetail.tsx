@@ -6,6 +6,7 @@ import { ArrowLeft, X, BookOpen, BookmarkPlus, Trash2, Clock, User, CalendarDays
 type Tab = 'overview' | 'enrolment' | 'schedule' | 'history';
 import { supabase } from '../lib/supabase';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Skeleton, SkeletonCards } from '../components/Skeleton';
 import type { Student, StudentStats, AbsenceCategory, StudentEnrolment } from '../types';
 
 interface Instrument { id: string; name: string; }
@@ -241,7 +242,13 @@ export function StudentDetailPage() {
     fetchData();
   }
 
-  if (loading) return <p className="text-center text-gray-400 py-12">Loading...</p>;
+  if (loading) return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <Skeleton className="h-9 w-56" />
+      <SkeletonCards count={4} className="grid-cols-2 sm:grid-cols-4" />
+      <Skeleton className="h-40 w-full rounded-2xl" />
+    </div>
+  );
   if (!student) return <p className="text-center text-gray-400 py-12">Student not found</p>;
 
   const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [

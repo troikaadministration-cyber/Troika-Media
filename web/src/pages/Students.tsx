@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, UserCheck, UserX } from 'lucide-react';
 import { useStudents } from '../hooks/useStudents';
+import { Skeleton } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
 import type { Instrument, Location } from '../types';
 import { OnboardingWizard } from '../components/OnboardingWizard';
@@ -151,7 +152,14 @@ export function StudentsPage() {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {loading ? (
-              <tr><td colSpan={4} className="text-center text-gray-400 py-12">Loading...</td></tr>
+              Array.from({ length: 6 }).map((_, i) => (
+                <tr key={i}>
+                  <td className="px-6 py-3.5"><div className="flex items-center gap-3"><Skeleton className="h-9 w-9 rounded-full" /><Skeleton className="h-3.5 w-32" /></div></td>
+                  <td className="px-6 py-3.5"><Skeleton className="h-3.5 w-20" /></td>
+                  <td className="px-6 py-3.5"><Skeleton className="h-3.5 w-24" /></td>
+                  <td className="px-6 py-3.5"><Skeleton className="h-5 w-16 rounded-full" /></td>
+                </tr>
+              ))
             ) : filtered.length === 0 ? (
               <tr><td colSpan={4} className="text-center text-gray-400 py-12">No students found</td></tr>
             ) : (
