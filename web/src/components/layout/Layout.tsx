@@ -153,7 +153,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     className={({ isActive }) =>
                       `relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
-                          ? 'bg-teal/10 text-teal font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-teal'
+                          ? 'bg-white shadow-sm text-teal font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-teal'
                           : 'text-gray-600 font-medium hover:bg-black/5 hover:text-navy'
                       }`
                     }
@@ -188,7 +188,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0 app-canvas">
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:bg-coral focus:text-white focus:px-4 focus:py-2 focus:rounded-lg">
           Skip to content
         </a>

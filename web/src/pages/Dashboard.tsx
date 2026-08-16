@@ -2,7 +2,8 @@ import { toDateStr } from '../lib/dates';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Users, GraduationCap, IndianRupee, AlertCircle, MapPin, CheckCircle } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
+import { Users, GraduationCap, IndianRupee, AlertCircle, CheckCircle } from 'lucide-react';
 import { Skeleton } from '../components/Skeleton';
 
 interface TodayLesson {
@@ -51,9 +52,13 @@ export function DashboardPage() {
   const [dues, setDues] = useState<DuePayment[]>([]);
   const [k, setK] = useState({ active: 0, totalStudents: 0, doneToday: 0, totalToday: 0, collected: 0, outstanding: 0, overdue: 0 });
   const navigate = useNavigate();
+  const { profile } = useAuth();
 
   const today = toDateStr(new Date());
   const now = new Date();
+  const hr = now.getHours();
+  const greeting = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = profile?.full_name?.split(' ')[0] || '';
   const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
   const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 6);
   const weekAgoStr = toDateStr(weekAgo);
@@ -105,7 +110,7 @@ export function DashboardPage() {
 
   const tiles = [
     { label: 'Active students', value: loading ? '—' : String(k.active), sub: `of ${k.totalStudents} total`, icon: Users, tint: 'bg-teal/10 text-teal', spark: null },
-    { label: 'Lessons today', value: loading ? '—' : String(k.totalToday), sub: `${k.doneToday} completed`, icon: GraduationCap, tint: 'bg-navy/5 text-navy', spark: { data: weekSeries, color: 'var(--teal)' } },
+    { label: 'Lessons today', value: loading ? '—' : String(k.totalToday), sub: `${k.doneToday} completed`, icon: GraduationCap, tint: 'bg-teal/10 text-teal', spark: { data: weekSeries, color: 'var(--teal)' } },
     { label: `Collected · ${now.toLocaleDateString('en-IN', { month: 'short' })}`, value: loading ? '—' : inr(k.collected), sub: `${collectPct}% of billed`, icon: IndianRupee, tint: 'bg-teal/10 text-teal', spark: null },
     { label: 'Outstanding dues', value: loading ? '—' : inr(k.outstanding), sub: k.overdue > 0 ? `${k.overdue} overdue` : 'all on track', icon: AlertCircle, tint: 'bg-coral/10 text-coral', spark: null, onClick: () => navigate('/payments') },
   ];
@@ -113,10 +118,10 @@ export function DashboardPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-navy">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-navy">{greeting}{firstName ? `, ${firstName}` : ''}</h1>
         <p className="text-gray-500 text-sm mt-1">
           {now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
-          {!loading && ` · ${k.totalToday} lesson${k.totalToday !== 1 ? 's' : ''} today`}
+          {!loading && ` · ${k.totalToday} lesson${k.totalToday !== 1 ? 's' : ''} today · ${k.doneToday} done`}
         </p>
       </div>
 
