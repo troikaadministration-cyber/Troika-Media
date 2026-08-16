@@ -1,0 +1,423 @@
+<title>Troika Handbook</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #faf9f7; --surface: #ffffff; --surface-2: #f4f3f0;
+    --text: #1b1b21; --text-2: #57544e; --text-3: #8a8780;
+    --border: rgba(20,18,12,0.09); --border-2: rgba(20,18,12,0.14);
+    --accent: #1b8073; --accent-2: #14685d; --accent-weak: rgba(27,128,115,0.10);
+    --warn: #b8791a; --warn-weak: rgba(184,121,26,0.12);
+    --shadow: 0 1px 2px rgba(18,18,25,0.04), 0 8px 24px rgba(18,18,25,0.06);
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg: #121216; --surface: #1c1d22; --surface-2: #24252b;
+    --text: #ecebe8; --text-2: #a9a7a0; --text-3: #74726b;
+    --border: rgba(255,255,255,0.09); --border-2: rgba(255,255,255,0.14);
+    --accent: #37b3a2; --accent-2: #56c6b6; --accent-weak: rgba(55,179,162,0.15);
+    --warn: #e0a52a; --warn-weak: rgba(224,165,42,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 28px rgba(0,0,0,0.4);
+  }}
+  :root[data-theme="dark"] {
+    --bg: #121216; --surface: #1c1d22; --surface-2: #24252b;
+    --text: #ecebe8; --text-2: #a9a7a0; --text-3: #74726b;
+    --border: rgba(255,255,255,0.09); --border-2: rgba(255,255,255,0.14);
+    --accent: #37b3a2; --accent-2: #56c6b6; --accent-weak: rgba(55,179,162,0.15);
+    --warn: #e0a52a; --warn-weak: rgba(224,165,42,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 28px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; line-height: 1.6; letter-spacing: -0.006em;
+  }
+  h1,h2,h3 { letter-spacing: -0.022em; line-height: 1.2; text-wrap: balance; }
+
+  .wrap { max-width: 1140px; margin: 0 auto; display: grid; grid-template-columns: 240px 1fr; gap: 0; }
+
+  /* Sidebar TOC */
+  nav.toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 30px 18px 40px; border-right: 1px solid var(--border);
+  }
+  nav.toc .logo { font-weight: 800; font-size: 20px; letter-spacing: -0.03em; }
+  nav.toc .logo span { color: var(--accent); }
+  nav.toc .sub { font-size: 12px; color: var(--text-3); margin-bottom: 22px; }
+  nav.toc .grp { font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); margin: 18px 0 6px; }
+  nav.toc a { display: block; color: var(--text-2); text-decoration: none; font-size: 13.5px; padding: 4px 8px; border-radius: 7px; }
+  nav.toc a:hover { background: var(--surface-2); color: var(--text); }
+
+  main { padding: 44px clamp(20px, 4vw, 60px) 100px; min-width: 0; }
+  .lede { font-size: 15px; color: var(--text-2); max-width: 62ch; }
+  h1.title { font-size: clamp(30px, 5vw, 40px); margin: 0 0 8px; }
+
+  section { padding-top: 40px; margin-top: 8px; border-top: 1px solid var(--border); }
+  section:first-of-type { border-top: 0; }
+  section > h2 { font-size: 24px; margin: 4px 0 4px; }
+  .role-tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent-2); background: var(--accent-weak); padding: 3px 9px; border-radius: 20px; margin-bottom: 10px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; margin: 16px 0; box-shadow: var(--shadow); }
+  .card h3 { font-size: 16px; margin: 0 0 4px; }
+  .card p.what { font-size: 13.5px; color: var(--text-3); margin: 0 0 14px; }
+
+  ol.steps { counter-reset: s; list-style: none; margin: 0; padding: 0; }
+  ol.steps > li { counter-increment: s; position: relative; padding: 6px 0 6px 40px; font-size: 14.5px; }
+  ol.steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: 5px;
+    width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff;
+    font-size: 12.5px; font-weight: 700; display: grid; place-items: center;
+  }
+  ol.steps > li + li { border-top: 1px solid var(--border); }
+  kbd { font: inherit; font-size: 12px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--border-2); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; }
+  b.ui { font-weight: 600; color: var(--text); background: var(--accent-weak); padding: 0 5px; border-radius: 4px; }
+
+  .tip { display: flex; gap: 10px; background: var(--warn-weak); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 13.5px; margin: 14px 0; }
+  .tip b { color: var(--warn); }
+
+  ul.plain { margin: 8px 0; padding-left: 18px; font-size: 14px; }
+  ul.plain li { margin: 4px 0; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .mini { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .mini h4 { margin: 0 0 4px; font-size: 14px; }
+  .mini p { margin: 0; font-size: 13px; color: var(--text-2); }
+
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text-3); }
+
+  @media (max-width: 820px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="wrap">
+  <nav class="toc">
+    <div class="logo">tro<span>i</span>ka</div>
+    <div class="sub">Handbook</div>
+    <a href="#start">Getting started</a>
+    <div class="grp">Coordinators</div>
+    <a href="#students">Students</a>
+    <a href="#enrol">Enrolling &amp; classes</a>
+    <a href="#schedule">Schedule &amp; lessons</a>
+    <a href="#attendance">Attendance &amp; completion</a>
+    <a href="#breaks">Breaks &amp; reschedules</a>
+    <a href="#payments">Payments &amp; invoices</a>
+    <a href="#charges">Extra charges</a>
+    <a href="#rates">Rates &amp; locations</a>
+    <a href="#curriculum-admin">Curriculum</a>
+    <a href="#reports">Reports &amp; export</a>
+    <div class="grp">Teachers</div>
+    <a href="#teacher">Your day</a>
+    <div class="grp">Students &amp; parents</div>
+    <a href="#student">Your portal</a>
+    <div class="grp">Extras</div>
+    <a href="#shortcuts">Shortcuts &amp; tips</a>
+    <a href="#faq">Common questions</a>
+  </nav>
+
+  <main>
+    <h1 class="title">Troika Handbook</h1>
+    <p class="lede">Everything you can do in the Troika music-lessons app, in plain words. Find your role in the menu, or jump to a task. Steps use <b class="ui">this style</b> for buttons and menus you tap.</p>
+
+    <!-- GETTING STARTED -->
+    <section id="start">
+      <h2>Getting started</h2>
+      <div class="card">
+        <h3>Signing in &amp; who can do what</h3>
+        <p class="what">There are three kinds of accounts. What you see depends on your role.</p>
+        <ol class="steps">
+          <li>Open the app and sign in with Google or your email.</li>
+          <li>First time only: pick whether you're a <b class="ui">Teacher</b> or a <b class="ui">Student</b>. (Coordinators are set up by the office.)</li>
+          <li>New teacher and student accounts wait for a coordinator to approve them. You'll see an "Account pending approval" screen until then.</li>
+        </ol>
+        <div class="grid2">
+          <div class="mini"><h4>Coordinator</h4><p>Runs the school — students, schedules, money, everything.</p></div>
+          <div class="mini"><h4>Teacher</h4><p>Sees their own classes, marks attendance, tracks pieces.</p></div>
+          <div class="mini"><h4>Student / Parent</h4><p>Sees lessons, calendar, payments and invoices.</p></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Finding your way around</h3>
+        <ol class="steps">
+          <li>The <b class="ui">left sidebar</b> is your menu. Your name and role sit at the bottom.</li>
+          <li>Press <kbd>⌘</kbd><kbd>K</kbd> (Mac) or <kbd>Ctrl</kbd><kbd>K</kbd> (Windows) anywhere to <b class="ui">search</b> — jump to any page, or type a student's name to open them.</li>
+          <li>Use the <b class="ui">sun/moon</b> button (top-right) to switch between light and dark. The app starts in light mode.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- STUDENTS -->
+    <section id="students">
+      <span class="role-tag">Coordinator</span>
+      <h2>Students</h2>
+      <div class="card">
+        <h3>Add a student</h3>
+        <ol class="steps">
+          <li>Go to <b class="ui">Students</b> in the sidebar.</li>
+          <li>Click <b class="ui">Add student</b> and fill in name, contact and parent details.</li>
+          <li>Save. The student now appears in the list and can be enrolled in classes.</li>
+        </ol>
+        <div class="tip"><span>💡</span><div><b>Tip:</b> If a student signs up themselves with the same email, their login links automatically to the record you created — no double entry.</div></div>
+      </div>
+      <div class="card">
+        <h3>Edit, instruments, activate/deactivate</h3>
+        <ol class="steps">
+          <li>Click a student's name to open their page.</li>
+          <li>Click <b class="ui">Edit</b> to change contact details, parent info, location and notes.</li>
+          <li>Under <b class="ui">Instruments / Subjects</b>, tap the chips to add or remove what they learn. Changes save as you tap.</li>
+          <li>Use <b class="ui">Deactivate</b> to hide a student who has left (nothing is deleted); <b class="ui">Reactivate</b> brings them back.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ENROL -->
+    <section id="enrol">
+      <span class="role-tag">Coordinator</span>
+      <h2>Enrolling a student &amp; multiple classes</h2>
+      <div class="card">
+        <h3>Enrol a student in a class</h3>
+        <p class="what">Enrolling sets the fee plan, creates the weekly slot, and generates all the lessons.</p>
+        <ol class="steps">
+          <li>Go to <b class="ui">Enrolments</b> → <b class="ui">New Enrolment</b> (or open a student and click <b class="ui">New enrolment</b>).</li>
+          <li>Pick the <b class="ui">student</b>, then the <b class="ui">lesson rate</b> for the class. The rate fills in automatically — you can type a different amount for this student if needed.</li>
+          <li>Choose the <b class="ui">payment plan</b> (1, 3 or 10 instalments) and a <b class="ui">discount</b> if any (see below).</li>
+          <li>Pick or create the weekly <b class="ui">schedule slot</b> (day, time, teacher, instrument).</li>
+          <li>Click <b class="ui">Save &amp; Generate Lessons</b>. The lessons and payment instalments are created.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Adding several instruments (Guitar + Violin + Voice…)</h3>
+        <p class="what">A student can take as many classes as they like — each is its own enrolment.</p>
+        <ol class="steps">
+          <li>After you save the first class, click <b class="ui">+ Add another class for [name]</b>.</li>
+          <li>The student stays selected — just pick the next instrument's rate and slot, and save again.</li>
+          <li>Repeat for each class, then click <b class="ui">Done</b>. Each class shows as its own card on the student's page (e.g. "Guitar · 2026", "Violin · 2026").</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>How discounts work</h3>
+        <p class="what">Pick <em>one</em> main discount, and optionally add the multi-lesson one on top.</p>
+        <ul class="plain">
+          <li><b>Plan discount</b> — automatic from the plan (1 instalment = 10% off, 3 = 5%, 10 = 0%).</li>
+          <li><b>Legacy student</b> — 25% off, for long-standing students.</li>
+          <li><b>Flat ₹ special</b> — a fixed rupee amount you type in.</li>
+          <li><b>Multi-lesson (+5%)</b> — a tick-box that stacks on top of any of the above.</li>
+        </ul>
+        <div class="tip"><span>💡</span><div>Discounts apply to tuition only, never to the registration fee.</div></div>
+      </div>
+    </section>
+
+    <!-- SCHEDULE -->
+    <section id="schedule">
+      <span class="role-tag">Coordinator</span>
+      <h2>Schedule &amp; lessons</h2>
+      <div class="card">
+        <h3>View and add lessons</h3>
+        <ol class="steps">
+          <li>Go to <b class="ui">Schedule</b>. Switch between <b class="ui">Day</b> and <b class="ui">Week</b> views, and filter by teacher or instrument.</li>
+          <li>Click <b class="ui">Add lesson</b> to create a one-off lesson (regular, makeup, demo, workshop or special) with its own fee options.</li>
+          <li>Recurring weekly classes come from enrolments and from <b class="ui">Teacher Schedules</b>.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Mark a lesson done, or cancel it</h3>
+        <ol class="steps">
+          <li>In <b class="ui">Day</b> view, click a lesson to expand it.</li>
+          <li>Click <b class="ui">Mark completed</b> when the lesson has happened — this counts it toward the student's lesson total. <b class="ui">Reopen</b> undoes it.</li>
+          <li>Click <b class="ui">Cancel this lesson</b> and give a reason. The student is notified automatically.</li>
+        </ol>
+        <div class="tip"><span>⚠️</span><div><b>Important:</b> lesson counts, "lessons remaining" and reports only move once lessons are marked <b>completed</b> (by you or the teacher). Get into the habit of ticking them off.</div></div>
+      </div>
+    </section>
+
+    <!-- ATTENDANCE -->
+    <section id="attendance">
+      <span class="role-tag">Coordinator</span>
+      <h2>Attendance &amp; charged absences</h2>
+      <div class="card">
+        <h3>Mark who attended</h3>
+        <ol class="steps">
+          <li>Open a student's page and find the lesson in their history.</li>
+          <li>Mark <b class="ui">Attended</b>, or mark an <b class="ui">Absence</b> and choose <b class="ui">Charged</b> or <b class="ui">Not charged</b>.</li>
+          <li>A <b>charged</b> absence uses up one of the student's paid lessons (and makes them eligible for a makeup); <b>not charged</b> does not.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Find a makeup slot</h3>
+        <ol class="steps">
+          <li>On the <b class="ui">Schedule</b>, expand a lesson and click <b class="ui">Find makeup</b> for a student.</li>
+          <li>The app suggests students at the same location with charged absences, so you can pair up a makeup.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- BREAKS -->
+    <section id="breaks">
+      <span class="role-tag">Coordinator</span>
+      <h2>Breaks &amp; rescheduling</h2>
+      <div class="card">
+        <h3>Schedule a holiday break</h3>
+        <ol class="steps">
+          <li>Go to <b class="ui">Breaks</b> → <b class="ui">New Break</b>.</li>
+          <li>Set the dates and choose all students or specific ones. Preview shows how many lessons it affects.</li>
+          <li>Create it — covered lessons are cancelled and marked for reschedule.</li>
+          <li>Use <b class="ui">Auto-Reschedule</b> to have the app find open slots for makeup lessons, or reschedule each one by hand.</li>
+        </ol>
+        <div class="tip"><span>💡</span><div>On the Schedule, a student who's on a break shows their slot greyed out — a reminder the time is only temporarily free.</div></div>
+      </div>
+    </section>
+
+    <!-- PAYMENTS -->
+    <section id="payments">
+      <span class="role-tag">Coordinator</span>
+      <h2>Payments &amp; invoices</h2>
+      <div class="card">
+        <h3>Record a payment &amp; send the invoice</h3>
+        <ol class="steps">
+          <li>Go to <b class="ui">Payments</b>. Rows are grouped into Overdue, Upcoming and Paid.</li>
+          <li>When money comes in, click <b class="ui">Mark Paid</b> on that instalment. An invoice is generated automatically.</li>
+          <li>If the invoice ever fails to generate, the payment is still saved as paid and a <b class="ui">Generate invoice</b> button appears to retry.</li>
+          <li>Use the <b class="ui">WhatsApp</b> button on a row to open a ready-made reminder message with the amount and invoice link.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- CHARGES -->
+    <section id="charges">
+      <span class="role-tag">Coordinator</span>
+      <h2>Extra (miscellaneous) charges</h2>
+      <div class="card">
+        <h3>Add a one-off charge</h3>
+        <p class="what">For recital tickets, books, exam fees and anything outside tuition.</p>
+        <ol class="steps">
+          <li>On the <b class="ui">Payments</b> page, click <b class="ui">Add charge</b>.</li>
+          <li>Pick the student, type a name (e.g. "Recital tickets"), the amount and a due date.</li>
+          <li>Save. It appears in Payments like any other item, and gets its own invoice when marked paid.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- RATES -->
+    <section id="rates">
+      <span class="role-tag">Coordinator</span>
+      <h2>Lesson rates &amp; locations</h2>
+      <div class="grid2">
+        <div class="card" style="margin:0">
+          <h3>Lesson Rates</h3>
+          <ol class="steps">
+            <li>Go to <b class="ui">Lesson Rates</b>.</li>
+            <li>Pick a teacher, then type the price for each category / location. It saves as you type.</li>
+            <li>These prices fill in automatically when you enrol a student (and you can still override per student).</li>
+          </ol>
+        </div>
+        <div class="card" style="margin:0">
+          <h3>Locations</h3>
+          <ol class="steps">
+            <li>Go to <b class="ui">Locations</b>.</li>
+            <li>Add, rename or remove places (Online, Links, Edvin, a home…).</li>
+            <li>They then appear in every location dropdown across the app.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- CURRICULUM ADMIN -->
+    <section id="curriculum-admin">
+      <span class="role-tag">Coordinator</span>
+      <h2>Curriculum library</h2>
+      <div class="card">
+        <h3>Add teaching resources</h3>
+        <ol class="steps">
+          <li>Go to <b class="ui">Curriculum</b>.</li>
+          <li>Upload a curriculum spreadsheet to import pieces, exercises and activities in bulk.</li>
+          <li>Teachers can then search and use these when tracking student progress.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- REPORTS -->
+    <section id="reports">
+      <span class="role-tag">Coordinator</span>
+      <h2>Reports &amp; exporting data</h2>
+      <div class="card">
+        <h3>See the numbers &amp; download a spreadsheet</h3>
+        <ol class="steps">
+          <li>Go to <b class="ui">Reports</b>. The cards show revenue collected, lessons delivered, lessons attended and total absences.</li>
+          <li>The table lists every student with lessons attended, absences, dues collected and outstanding — sorted so the most-active students are on top.</li>
+          <li>Click <b class="ui">Export CSV</b> to download it all (with a totals row) and sort or chart it in Excel / Google Sheets.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- TEACHER -->
+    <section id="teacher">
+      <span class="role-tag">Teacher</span>
+      <h2>Your teaching day</h2>
+      <div class="card">
+        <h3>Schedule, attendance &amp; completion</h3>
+        <ol class="steps">
+          <li>Open <b class="ui">Schedule</b> (day) or <b class="ui">Calendar</b> (month) to see your classes.</li>
+          <li>For each student, tap <b class="ui">Present</b> or <b class="ui">Absent</b>.</li>
+          <li>Tap the tick to mark a lesson <b class="ui">Completed</b>. Once everyone is marked, it completes automatically.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Repertoire, notes &amp; materials</h3>
+        <ol class="steps">
+          <li>Open a lesson and use <b class="ui">Pieces</b> to add repertoire and move each piece through Not started → In progress → Completed.</li>
+          <li>Add a short <b class="ui">note</b> for the lesson.</li>
+          <li>Upload a recording or photo of sheet music to the lesson.</li>
+          <li>Use <b class="ui">Curriculum</b> to search the shared library of pieces and exercises.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- STUDENT -->
+    <section id="student">
+      <span class="role-tag">Student / Parent</span>
+      <h2>Your portal</h2>
+      <div class="card">
+        <h3>Lessons, calendar &amp; payments</h3>
+        <ol class="steps">
+          <li><b class="ui">Home</b> shows your next lesson and a quick summary.</li>
+          <li><b class="ui">My Lessons</b> lists upcoming and past lessons with attendance; a cancelled lesson shows a "Cancelled" tag.</li>
+          <li><b class="ui">Calendar</b> shows the month at a glance.</li>
+          <li><b class="ui">Payments</b> shows what's due and paid. Tap the invoice number to <b class="ui">download</b> your invoice.</li>
+        </ol>
+        <div class="tip"><span>🔔</span><div>The bell (top-right) shows notifications — payment reminders and lesson cancellations.</div></div>
+      </div>
+    </section>
+
+    <!-- SHORTCUTS -->
+    <section id="shortcuts">
+      <h2>Shortcuts &amp; tips</h2>
+      <div class="grid2">
+        <div class="mini"><h4><kbd>⌘</kbd><kbd>K</kbd> / <kbd>Ctrl</kbd><kbd>K</kbd></h4><p>Search &amp; jump anywhere — pages and students.</p></div>
+        <div class="mini"><h4>Light / dark</h4><p>Sun/moon button, top-right. Starts light; your choice is remembered.</p></div>
+        <div class="mini"><h4>Add another class</h4><p>Enrol a student in several instruments without re-picking them.</p></div>
+        <div class="mini"><h4>Mark completed</h4><p>The habit that keeps every count and report accurate.</p></div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq">
+      <h2>Common questions</h2>
+      <div class="card">
+        <h3>A student's lesson calendar is empty</h3>
+        <p class="what" style="margin-bottom:0">They probably have no lessons generated yet. Enrol them through the <b class="ui">Enrolments</b> page — that creates their schedule and lessons. (Simply adding a student does not.)</p>
+      </div>
+      <div class="card">
+        <h3>"Lessons remaining" or reports show zero</h3>
+        <p class="what" style="margin-bottom:0">Lessons must be marked <b>completed</b> to count. Ask teachers to tick them off, or do it on the Schedule day view.</p>
+      </div>
+      <div class="card">
+        <h3>A number of lessons per year looks off</h3>
+        <p class="what" style="margin-bottom:0">The annual lesson count is set automatically from the month a student joins (Jan = 39, tapering to December). It's meant to reduce admin — no need to type it.</p>
+      </div>
+      <footer>Troika Music Lessons — internal handbook. Screens and steps match the current app; if a button has moved, the nearest matching label is what to look for.</footer>
+    </section>
+  </main>
+</div>
