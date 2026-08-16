@@ -58,7 +58,7 @@ export function StudentPayments() {
         const enrRemaining = enr.total_lessons - enr.lessons_used;
         const pct = Math.min((enr.lessons_used / enr.total_lessons) * 100, 100);
         return (
-          <div key={enr.id} className="bg-white rounded-xl border border-gray-100 p-5">
+          <div key={enr.id} className="bg-white rounded-xl border border-black/5 p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-teal/10 flex items-center justify-center">
                 <BookOpen size={16} className="text-teal" />
@@ -100,8 +100,8 @@ export function StudentPayments() {
       })}
 
       {/* Payment history */}
-      <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-xl border border-black/5 overflow-hidden">
+        <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between">
           <h2 className="font-semibold text-navy">Payment History</h2>
           {payments.length > 0 && (
             <span className="text-xs text-gray-400">{paidCount} of {payments.length} paid</span>
@@ -115,7 +115,7 @@ export function StudentPayments() {
             <p className="text-gray-500 text-sm">No payments recorded yet.</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-black/5">
             {payments.map((p) => {
               const isPaid = !!p.paid_date;
               const isOverdue = !isPaid && p.due_date < today;

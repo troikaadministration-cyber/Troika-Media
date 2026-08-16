@@ -165,7 +165,7 @@ export function TeachersPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((t) => (
-            <div key={t.id} className="bg-white rounded-xl border border-gray-100 p-5 hover:shadow-sm transition-shadow">
+            <div key={t.id} className="bg-white rounded-xl border border-black/5 p-5 hover:shadow-sm transition-shadow">
               <h3 className="font-semibold text-navy text-lg">{t.full_name}</h3>
 
               <div className="mt-3 space-y-1.5">

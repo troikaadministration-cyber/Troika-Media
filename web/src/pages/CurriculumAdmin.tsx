@@ -82,7 +82,7 @@ export function CurriculumAdminPage() {
       </div>
 
       {/* Search + filters */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 sm:p-5 space-y-4">
+      <div className="bg-white rounded-xl border border-black/5 p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-3">
           <div className="relative flex-1">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -144,7 +144,7 @@ export function CurriculumAdminPage() {
       ) : (
         <div className="space-y-3">
           {resources.map((r) => (
-            <div key={r.id} className="bg-white rounded-xl border border-gray-100 p-4 sm:p-5 border-l-4"
+            <div key={r.id} className="bg-white rounded-xl border border-black/5 p-4 sm:p-5 border-l-4"
               style={{ borderLeftColor: r.type === 'piece' ? '#2A9D8F' : r.type === 'exercise' ? '#E8604C' : '#F0C93B' }}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2 flex-wrap">

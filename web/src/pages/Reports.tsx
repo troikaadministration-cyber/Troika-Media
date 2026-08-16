@@ -199,7 +199,7 @@ export function ReportsPage() {
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             {cards.map((c) => (
-              <div key={c.label} className="bg-white rounded-2xl border border-gray-100 p-5">
+              <div key={c.label} className="bg-white rounded-2xl border border-black/5 p-5">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${c.bg}`}>
                   <c.icon size={20} className={c.color} />
                 </div>
@@ -210,8 +210,8 @@ export function ReportsPage() {
             ))}
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="px-5 py-3 border-b border-gray-100">
+          <div className="bg-white rounded-2xl border border-black/5 overflow-hidden">
+            <div className="px-5 py-3 border-b border-black/5">
               <h2 className="font-semibold text-navy text-sm">Per-student breakdown</h2>
             </div>
             {perStudent.length === 0 ? (
@@ -229,7 +229,7 @@ export function ReportsPage() {
                       <th className="text-right px-5 py-2.5 font-medium">Outstanding</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-50">
+                  <tbody className="divide-y divide-black/5">
                     {perStudent.map((r) => (
                       <tr key={r.id}>
                         <td className="px-5 py-2.5 font-medium text-navy">{r.name}</td>

@@ -116,7 +116,7 @@ export function TeacherCalendarPage() {
       {/* Calendar card */}
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         {/* Month navigation header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-black/5">
           <button
             onClick={prevMonth}
             className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-navy transition-colors"
@@ -147,7 +147,7 @@ export function TeacherCalendarPage() {
         </div>
 
         {/* Day-of-week headers */}
-        <div className="grid grid-cols-7 border-b border-gray-100">
+        <div className="grid grid-cols-7 border-b border-black/5">
           {DAY_LABELS.map(d => (
             <div key={d} className="py-2 text-center text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
               {d}
@@ -229,7 +229,7 @@ export function TeacherCalendarPage() {
         )}
 
         {/* Legend */}
-        <div className="flex items-center gap-4 px-5 py-3 border-t border-gray-100 bg-gray-50/50">
+        <div className="flex items-center gap-4 px-5 py-3 border-t border-black/5 bg-gray-50/50">
           <span className="text-xs text-gray-400 font-medium">Legend:</span>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-teal inline-block" />
@@ -248,7 +248,7 @@ export function TeacherCalendarPage() {
 
       {/* Selected day panel */}
       <div className="bg-white rounded-xl border-l-4 border-yellow overflow-hidden">
-        <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100">
+        <div className="px-5 py-4 flex items-center justify-between border-b border-black/5">
           <div>
             <h3 className="font-bold text-navy">{selectedLabel}</h3>
             <p className="text-xs text-gray-400 mt-0.5">
@@ -267,7 +267,7 @@ export function TeacherCalendarPage() {
             No lessons on this day
           </div>
         ) : (
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-black/5">
             {selectedLessons.map(lesson => {
               const student = lesson.students?.[0]?.student;
               const studentName = student?.full_name || 'Unknown';
@@ -319,7 +319,7 @@ export function TeacherCalendarPage() {
 
         {/* View full day button */}
         {selectedLessons.length > 0 && (
-          <div className="px-5 py-3 border-t border-gray-100">
+          <div className="px-5 py-3 border-t border-black/5">
             <button
               onClick={() => navigate(`/schedule?date=${selectedDate}`)}
               className="flex items-center gap-2 text-sm font-medium text-coral hover:text-coral/80 transition-colors"

@@ -265,7 +265,7 @@ export function SchedulePage() {
       </div>
 
       {/* Date navigation + filters */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
+      <div className="bg-white rounded-xl shadow-sm border border-black/5 p-4 mb-6">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
             <button onClick={() => changeDate(viewMode === 'week' ? -7 : -1)} className="p-2 hover:bg-gray-100 rounded-lg">
@@ -508,8 +508,8 @@ export function SchedulePage() {
 
       {/* Day view */}
       {viewMode === 'day' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-          <div className="p-4 border-b border-gray-100">
+        <div className="bg-white rounded-xl shadow-sm border border-black/5">
+          <div className="p-4 border-b border-black/5">
             <h2 className="font-semibold text-navy">
               {new Date(selectedDate + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
             </h2>
@@ -521,7 +521,7 @@ export function SchedulePage() {
           ) : lessons.length === 0 ? (
             <p className="text-center text-gray-400 py-12">No lessons on this date</p>
           ) : (
-            <div className="divide-y divide-gray-50">
+            <div className="divide-y divide-black/5">
               {lessons.map((lesson: any) => (
                 <LessonRow
                   key={lesson.id}
@@ -539,15 +539,15 @@ export function SchedulePage() {
 
       {/* Week view */}
       {viewMode === 'week' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-black/5 overflow-hidden">
           {/* Day header row */}
-          <div className="flex border-b border-gray-100">
-            <div className="w-14 flex-shrink-0 border-r border-gray-100 bg-gray-50" />
+          <div className="flex border-b border-black/5">
+            <div className="w-14 flex-shrink-0 border-r border-black/5 bg-gray-50" />
             {getWeekDays(selectedDate).map((day) => {
               const d = new Date(day + 'T00:00');
               const isToday = day === todayStr;
               return (
-                <div key={day} className={`flex-1 text-center py-2 border-r last:border-r-0 border-gray-100 ${isToday ? 'bg-coral/5' : 'bg-gray-50'}`}>
+                <div key={day} className={`flex-1 text-center py-2 border-r last:border-r-0 border-black/5 ${isToday ? 'bg-coral/5' : 'bg-gray-50'}`}>
                   <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">
                     {d.toLocaleDateString('en-US', { weekday: 'short' })}
                   </p>
@@ -562,7 +562,7 @@ export function SchedulePage() {
           {/* Scrollable time grid */}
           <div className="flex overflow-y-auto max-h-[680px]">
             {/* Hour labels */}
-            <div className="w-14 flex-shrink-0 relative border-r border-gray-100 bg-gray-50/50" style={{ height: GRID_HEIGHT }}>
+            <div className="w-14 flex-shrink-0 relative border-r border-black/5 bg-gray-50/50" style={{ height: GRID_HEIGHT }}>
               {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => {
                 const hour = START_HOUR + i;
                 const label = hour < 12 ? `${hour}am` : hour === 12 ? '12pm' : `${hour - 12}pm`;
@@ -587,14 +587,14 @@ export function SchedulePage() {
               return (
                 <div
                   key={day}
-                  className={`flex-1 relative border-r last:border-r-0 border-gray-100 ${isToday ? 'bg-coral/[0.03]' : ''}`}
+                  className={`flex-1 relative border-r last:border-r-0 border-black/5 ${isToday ? 'bg-coral/[0.03]' : ''}`}
                   style={{ height: GRID_HEIGHT }}
                 >
                   {/* Hour lines */}
                   {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
                     <div
                       key={i}
-                      className="absolute left-0 right-0 border-t border-gray-100"
+                      className="absolute left-0 right-0 border-t border-black/5"
                       style={{ top: i * HOUR_HEIGHT }}
                     />
                   ))}
@@ -728,7 +728,7 @@ export function SchedulePage() {
             ) : (
               <div className="space-y-2 max-h-80 overflow-y-auto">
                 {makeupMatches.map((match) => (
-                  <div key={match.id} className={`p-3 rounded-lg border ${match.needs_makeup ? 'border-coral-light bg-coral-light/30' : 'border-gray-100'}`}>
+                  <div key={match.id} className={`p-3 rounded-lg border ${match.needs_makeup ? 'border-coral-light bg-coral-light/30' : 'border-black/5'}`}>
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm font-semibold text-navy">{match.full_name}</p>

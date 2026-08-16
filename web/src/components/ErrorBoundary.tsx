@@ -37,7 +37,7 @@ export class ErrorBoundary extends Component<Props, State> {
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="text-center max-w-md">
           <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto mx-auto mb-6" />
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-6">
             <p className="text-coral text-lg font-semibold mb-2">Something went wrong</p>
             <p className="text-gray-500 text-sm mb-4">
               An unexpected error occurred. Please try again.

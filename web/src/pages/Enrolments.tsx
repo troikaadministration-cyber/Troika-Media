@@ -442,7 +442,7 @@ export function EnrolmentsPage() {
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden md:block bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div className="hidden md:block bg-white rounded-xl border border-black/5 overflow-hidden">
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-50/80 text-left text-xs text-gray-500 uppercase">
@@ -455,7 +455,7 @@ export function EnrolmentsPage() {
                   <th className="px-5 py-3 font-medium"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-black/5">
                 {enrolments.map((e) => {
                   const pct = e.total_lessons > 0 ? Math.round((e.lessons_used / e.total_lessons) * 100) : 0;
                   return (
@@ -494,7 +494,7 @@ export function EnrolmentsPage() {
               const pct = e.total_lessons > 0 ? Math.round((e.lessons_used / e.total_lessons) * 100) : 0;
               return (
                 <div key={e.id} onClick={() => navigate(`/students/${e.student_id}`)}
-                  className="bg-white rounded-xl border border-gray-100 p-4 cursor-pointer hover:shadow-sm">
+                  className="bg-white rounded-xl border border-black/5 p-4 cursor-pointer hover:shadow-sm">
                   <div className="flex items-center justify-between mb-2">
                     <p className="font-medium text-navy text-sm">{e.student?.full_name || '-'}</p>
                     <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{e.payment_plan?.replace(/_/g, ' ')}</span>
