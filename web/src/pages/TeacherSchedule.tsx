@@ -321,8 +321,8 @@ export function TeacherSchedulePage() {
 
       {/* Repertoire Modal */}
       {repertoireModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div ref={repertoireTrapRef} className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto border-t-4 border-yellow">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div ref={repertoireTrapRef} className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-md max-h-[85vh] overflow-y-auto border-t-4 border-yellow">
             <div className="px-5 py-4 flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-navy text-lg">Repertoire</h3>
@@ -362,8 +362,8 @@ export function TeacherSchedulePage() {
 
       {/* Notes Modal */}
       {notesModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div ref={notesTrapRef} className="bg-white rounded-2xl shadow-xl w-full max-w-md border-t-4 border-teal">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div ref={notesTrapRef} className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-md border-t-4 border-teal">
             <div className="px-5 py-4 flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-navy text-lg">Class Notes</h3>
@@ -390,8 +390,8 @@ export function TeacherSchedulePage() {
 
       {/* Media Modal */}
       {mediaModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div ref={mediaTrapRef} className="bg-white rounded-2xl shadow-xl w-full max-w-md border-t-4 border-coral">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div ref={mediaTrapRef} className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-md border-t-4 border-coral">
             <div className="px-5 py-4 flex items-center justify-between">
               <h3 className="font-bold text-navy text-lg">Upload Media</h3>
               <button onClick={() => setMediaModal(null)} className="text-gray-400 hover:text-navy"><X size={20} /></button>

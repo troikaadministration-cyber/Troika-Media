@@ -664,8 +664,8 @@ export function SchedulePage() {
 
       {/* Cancel lesson modal */}
       {cancelModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl border border-black/5 shadow-lg w-full max-w-md mx-4 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-navy">Cancel Lesson</h3>
               <button onClick={() => { setCancelModal(null); setCancelReason(''); }} className="text-gray-400 hover:text-navy">
@@ -709,8 +709,8 @@ export function SchedulePage() {
 
       {/* Makeup finder modal */}
       {makeupModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 p-6">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl border border-black/5 shadow-lg w-full max-w-lg mx-4 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-navy flex items-center gap-2">
                 <UserSearch size={20} className="text-coral" />

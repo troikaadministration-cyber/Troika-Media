@@ -40,8 +40,8 @@ export function RescheduleModal({ lesson, date, onClose, onConfirm }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-sm p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-navy">Reschedule Lesson</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-navy"><X size={18} /></button>

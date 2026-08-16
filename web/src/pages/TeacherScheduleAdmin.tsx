@@ -328,14 +328,14 @@ export function TeacherScheduleAdminPage() {
 
       {/* Create Slot Modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div
             ref={createRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-slot-title"
             onKeyDown={(e) => { if (e.key === 'Escape') setShowCreate(false); }}
-            className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h2 id="create-slot-title" className="font-semibold text-navy">Add Weekly Slot</h2>
