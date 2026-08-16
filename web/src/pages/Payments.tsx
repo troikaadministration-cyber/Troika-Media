@@ -170,7 +170,7 @@ export function PaymentsPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {summaryCards.map((c) => (
-          <div key={c.label} className="bg-white rounded-xl border border-gray-100 p-4">
+          <div key={c.label} className="bg-white rounded-xl border border-black/5 p-4">
             <div className={`w-9 h-9 rounded-lg ${c.bg} flex items-center justify-center mb-2`}>
               <c.icon size={18} className={c.color} />
             </div>
@@ -181,7 +181,7 @@ export function PaymentsPage() {
       </div>
 
       {/* Table - Desktop */}
-      <div className="hidden md:block bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div className="hidden md:block bg-white rounded-xl border border-black/5 overflow-hidden">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50/80 text-left text-xs text-gray-500 uppercase">
@@ -195,7 +195,7 @@ export function PaymentsPage() {
               <th className="px-5 py-3 font-medium">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
+          <tbody className="divide-y divide-black/5">
             {payments.map((p: PaymentWithStudent) => {
               const isOverdue = !p.paid_date && p.due_date < today;
               const isPaid = !!p.paid_date;
@@ -298,7 +298,7 @@ export function PaymentsPage() {
           const isPaid = !!p.paid_date;
           const invoice = p.invoice;
           return (
-            <div key={p.id} className="bg-white rounded-xl border border-gray-100 p-4 space-y-2">
+            <div key={p.id} className="bg-white rounded-xl border border-black/5 p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <p className="font-medium text-navy text-sm">{p.student?.full_name || '-'}</p>
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${

@@ -58,14 +58,14 @@ export function ReschedulerCalendar({ lesson, onDateSelect }: Props) {
 
   if (!lesson) {
     return (
-      <div className="flex items-center justify-center min-h-[200px] bg-white rounded-xl border border-gray-100 p-4">
+      <div className="flex items-center justify-center min-h-[200px] bg-white rounded-xl border border-black/5 p-4">
         <p className="text-sm text-gray-400">Select a lesson to see teacher availability</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4">
+    <div className="bg-white rounded-xl border border-black/5 p-4">
       <p className="text-xs font-medium text-gray-500 mb-3">
         {lesson.teacher.full_name} · {lesson.students[0]?.student?.full_name ?? ''}
       </p>
@@ -117,7 +117,7 @@ export function ReschedulerCalendar({ lesson, onDateSelect }: Props) {
         ))}
       </div>
 
-      <div className="flex items-center gap-4 mt-3 pt-2 border-t border-gray-100">
+      <div className="flex items-center gap-4 mt-3 pt-2 border-t border-black/5">
         <div className="flex items-center gap-1.5 text-xs text-gray-400">
           <span className="inline-block w-2 h-2 rounded-full bg-coral" />
           Existing lesson

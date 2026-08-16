@@ -64,7 +64,7 @@ export function RoleSetupPage() {
           <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto" />
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-6 sm:p-8">
           <h2 className="text-xl font-bold text-navy mb-1">Set Up Your Account</h2>
           <p className="text-gray-500 text-sm mb-6">
             Welcome{session?.user?.email ? `, ${session.user.email}` : ''}! Choose your role to get started.
@@ -95,7 +95,7 @@ export function RoleSetupPage() {
                 className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all ${
                   selectedRole === role.value
                     ? `${role.border} ${role.bg}`
-                    : 'border-gray-100 hover:border-gray-200'
+                    : 'border-black/5 hover:border-gray-200'
                 }`}
               >
                 <div className={`w-10 h-10 rounded-lg ${selectedRole === role.value ? `${role.bg}` : 'bg-gray-50'} flex items-center justify-center flex-shrink-0`}>

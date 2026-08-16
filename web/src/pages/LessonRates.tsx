@@ -166,7 +166,7 @@ function TeacherList({ teachers, rateCounts, selectedId, onSelect }: {
             className={`w-full text-left rounded-xl px-3 py-2.5 border transition-all ${
               isSelected
                 ? 'bg-teal/10 border-teal text-navy'
-                : 'bg-white border-gray-100 hover:border-gray-200 text-navy'
+                : 'bg-white border-black/5 hover:border-gray-200 text-navy'
             }`}>
             <p className="text-sm font-semibold truncate">{t.full_name}</p>
             <p className={`text-xs mt-0.5 font-medium ${
@@ -259,9 +259,9 @@ function RateEditor({ teacher, locations, categories, year }: {
   ];
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 flex flex-col h-full">
+    <div className="bg-white rounded-xl border border-black/5 flex flex-col h-full">
       {/* Teacher name bar */}
-      <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 rounded-t-xl flex items-center gap-2">
+      <div className="px-5 py-3 border-b border-black/5 bg-gray-50 rounded-t-xl flex items-center gap-2">
         <div className="w-8 h-8 rounded-full bg-teal/10 flex items-center justify-center text-teal font-bold text-sm flex-shrink-0">
           {teacher.full_name.charAt(0)}
         </div>
@@ -356,7 +356,7 @@ function InstrumentsTab({ instruments, inUse, onRefresh }: {
           onDelete={() => remove(i.id)}
           deleteDisabled={inUse.has(i.id)} />
       ))}
-      <div className="px-4 py-3 border-t border-gray-100 flex gap-2">
+      <div className="px-4 py-3 border-t border-black/5 flex gap-2">
         <input value={adding} onChange={e => { setAdding(e.target.value); setAddError(null); }}
           onKeyDown={e => e.key === 'Enter' && add()}
           placeholder="New instrument…"
@@ -417,7 +417,7 @@ function CategoriesTab({ categories, inUse, onRefresh }: {
           onDelete={() => remove(c.id)}
           deleteDisabled={inUse.has(c.name)} />
       ))}
-      <div className="px-4 py-3 border-t border-gray-100 flex gap-2">
+      <div className="px-4 py-3 border-t border-black/5 flex gap-2">
         <input value={adding} onChange={e => { setAdding(e.target.value); setAddError(null); }}
           onKeyDown={e => e.key === 'Enter' && add()}
           placeholder="New category…"
@@ -548,14 +548,14 @@ function LocationsTab({ locations, inUse, onRefresh }: {
       })}
 
       {!formOpen ? (
-        <div className="px-4 py-3 border-t border-gray-100">
+        <div className="px-4 py-3 border-t border-black/5">
           <button onClick={() => setFormOpen(true)}
             className="flex items-center gap-1 text-sm font-medium text-teal hover:text-teal/80">
             <Plus size={13} /> Add location
           </button>
         </div>
       ) : (
-        <div className="px-4 py-3 border-t border-gray-100 space-y-2">
+        <div className="px-4 py-3 border-t border-black/5 space-y-2">
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-xs text-gray-400 mb-0.5 block">Name *</label>
@@ -626,14 +626,14 @@ function AdminModal({ open, onClose, locations, instruments, categories,
       style={{ background: 'rgba(0,0,0,0.35)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-black/5">
           <h2 className="text-base font-bold text-navy">Manage</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-navy">
             <X size={18} />
           </button>
         </div>
 
-        <div className="flex gap-0 px-5 pt-3 border-b border-gray-100">
+        <div className="flex gap-0 px-5 pt-3 border-b border-black/5">
           {tabs.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`flex items-center gap-1.5 px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${
@@ -661,7 +661,7 @@ function AdminModal({ open, onClose, locations, instruments, categories,
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+        <div className="px-5 py-3 border-t border-black/5 flex justify-end">
           <button onClick={onClose}
             className="text-sm font-semibold text-white bg-navy px-4 py-2 rounded-lg hover:bg-navy/90">
             Done

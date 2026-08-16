@@ -111,7 +111,7 @@ export function StudentHome() {
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((s) => (
-          <div key={s.label} className="bg-white rounded-xl border border-gray-100 p-4 sm:p-5">
+          <div key={s.label} className="bg-white rounded-xl border border-black/5 p-4 sm:p-5">
             <div className={`w-10 h-10 rounded-lg ${s.bg} flex items-center justify-center mb-3`}>
               <s.icon size={20} className={s.color} />
             </div>
@@ -145,7 +145,7 @@ function QuickLink({
   return (
     <Link
       to={to}
-      className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 hover:shadow-sm hover:border-coral/30 transition-all group"
+      className="bg-white rounded-xl border border-black/5 p-4 flex items-center gap-3 hover:shadow-sm hover:border-coral/30 transition-all group"
     >
       <div className="w-10 h-10 rounded-lg bg-coral/10 flex items-center justify-center flex-shrink-0">
         <Icon size={20} className="text-coral" />

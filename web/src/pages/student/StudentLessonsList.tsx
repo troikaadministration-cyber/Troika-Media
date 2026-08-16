@@ -22,7 +22,7 @@ export function StudentLessonsList() {
         <SegBtn active={tab === 'past'} onClick={() => setTab('past')} label={`Past (${past.length})`} />
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div className="bg-white rounded-xl border border-black/5 overflow-hidden">
         {list.length === 0 ? (
           <div className="p-10 text-center">
             <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mx-auto mb-3">
@@ -33,7 +33,7 @@ export function StudentLessonsList() {
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-black/5">
             {list.map((item) => (
               <LessonRow
                 key={item.id}

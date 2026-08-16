@@ -289,7 +289,7 @@ export function StudentDetailPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-gray-100 mb-6">
+      <div className="flex gap-1 border-b border-black/5 mb-6">
         {TABS.map(({ key, label, icon }) => (
           <button
             key={key}
@@ -309,7 +309,7 @@ export function StudentDetailPage() {
       {activeTab === 'overview' && (
         <div className="grid grid-cols-2 gap-5">
           {/* Student contact */}
-          <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <div className="bg-white rounded-xl border border-black/5 p-5">
             <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-4">Student</p>
             <dl className="space-y-3">
               {[
@@ -329,7 +329,7 @@ export function StudentDetailPage() {
           </div>
 
           {/* Parent / Guardian */}
-          <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <div className="bg-white rounded-xl border border-black/5 p-5">
             <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-4">Parent / Guardian</p>
             <dl className="space-y-3">
               {[
@@ -364,7 +364,7 @@ export function StudentDetailPage() {
               { label: 'Makeup',        value: stats?.makeup_lessons || 0,   color: 'text-amber-500',   bg: 'bg-amber-50' },
               { label: 'Charged Abs.',  value: stats?.charged_absences || 0, color: 'text-coral',       bg: 'bg-coral/5' },
             ].map(({ label, value, color, bg }) => (
-              <div key={label} className={`${bg} rounded-xl border border-gray-100 p-5 text-center`}>
+              <div key={label} className={`${bg} rounded-xl border border-black/5 p-5 text-center`}>
                 <p className={`text-3xl font-bold ${color}`}>{value}</p>
                 <p className="text-xs text-gray-400 mt-1">{label}</p>
               </div>
@@ -373,7 +373,7 @@ export function StudentDetailPage() {
 
           {/* Enrolment cards */}
           {enrolments.length === 0 ? (
-            <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">
+            <div className="bg-white rounded-xl border border-black/5 p-10 text-center text-gray-400 text-sm">
               No enrolment for current year.{' '}
               <button onClick={() => navigate('/enrolments')} className="text-teal font-medium hover:underline">Create one on the Enrolments page</button>
             </div>
@@ -382,7 +382,7 @@ export function StudentDetailPage() {
             const instrumentName = enrolment.instrument?.name || '';
             const pct = Math.min((enrolment.lessons_used / enrolment.total_lessons) * 100, 100);
             return (
-              <div key={enrolment.id} className="bg-white rounded-xl border border-gray-100 p-6">
+              <div key={enrolment.id} className="bg-white rounded-xl border border-black/5 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <BookOpen size={16} className="text-teal" />
@@ -420,8 +420,8 @@ export function StudentDetailPage() {
 
       {/* ── Schedule ── */}
       {activeTab === 'schedule' && (
-        <div className="bg-white rounded-xl border border-gray-100">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="bg-white rounded-xl border border-black/5">
+          <div className="px-6 py-4 border-b border-black/5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock size={15} className="text-gray-400" />
               <h2 className="font-semibold text-navy">Weekly Class Schedule</h2>
@@ -443,7 +443,7 @@ export function StudentDetailPage() {
                   <th className="px-6 py-3" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-black/5">
                 {schedules.map((s: any) => (
                   <tr key={s.id} className="hover:bg-gray-50/50">
                     <td className="px-6 py-3.5">
@@ -467,8 +467,8 @@ export function StudentDetailPage() {
 
       {/* ── History ── */}
       {activeTab === 'history' && (
-        <div className="bg-white rounded-xl border border-gray-100">
-          <div className="px-6 py-4 border-b border-gray-100">
+        <div className="bg-white rounded-xl border border-black/5">
+          <div className="px-6 py-4 border-b border-black/5">
             <h2 className="font-semibold text-navy">Lesson History</h2>
             <p className="text-xs text-gray-400 mt-0.5">Last 50 lessons</p>
           </div>
@@ -485,7 +485,7 @@ export function StudentDetailPage() {
                   <th className="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Attendance</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-black/5">
                 {lessons.map((item: any) => (
                   <tr key={item.id} className="hover:bg-gray-50/50">
                     <td className="pl-6 py-3.5">
