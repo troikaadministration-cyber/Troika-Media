@@ -20,7 +20,7 @@ export interface Payment {
   instalment_number: number;
   due_date: string;
   paid_date: string | null;
-  invoice?: { id: string; invoice_number: string } | null;
+  invoice?: { id: string; invoice_number: string; pdf_path: string | null } | null;
 }
 
 export interface StudentPortalValue {

@@ -50,7 +50,7 @@ export function StudentShell() {
           .eq('academic_year', year),
         supabase
           .from('payment_records')
-          .select('*, invoice:invoices(id, invoice_number)')
+          .select('*, invoice:invoices(id, invoice_number, pdf_path)')
           .eq('student_id', student.id)
           .order('due_date', { ascending: true }),
       ]);

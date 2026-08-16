@@ -26,7 +26,7 @@ export function StudentDetailPage() {
   const [stats, setStats] = useState<StudentStats | null>(null);
   const [lessons, setLessons] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [enrolments, setEnrolments] = useState<(StudentEnrolment & { lesson_rate?: { category: string } | null })[]>([]);
+  const [enrolments, setEnrolments] = useState<(StudentEnrolment & { lesson_rate?: { category: string } | null; instrument?: { name: string } | null })[]>([]);
 
   // Absence modal
   const [absenceModal, setAbsenceModal] = useState<{ lessonStudentId: string; studentName: string } | null>(null);
@@ -93,7 +93,7 @@ export function StudentDetailPage() {
         .eq('student_id', id)
         .order('created_at', { ascending: false })
         .limit(50),
-      supabase.from('student_enrolments').select('*, lesson_rate:lesson_rates(category)').eq('student_id', id).eq('academic_year', currentYear),
+      supabase.from('student_enrolments').select('*, lesson_rate:lesson_rates(category), instrument:instruments(name)').eq('student_id', id).eq('academic_year', currentYear),
     ]).then(([studentRes, statsRes, lessonsRes, enrolmentRes]) => {
       setStudent(studentRes.data);
       setStats(statsRes.data as StudentStats);
@@ -372,13 +372,14 @@ export function StudentDetailPage() {
             </div>
           ) : enrolments.map((enrolment) => {
             const categoryLabel = enrolment.lesson_rate?.category?.replace(/_/g, ' ') || '';
+            const instrumentName = enrolment.instrument?.name || '';
             const pct = Math.min((enrolment.lessons_used / enrolment.total_lessons) * 100, 100);
             return (
               <div key={enrolment.id} className="bg-white rounded-xl border border-gray-100 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <BookOpen size={16} className="text-teal" />
-                    <h2 className="font-semibold text-navy">Enrolment {enrolment.academic_year}</h2>
+                    <h2 className="font-semibold text-navy">{instrumentName || 'Class'} · {enrolment.academic_year}</h2>
                     {categoryLabel && <span className="text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">{categoryLabel}</span>}
                   </div>
                   <span className="text-sm text-gray-400">{enrolment.total_lessons - enrolment.lessons_used} lessons remaining</span>

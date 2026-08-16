@@ -106,6 +106,30 @@ export function useLessons(filters?: {
       .eq('id', id)
       .single();
 
+    // Notify enrolled students (in-app) that their lesson was cancelled.
+    try {
+      const students = (data as any)?.students || [];
+      const userIds: string[] = students
+        .map((ls: any) => ls.student?.user_id)
+        .filter((uid: string | null): uid is string => !!uid);
+      if (userIds.length && data) {
+        const dateLabel = new Date((data as any).date + 'T00:00:00')
+          .toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' });
+        const time = (data as any).start_time?.slice(0, 5) || '';
+        await supabase.from('notifications').insert(
+          userIds.map((uid) => ({
+            user_id: uid,
+            type: 'lesson_cancelled',
+            title: 'Lesson cancelled',
+            body: `Your lesson on ${dateLabel}${time ? ` at ${time}` : ''} has been cancelled${reason ? `: ${reason}` : ''}.`,
+            read: false,
+          }))
+        );
+      }
+    } catch {
+      // non-blocking — the lesson is already cancelled
+    }
+
     await fetchLessons();
     return data as LessonWithDetails;
   }

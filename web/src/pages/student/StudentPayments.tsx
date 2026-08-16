@@ -1,10 +1,17 @@
 import { toDateStr } from '../../lib/dates';
-import { BookOpen, CreditCard, FileText, AlertCircle, Clock } from 'lucide-react';
+import { BookOpen, CreditCard, AlertCircle, Clock, Download } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
+import { supabase } from '../../lib/supabase';
 import { fmtDate, fmtMoney } from './format';
 
 export function StudentPayments() {
   const { enrolments, payments } = useStudentPortal();
+
+  async function downloadInvoice(pdfPath: string | null) {
+    if (!pdfPath) return;
+    const { data } = await supabase.storage.from('invoices').createSignedUrl(pdfPath, 3600);
+    if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+  }
 
   const today = toDateStr(new Date());
   const overdue = payments.filter((p) => !p.paid_date && p.due_date < today);
@@ -123,9 +130,14 @@ export function StudentPayments() {
                       <p className="text-xs text-gray-400 mt-0.5">
                         Paid {fmtDate(p.paid_date)}
                         {p.invoice && (
-                          <span className="ml-2 text-teal">
-                            <FileText size={10} className="inline" /> {p.invoice.invoice_number}
-                          </span>
+                          <button
+                            onClick={() => downloadInvoice(p.invoice!.pdf_path)}
+                            disabled={!p.invoice.pdf_path}
+                            className="ml-2 text-teal hover:underline disabled:no-underline disabled:text-gray-400 inline-flex items-center gap-1"
+                            title={p.invoice.pdf_path ? 'Download invoice' : 'Invoice not available yet'}
+                          >
+                            <Download size={10} /> {p.invoice.invoice_number}
+                          </button>
                         )}
                       </p>
                     )}
