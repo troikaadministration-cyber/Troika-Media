@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Search, Upload, Trash2, Lightbulb, Calendar, BookOpen, RefreshCw } from 'lucide-react';
+import { SkeletonList } from '../components/Skeleton';
 import type { ResourceType } from '../types';
 
 export function CurriculumAdminPage() {
@@ -139,7 +140,7 @@ export function CurriculumAdminPage() {
 
       {/* Resources list */}
       {loading ? (
-        <div className="text-center py-12 text-gray-400 text-sm">Loading...</div>
+        <SkeletonList rows={5} />
       ) : (
         <div className="space-y-3">
           {resources.map((r) => (

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { Settings, Check, X, Trash2, Plus } from 'lucide-react';
+import { SkeletonList } from '../components/Skeleton';
 import type { LessonRate, Location } from '../types';
 
 const CURRENT_YEAR = new Date().getFullYear().toString();
@@ -285,7 +286,7 @@ function RateEditor({ teacher, locations, categories, year }: {
       {/* Rate rows */}
       <div className="px-5 py-3 flex-1 overflow-y-auto">
         {loading ? (
-          <p className="text-gray-400 text-sm text-center py-8">Loading…</p>
+          <SkeletonList rows={4} />
         ) : loadError ? (
           <p className="text-red-400 text-sm text-center py-8">{loadError}</p>
         ) : categories.length === 0 ? (
@@ -751,7 +752,7 @@ export function LessonRatesPage() {
 
       {/* Body */}
       {loading ? (
-        <p className="text-gray-400 text-center py-16">Loading…</p>
+        <SkeletonList rows={5} />
       ) : teachers.length === 0 ? (
         <p className="text-gray-400 text-center py-16">No teachers yet. Add from the Teachers page first.</p>
       ) : (

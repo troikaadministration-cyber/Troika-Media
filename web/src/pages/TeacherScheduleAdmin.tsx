@@ -5,6 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import {
   Plus, X, Trash2, Calendar, MapPin, Users as UsersIcon, RefreshCw,
 } from 'lucide-react';
+import { SkeletonList } from '../components/Skeleton';
 import type { Profile, Instrument, Location, Student } from '../types';
 
 interface ScheduleTemplate {
@@ -190,7 +191,7 @@ export function TeacherScheduleAdminPage() {
       )}
 
       {selectedTeacher && loading && (
-        <div className="text-center py-12 text-gray-400 text-sm">Loading...</div>
+        <SkeletonList rows={5} />
       )}
 
       {/* Calendar grid */}
