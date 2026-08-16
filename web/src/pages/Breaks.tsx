@@ -192,7 +192,7 @@ export function BreaksPage() {
 
           {showPendingSection && (
             pendingLoading ? (
-              <p className="text-sm text-gray-400">Loading...</p>
+              <SkeletonList rows={2} />
             ) : pendingError ? (
               <p className="text-sm text-red-500">{pendingError}</p>
             ) : pendingLessons.length === 0 ? (
