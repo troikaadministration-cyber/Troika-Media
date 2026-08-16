@@ -2,6 +2,7 @@ import { toDateStr } from '../lib/dates';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { BarChart3, IndianRupee, AlertCircle, GraduationCap, Download, RefreshCw, CheckCircle } from 'lucide-react';
+import { SkeletonCards, SkeletonList } from '../components/Skeleton';
 
 interface PaymentRow {
   amount: number;
@@ -190,9 +191,10 @@ export function ReportsPage() {
       )}
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="w-6 h-6 border-2 border-teal border-t-transparent rounded-full animate-spin" />
-        </div>
+        <>
+          <SkeletonCards count={4} className="grid-cols-2 lg:grid-cols-4 mb-6" />
+          <SkeletonList rows={5} />
+        </>
       ) : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

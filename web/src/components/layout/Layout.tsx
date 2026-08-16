@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useNotifications } from '../../hooks/useNotifications';
+import { CommandPalette } from '../CommandPalette';
 import {
   LayoutDashboard, Calendar, Users, CreditCard, BookOpen,
   LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, CalendarClock,
-  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList
+  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList, Search
 } from 'lucide-react';
 
 const coordinatorNav = [
@@ -41,6 +42,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications(profile?.id);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -57,6 +59,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
     await signOut();
     navigate('/');
   };
+
+  // ⌘K / Ctrl+K opens the command palette anywhere in the app.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Close sidebar on route change (mobile)
   useEffect(() => {
@@ -155,7 +169,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </button>
           <img src="/logo.png" alt="Troika Music Lessons" className="lg:hidden h-7 w-auto" />
           <div className="hidden lg:block" />
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="hidden sm:flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-lg bg-gray-100 border border-black/5 text-gray-400 hover:text-gray-600 hover:bg-gray-200/70"
+              aria-label="Search"
+            >
+              <Search size={15} />
+              <span className="text-[12.5px]">Search</span>
+              <span className="text-[11px] font-semibold bg-white/80 border border-black/5 rounded px-1 py-px">⌘K</span>
+            </button>
             <div className="relative" ref={notifRef}>
               <button
                 onClick={() => setNotifOpen(!notifOpen)}
@@ -219,6 +242,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        pages={navItems.map(({ label, to }) => ({ label, to }))}
+        canSearchStudents={profile?.role !== 'student'}
+      />
     </div>
   );
 }
