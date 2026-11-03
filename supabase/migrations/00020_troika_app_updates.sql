@@ -2474,3 +2474,395 @@ REVOKE ALL ON FUNCTION public.reassign_lessons(UUID[], UUID, TIME, TEXT) FROM pu
 GRANT EXECUTE ON FUNCTION public.reassign_lessons(UUID[], UUID, TIME, TEXT) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ── 33. Year rollover: renew students for next year (keep/drop/add classes) ─
+-- ── Year rollover: re-enrol students for next year ────────────────────────
+-- (feature file: year_rollover.sql — idempotent, safe to re-run)
+--  a. student_enrolments.template_id: the class's weekly slot (was unknown:
+--     an enrolment had no link to its slot, so a renewal couldn't find it).
+--  b. Backfill it for existing enrolments.
+--  c. enrol_student stores the slot on the enrolment it creates.
+--  d. renewal_candidates(): every active student with classes in a year, with
+--     each class's slot/teacher/rate/plan/discounts and what's already renewed.
+--  e. rollover_release_slot(): a class dropped at renewal leaves its weekly
+--     slot (student_ids drive lesson generation), unless renewed on that slot.
+
+-- a.
+ALTER TABLE student_enrolments
+  ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES teacher_schedule_templates(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_enrolments_template ON student_enrolments(template_id);
+CREATE INDEX IF NOT EXISTS idx_enrolments_year ON student_enrolments(academic_year);
+
+-- b1. From the enrolment's own lessons that remember their slot (most common).
+UPDATE student_enrolments se
+SET template_id = x.template_id
+FROM (
+  SELECT DISTINCT ON (ls.enrolment_id) ls.enrolment_id, l.template_id
+  FROM lesson_students ls
+  JOIN lessons l ON l.id = ls.lesson_id
+  JOIN teacher_schedule_templates t ON t.id = l.template_id
+  WHERE ls.enrolment_id IS NOT NULL AND l.template_id IS NOT NULL
+  GROUP BY ls.enrolment_id, l.template_id
+  ORDER BY ls.enrolment_id, count(*) DESC, l.template_id
+) x
+WHERE se.id = x.enrolment_id AND se.template_id IS NULL;
+
+-- b2. From the enrolment's lessons that don't (older ones): the student's slot
+--     with that lesson's teacher, weekday and start time (most common).
+UPDATE student_enrolments se
+SET template_id = x.template_id
+FROM (
+  SELECT DISTINCT ON (ls.enrolment_id) ls.enrolment_id, t.id AS template_id
+  FROM lesson_students ls
+  JOIN lessons l ON l.id = ls.lesson_id
+  JOIN teacher_schedule_templates t
+    ON t.teacher_id = l.teacher_id
+   AND t.day_of_week = EXTRACT(DOW FROM l.date)
+   AND t.start_time = l.start_time
+   AND ls.student_id = ANY(COALESCE(t.student_ids, '{}'))
+  WHERE ls.enrolment_id IS NOT NULL
+  GROUP BY ls.enrolment_id, t.id, t.is_active
+  ORDER BY ls.enrolment_id, count(*) DESC, t.is_active DESC, t.id
+) x
+WHERE se.id = x.enrolment_id AND se.template_id IS NULL;
+
+-- b3. Else a slot the student is on with the same instrument (active, 1:1 first),
+--     not already claimed by another of the student's enrolments that year.
+DO $$
+DECLARE r RECORD; v_tpl UUID;
+BEGIN
+  FOR r IN SELECT id, student_id, instrument_id, academic_year FROM student_enrolments
+           WHERE template_id IS NULL ORDER BY created_at, id LOOP
+    SELECT t.id INTO v_tpl
+    FROM teacher_schedule_templates t
+    WHERE r.student_id = ANY(COALESCE(t.student_ids, '{}'))
+      AND t.instrument_id IS NOT DISTINCT FROM r.instrument_id
+      AND NOT EXISTS (SELECT 1 FROM student_enrolments o
+                      WHERE o.student_id = r.student_id AND o.academic_year = r.academic_year
+                        AND o.template_id = t.id)
+    ORDER BY t.is_active DESC, t.is_group, t.created_at, t.id
+    LIMIT 1;
+    IF v_tpl IS NOT NULL THEN
+      UPDATE student_enrolments SET template_id = v_tpl WHERE id = r.id;
+    END IF;
+  END LOOP;
+END $$;
+
+-- c. enrol_student: identical to §12 except it also stores template_id.
+CREATE OR REPLACE FUNCTION public.enrol_student(
+  p_student_id UUID,
+  p_teacher_id UUID,
+  p_payment_plan payment_plan,
+  p_start_date DATE,
+  p_end_date DATE,
+  p_total_lessons INTEGER,
+  p_rate_per_lesson NUMERIC,
+  p_total_fee NUMERIC,
+  p_registration_fee NUMERIC DEFAULT 0,
+  p_lesson_rate_id UUID DEFAULT NULL,
+  p_academic_year TEXT DEFAULT NULL,
+  p_discount_primary TEXT DEFAULT 'none',
+  p_discount_multilesson BOOLEAN DEFAULT false,
+  p_discount_value NUMERIC DEFAULT 0,
+  -- slot: either an existing template …
+  p_template_id UUID DEFAULT NULL,
+  -- … or a new one
+  p_day_of_week INTEGER DEFAULT NULL,
+  p_start_time TIME DEFAULT NULL,
+  p_end_time TIME DEFAULT NULL,
+  p_instrument_id UUID DEFAULT NULL,
+  p_title TEXT DEFAULT NULL,
+  p_location_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_tpl teacher_schedule_templates%ROWTYPE;
+  v_enrolment_id UUID;
+  v_location UUID;
+  v_end_time TIME;
+  v_date DATE;
+  v_existing RECORD;
+  v_lesson_id UUID;
+  v_created INTEGER := 0;
+  v_joined INTEGER := 0;
+  v_conflicts INTEGER := 0;
+  v_conflict_dates TEXT[] := '{}';
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can enrol students' USING ERRCODE = '42501';
+  END IF;
+
+  -- ── validation ──
+  IF NOT EXISTS (SELECT 1 FROM students WHERE id = p_student_id) THEN
+    RAISE EXCEPTION 'Student not found';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = p_teacher_id AND role = 'teacher') THEN
+    RAISE EXCEPTION 'Please choose a teacher';
+  END IF;
+  IF p_start_date IS NULL OR p_end_date IS NULL OR p_end_date <= p_start_date THEN
+    RAISE EXCEPTION 'End date must be after the start date';
+  END IF;
+  IF p_total_lessons IS NULL OR p_total_lessons < 1 OR p_total_lessons > 60 THEN
+    RAISE EXCEPTION 'Number of lessons must be between 1 and 60';
+  END IF;
+  IF COALESCE(p_rate_per_lesson, -1) < 0 OR COALESCE(p_total_fee, -1) < 0
+     OR COALESCE(p_registration_fee, 0) < 0 OR COALESCE(p_discount_value, 0) < 0 THEN
+    RAISE EXCEPTION 'Fees and discounts cannot be negative';
+  END IF;
+  IF p_payment_plan <> 'trial' AND p_rate_per_lesson <= 0 THEN
+    RAISE EXCEPTION 'Enter a lesson rate greater than ₹0 (or choose the Trial plan)';
+  END IF;
+
+  -- ── slot ──
+  IF p_template_id IS NOT NULL THEN
+    SELECT * INTO v_tpl FROM teacher_schedule_templates WHERE id = p_template_id FOR UPDATE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'That schedule slot no longer exists';
+    END IF;
+    IF v_tpl.teacher_id <> p_teacher_id THEN
+      RAISE EXCEPTION 'That slot belongs to a different teacher — pick a slot for the selected teacher';
+    END IF;
+    IF NOT (p_student_id = ANY(COALESCE(v_tpl.student_ids, '{}'))) THEN
+      UPDATE teacher_schedule_templates
+        SET student_ids = array_append(COALESCE(student_ids, '{}'), p_student_id), updated_at = now()
+        WHERE id = p_template_id;
+    END IF;
+  ELSE
+    IF p_day_of_week IS NULL OR p_day_of_week NOT BETWEEN 0 AND 6 OR p_start_time IS NULL THEN
+      RAISE EXCEPTION 'Choose a day and start time for the new slot';
+    END IF;
+    IF p_end_time IS NOT NULL AND p_end_time <= p_start_time THEN
+      RAISE EXCEPTION 'Slot end time must be after the start time';
+    END IF;
+    INSERT INTO teacher_schedule_templates
+      (teacher_id, day_of_week, start_time, end_time, location_id, instrument_id, title, student_ids, is_active)
+    VALUES
+      (p_teacher_id, p_day_of_week, p_start_time, p_end_time, p_location_id, p_instrument_id,
+       COALESCE(NULLIF(trim(p_title), ''), 'Lesson'), ARRAY[p_student_id], true)
+    RETURNING * INTO v_tpl;
+  END IF;
+
+  v_location := COALESCE(v_tpl.location_id, p_location_id,
+                         (SELECT location_id FROM students WHERE id = p_student_id));
+  v_end_time := COALESCE(v_tpl.end_time, v_tpl.start_time + INTERVAL '45 minutes');
+
+  -- ── enrolment ──
+  INSERT INTO student_enrolments (
+    student_id, academic_year, lesson_rate_id, total_lessons, lessons_used, start_date,
+    payment_plan, rate_per_lesson, total_fee, registration_fee, instrument_id,
+    discount_primary, discount_multilesson, discount_value, template_id
+  ) VALUES (
+    p_student_id, COALESCE(NULLIF(p_academic_year, ''), to_char(p_start_date, 'YYYY')), p_lesson_rate_id,
+    p_total_lessons, 0, p_start_date, p_payment_plan, p_rate_per_lesson, p_total_fee,
+    COALESCE(p_registration_fee, 0), COALESCE(v_tpl.instrument_id, p_instrument_id),
+    COALESCE(p_discount_primary, 'none'), COALESCE(p_discount_multilesson, false),
+    CASE WHEN p_discount_primary = 'special' THEN COALESCE(p_discount_value, 0) ELSE 0 END,
+    v_tpl.id  -- year rollover: remember the class's weekly slot
+  ) RETURNING id INTO v_enrolment_id;
+
+  -- ── lessons: weekly on the slot's day, from start date, until enough ──
+  FOR v_date IN
+    SELECT d::date FROM generate_series(p_start_date, p_end_date, INTERVAL '1 day') AS d
+    WHERE EXTRACT(DOW FROM d) = v_tpl.day_of_week
+    ORDER BY d
+  LOOP
+    EXIT WHEN v_created + v_joined >= p_total_lessons;
+
+    -- Same slot already has a lesson that day (e.g. a group class): join it.
+    SELECT l.id, l.instrument_id INTO v_existing
+    FROM lessons l
+    WHERE l.teacher_id = p_teacher_id AND l.date = v_date AND l.start_time = v_tpl.start_time
+      AND l.status <> 'cancelled'
+    LIMIT 1;
+
+    IF FOUND THEN
+      -- Only join when the coordinator deliberately picked an existing slot;
+      -- a NEW slot at an occupied time is a clash (never merge into someone's 1:1).
+      IF p_template_id IS NOT NULL AND v_existing.instrument_id IS NOT DISTINCT FROM v_tpl.instrument_id THEN
+        INSERT INTO lesson_students (lesson_id, student_id, enrolment_id)
+        VALUES (v_existing.id, p_student_id, v_enrolment_id)
+        ON CONFLICT (lesson_id, student_id) DO UPDATE SET enrolment_id = EXCLUDED.enrolment_id;
+        v_joined := v_joined + 1;
+      ELSE
+        v_conflicts := v_conflicts + 1;
+        v_conflict_dates := array_append(v_conflict_dates, v_date::text);
+      END IF;
+      CONTINUE;
+    END IF;
+
+    -- Teacher busy with a different lesson overlapping this time: don't double-book.
+    IF EXISTS (
+      SELECT 1 FROM lessons l
+      WHERE l.teacher_id = p_teacher_id AND l.date = v_date AND l.status <> 'cancelled'
+        AND l.start_time < v_end_time
+        AND COALESCE(l.end_time, l.start_time + INTERVAL '45 minutes') > v_tpl.start_time
+    ) THEN
+      v_conflicts := v_conflicts + 1;
+      v_conflict_dates := array_append(v_conflict_dates, v_date::text);
+      CONTINUE;
+    END IF;
+
+    INSERT INTO lessons (teacher_id, location_id, instrument_id, lesson_type, date, start_time, end_time, title,
+                         template_id, is_charged)
+    VALUES (p_teacher_id, v_location, v_tpl.instrument_id, 'regular', v_date, v_tpl.start_time, v_tpl.end_time,
+            COALESCE(NULLIF(v_tpl.title, ''), 'Lesson'), v_tpl.id, COALESCE(v_tpl.counts_toward_lessons, true))
+    RETURNING id INTO v_lesson_id;
+
+    INSERT INTO lesson_students (lesson_id, student_id, enrolment_id)
+    VALUES (v_lesson_id, p_student_id, v_enrolment_id);
+    v_created := v_created + 1;
+  END LOOP;
+
+  -- ── instalments ──
+  PERFORM generate_instalments(v_enrolment_id);
+
+  RETURN jsonb_build_object(
+    'enrolment_id', v_enrolment_id,
+    'template_id', v_tpl.id,
+    'lessons_created', v_created,
+    'lessons_joined', v_joined,
+    'lessons_scheduled', v_created + v_joined,
+    'lessons_expected', p_total_lessons,
+    'conflicts', v_conflicts,
+    'conflict_dates', to_jsonb(v_conflict_dates)
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.enrol_student(UUID, UUID, payment_plan, DATE, DATE, INTEGER, NUMERIC, NUMERIC, NUMERIC, UUID, TEXT, TEXT, BOOLEAN, NUMERIC, UUID, INTEGER, TIME, TIME, UUID, TEXT, UUID) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.enrol_student(UUID, UUID, payment_plan, DATE, DATE, INTEGER, NUMERIC, NUMERIC, NUMERIC, UUID, TEXT, TEXT, BOOLEAN, NUMERIC, UUID, INTEGER, TIME, TIME, UUID, TEXT, UUID) TO authenticated;
+
+
+-- d. renewal_candidates: one call for the renewal screen.
+--    Returns [{ student_id, full_name, location_id,
+--               classes: [{ enrolment_id, instrument_id, instrument_name, template_id,
+--                           teacher_id, teacher_name, slot: {..., student_on_slot}|null, rate_per_lesson,
+--                           payment_plan, lesson_rate_id, discount_*, total_lessons,
+--                           total_fee, start_date }],
+--               renewed: [{ enrolment_id, instrument_id, instrument_name, template_id,
+--                           rate_per_lesson, payment_plan, total_fee }] }]
+--    for every ACTIVE student with an enrolment in p_from_year. `renewed` holds
+--    the student's p_to_year enrolments (the screen matches them to classes).
+CREATE OR REPLACE FUNCTION public.renewal_candidates(p_from_year TEXT, p_to_year TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_result JSONB;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can renew enrolments' USING ERRCODE = '42501';
+  END IF;
+  IF COALESCE(trim(p_from_year), '') = '' OR COALESCE(trim(p_to_year), '') = '' THEN
+    RAISE EXCEPTION 'Choose the year to renew from and to';
+  END IF;
+  IF p_to_year <= p_from_year THEN
+    RAISE EXCEPTION 'The new year must be after the year you renew from';
+  END IF;
+
+  WITH cls AS (
+    SELECT se.*,
+           -- teacher: the slot's, else whoever taught most of this enrolment's lessons
+           COALESCE(t.teacher_id, (
+             SELECT l.teacher_id FROM lesson_students ls JOIN lessons l ON l.id = ls.lesson_id
+             WHERE ls.enrolment_id = se.id
+             GROUP BY l.teacher_id ORDER BY count(*) DESC, l.teacher_id LIMIT 1)) AS cls_teacher_id,
+           t.id AS t_id, t.day_of_week, t.start_time, t.end_time, t.is_active AS t_active,
+           t.is_group, t.title AS t_title, t.instrument_id AS t_instrument_id, t.teacher_id AS t_teacher_id,
+           (se.student_id = ANY(COALESCE(t.student_ids, '{}'))) AS t_on_slot
+    FROM student_enrolments se
+    JOIN students s ON s.id = se.student_id AND s.is_active
+    LEFT JOIN teacher_schedule_templates t ON t.id = se.template_id
+    WHERE se.academic_year = p_from_year
+  ),
+  per_student AS (
+    SELECT c.student_id,
+           jsonb_agg(jsonb_build_object(
+             'enrolment_id', c.id,
+             'instrument_id', c.instrument_id,
+             'instrument_name', i.name,
+             'template_id', c.template_id,
+             'teacher_id', c.cls_teacher_id,
+             'teacher_name', p.full_name,
+             'slot', CASE WHEN c.t_id IS NULL THEN NULL ELSE jsonb_build_object(
+                        'id', c.t_id, 'teacher_id', c.t_teacher_id, 'day_of_week', c.day_of_week,
+                        'start_time', c.start_time, 'end_time', c.end_time, 'is_active', c.t_active,
+                        'is_group', c.is_group, 'title', c.t_title, 'instrument_id', c.t_instrument_id,
+                        'student_on_slot', c.t_on_slot) END,
+             'rate_per_lesson', c.rate_per_lesson,
+             'payment_plan', c.payment_plan,
+             'lesson_rate_id', c.lesson_rate_id,
+             'discount_primary', c.discount_primary,
+             'discount_multilesson', c.discount_multilesson,
+             'discount_value', c.discount_value,
+             'total_lessons', c.total_lessons,
+             'total_fee', c.total_fee,
+             'start_date', c.start_date
+           ) ORDER BY i.name NULLS LAST, c.created_at, c.id) AS classes
+    FROM cls c
+    LEFT JOIN instruments i ON i.id = c.instrument_id
+    LEFT JOIN profiles p ON p.id = c.cls_teacher_id
+    GROUP BY c.student_id
+  )
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'student_id', s.id,
+           'full_name', s.full_name,
+           'location_id', s.location_id,
+           'classes', ps.classes,
+           'renewed', COALESCE((
+             SELECT jsonb_agg(jsonb_build_object(
+                      'enrolment_id', n.id, 'instrument_id', n.instrument_id, 'instrument_name', ni.name,
+                      'template_id', n.template_id, 'rate_per_lesson', n.rate_per_lesson,
+                      'payment_plan', n.payment_plan, 'total_fee', n.total_fee) ORDER BY n.created_at, n.id)
+             FROM student_enrolments n LEFT JOIN instruments ni ON ni.id = n.instrument_id
+             WHERE n.student_id = s.id AND n.academic_year = p_to_year), '[]'::jsonb)
+         ) ORDER BY s.full_name, s.id), '[]'::jsonb)
+  INTO v_result
+  FROM per_student ps
+  JOIN students s ON s.id = ps.student_id;
+
+  RETURN v_result;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.renewal_candidates(TEXT, TEXT) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.renewal_candidates(TEXT, TEXT) TO authenticated;
+
+
+-- e. rollover_release_slot: a class dropped at renewal. Its old-year enrolment
+--    stays as history; the student just leaves the weekly slot so lessons
+--    generated from the slot for the new year don't include them. Kept when the
+--    student was renewed on that same slot. Returns true if they were removed.
+CREATE OR REPLACE FUNCTION public.rollover_release_slot(p_student_id UUID, p_template_id UUID, p_to_year TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_n INTEGER;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can renew enrolments' USING ERRCODE = '42501';
+  END IF;
+  IF EXISTS (SELECT 1 FROM student_enrolments
+             WHERE student_id = p_student_id AND template_id = p_template_id
+               AND academic_year >= p_to_year) THEN
+    RETURN false;
+  END IF;
+  UPDATE teacher_schedule_templates
+    SET student_ids = array_remove(student_ids, p_student_id), updated_at = now()
+    WHERE id = p_template_id AND p_student_id = ANY(COALESCE(student_ids, '{}'));
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n > 0;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.rollover_release_slot(UUID, UUID, TEXT) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.rollover_release_slot(UUID, UUID, TEXT) TO authenticated;

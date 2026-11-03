@@ -491,8 +491,8 @@ function RenewalPanel({ onClose }: { onClose: () => void }) {
         {/* Footer */}
         <div className="border-t border-black/5 px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 bg-white">
           <p className="text-xs text-gray-500 flex-1">
-            <span className="font-semibold text-navy">{summary.students}</span> students ·{' '}
-            <span className="font-semibold text-navy">{summary.classes}</span> classes ·{' '}
+            <span className="font-semibold text-navy">{summary.students}</span> student{summary.students === 1 ? '' : 's'} ·{' '}
+            <span className="font-semibold text-navy">{summary.classes}</span> class{summary.classes === 1 ? '' : 'es'} ·{' '}
             <span className="font-semibold text-navy">{inr(summary.total)}</span>
             {summary.renewed > 0 && <> · {summary.renewed} already renewed</>}
             {summary.problems > 0 && <span className="text-coral"> · {summary.problems} need attention</span>}
