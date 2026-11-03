@@ -185,15 +185,13 @@ A parent with two or three children at Troika signs up **once**, with one email.
 
 Use this for a student who is **already in the app**. (For a brand-new student, use **+ Add Student**, which does both at once.)
 
-![Choosing a weekly slot for the class](manual-images/enrol-step2.png)
+![The Enrol Student form: student, class, lesson times, rate and plan on one form](manual-images/enrol-form.png)
 
-1. Click **Enrolments**, then **Enrol Student**.
-2. Choose the **Student**, the **Times per week** (1×, 2× or 3×), and type the **Rate per lesson (₹)**, the price of one lesson for this student. The box starts empty.
-3. Choose the **Payment Plan**, **Start Date**, **End Date**, **Registration Fee (₹)** and **Discount (optional)**. Check the **Fee Summary**, then click **Next**.
-4. Choose the **Teacher**. Then, under **Schedule Slot**, choose one for each weekly lesson (one for 1×, two for 2×, three for 3×):
-   - one of the teacher's **existing classes** (the list shows who is in each). Pick one only to put the student **in that same class**, for example a brother or sister, or a group. Each student pays for their own place. Or:
-   - **+ New day and time**: choose the **Day**, **Start**, **End**, **Instrument** and a **Title**. If that time overlaps another class of this teacher, a **Clash** message names the student already there.
-5. Click **Save & Generate Lessons**.
+1. Click **Enrolments**, then **Enrol Student**. Everything is on one form.
+2. Choose the **Student**.
+3. Under **Class**, choose the **Teacher**, **Instrument**, **Times per week** (1×, 2× or 3×) and **Location**.
+4. Fill in the **Day**, **Start** and **End** for each lesson (one line per lesson). If the teacher already has another student at that time, a red **Clash** message names them. Pick another time.
+5. Type the **Rate per lesson (₹)**. Then check the **Payment Plan**, **Registration Fee (₹)**, **Start Date**, **End Date** and **Discount (optional)**, look at the **Fee Summary**, and click **Save & Schedule Lessons**.
 6. For another instrument, click **+ Add another class for [name]** and repeat. Click **Done** when finished.
 
 > **Good to know:** If some weeks clash with the teacher's other lessons, a yellow warning lists the dates that were skipped. Add those lessons from the **Schedule** page, or pick another time.
