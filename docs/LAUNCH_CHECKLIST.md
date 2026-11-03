@@ -105,7 +105,7 @@ Student (phone): Home shows upcoming lessons; Payments shows instalments.
   a group class, enrol them from Enrolments and pick the group's slot.
 - **Absences marked by teachers** are recorded as "not charged" (they don't
   use up a lesson). Charging an absence is a coordinator decision on the
-  Schedule page.
+  student's page (Students → student → History → Absent · Charged).
 
 - A **break** for selected students cancels the whole lesson slot (including
   other students in a group class). Same as before.
