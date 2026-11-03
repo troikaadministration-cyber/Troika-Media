@@ -75,6 +75,16 @@ export function TeacherScheduleAdminPage() {
       setError('End time must be after start time');
       return;
     }
+    // Don't create a weekly slot on top of another active slot for this teacher.
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+    const start = toMin(form.start_time);
+    const end = form.end_time ? toMin(form.end_time) : start + 45;
+    const clash = templates.find(t => t.day_of_week === Number(form.day_of_week) && t.is_active !== false &&
+      toMin(t.start_time) < end && (t.end_time ? toMin(t.end_time) : toMin(t.start_time) + 45) > start);
+    if (clash) {
+      setError(`Overlaps "${clash.title || 'another slot'}" at ${clash.start_time.slice(0, 5)}. Pick another time.`);
+      return;
+    }
     setError(null);
     setSaving(true);
     const { error: err } = await supabase.from('teacher_schedule_templates').insert({

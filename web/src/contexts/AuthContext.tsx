@@ -204,11 +204,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfileError(null);
     clearProfileCache();
     clearQueryCache();
+    // If the server can't be reached (offline / flaky network) the global
+    // sign-out fails without clearing the saved session — on a shared phone
+    // the next visitor would be signed straight back in. Always clear locally.
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
     } catch (err) {
-      // Even if the server call fails (offline), local state is already cleared.
       console.error('Sign out error:', err);
+      await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
     }
   }, []);
 

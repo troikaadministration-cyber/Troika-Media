@@ -1,5 +1,5 @@
-import { toDateStr } from '../lib/dates';
-import { useState, useRef } from 'react';
+import { toDateStr, parseDateStr } from '../lib/dates';
+import { useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useTeacherLessons } from '../hooks/useTeacherLessons';
@@ -47,11 +47,15 @@ export function TeacherSchedulePage() {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const [searchParams] = useSearchParams();
-  // `?date=YYYY-MM-DD` comes from the calendar's "Open full day view".
-  const [selectedDate, setSelectedDate] = useState(() => {
+  // `?date=YYYY-MM-DD` comes from the calendar's "Open full day view"; with no
+  // (or an invalid) date we show today. Follows the URL, so the sidebar's
+  // Schedule link returns to today.
+  const urlDate = (() => {
     const d = searchParams.get('date');
-    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : toDateStr(new Date());
-  });
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) && toDateStr(parseDateStr(d)) === d ? d : toDateStr(new Date());
+  })();
+  const [selectedDate, setSelectedDate] = useState(urlDate);
+  useEffect(() => { setSelectedDate(urlDate); }, [urlDate]);
   const { lessons, loading, error, refresh, markComplete, markPending, updateNotes, markAttendance } = useTeacherLessons(profile?.id, selectedDate);
   const [confirmDeletePiece, setConfirmDeletePiece] = useState<string | null>(null);
 
@@ -202,7 +206,7 @@ export function TeacherSchedulePage() {
       {/* Today's Overview */}
       <div className="bg-white rounded-xl border-l-4 border-coral p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-bold text-navy text-lg">Today's Overview</h2>
+          <h2 className="font-bold text-navy text-lg">{isToday ? "Today's Overview" : 'Day Overview'}</h2>
           <span className="text-sm text-gray-500">{dateLabel}</span>
         </div>
         <div className="flex gap-3 mb-3">
@@ -246,7 +250,7 @@ export function TeacherSchedulePage() {
       {error && <ErrorBanner message={error} onRetry={() => { void refresh(); }} />}
 
       {/* Lessons */}
-      <h2 className="font-bold text-navy text-lg">Today's Classes</h2>
+      <h2 className="font-bold text-navy text-lg">{isToday ? "Today's Classes" : 'Classes'}</h2>
 
       {loading ? (
         <SkeletonList rows={4} />

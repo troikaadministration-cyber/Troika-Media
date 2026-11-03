@@ -286,7 +286,7 @@ export function PaymentsPage() {
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                       isPaid ? 'bg-teal/10 text-teal' : isOverdue ? 'bg-coral/10 text-coral' : 'bg-yellow-100 text-yellow-700'
                     }`}>
-                      {isPaid ? 'Paid' : isOverdue ? 'Overdue' : 'Pending'}
+                      {isPaid ? 'Paid' : isOverdue ? 'Overdue' : 'Upcoming'}
                     </span>
                   </td>
                   <td className="px-5 py-3">
@@ -361,7 +361,7 @@ export function PaymentsPage() {
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                   isPaid ? 'bg-teal/10 text-teal' : isOverdue ? 'bg-coral/10 text-coral' : 'bg-yellow-100 text-yellow-700'
                 }`}>
-                  {isPaid ? 'Paid' : isOverdue ? 'Overdue' : 'Pending'}
+                  {isPaid ? 'Paid' : isOverdue ? 'Overdue' : 'Upcoming'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">

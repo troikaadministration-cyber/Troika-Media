@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/queryCache';
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import type { PendingLesson } from '../types';
@@ -33,7 +34,7 @@ export function RescheduleModal({ lesson, date, onClose, onConfirm }: Props) {
       await onConfirm(lesson.id, date, time + ':00'); // append seconds for DB
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to reschedule');
+      setError(errorMessage(e, 'Failed to reschedule'));
     } finally {
       setLoading(false);
     }

@@ -7,7 +7,7 @@ import { invalidateLessonViews } from './useLessons';
 import type { PendingLesson, AutoReschedulePreviewItem, LessonType, LessonStatus } from '../types';
 
 const PENDING_COLUMNS = `
-  id, teacher_id, instrument_id, location_id, title, date, start_time, source_break_id,
+  id, teacher_id, instrument_id, location_id, title, date, start_time, end_time, source_break_id,
   students:lesson_students(student_id, student:students(full_name)),
   teacher:profiles!lessons_teacher_id_fkey(full_name),
   instrument:instruments(name, icon),
@@ -41,6 +41,14 @@ function afterReschedule() {
   invalidateQueries('breaks:');
 }
 
+/** Same duration as the original lesson (45 min if it had no end time). */
+function endTimeFor(original: { start_time: string; end_time?: string | null }, newStart: string): string {
+  const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const dur = original.end_time ? Math.max(15, toMin(original.end_time) - toMin(original.start_time)) : 45;
+  const end = Math.min(toMin(newStart) + dur, 23 * 60 + 59);
+  return `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
+}
+
 export function usePendingReschedules() {
   const { data, loading, error, refresh } = useQuery<PendingLesson[]>('pending-reschedules', () =>
     fetchAll<PendingLesson>((from, to) =>
@@ -68,6 +76,7 @@ export function usePendingReschedules() {
         makeup_for_lesson_id: lesson.id,
         date: newDate,
         start_time: newTime,
+        end_time: endTimeFor(lesson, newTime),
         status: 'scheduled' as LessonStatus,
         is_charged: false,
       })
@@ -154,6 +163,7 @@ export function usePendingReschedules() {
         makeup_for_lesson_id: p.original.id,
         date: p.newDate,
         start_time: p.newTime,
+        end_time: endTimeFor(p.original, p.newTime),
         status: 'scheduled' as LessonStatus,
         is_charged: false,
       })))

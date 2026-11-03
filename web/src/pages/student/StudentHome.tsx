@@ -19,8 +19,10 @@ export function StudentHome() {
   const nextTeacher = next ? next.lesson.teacher?.full_name : undefined;
   const nextLocation = next ? next.lesson.location?.name : undefined;
 
-  const primary = enrolments[0] || null;
-  const remaining = primary ? primary.total_lessons - primary.lessons_used : null;
+  // Across all of the student's classes (one enrolment per class).
+  const remaining = enrolments.length
+    ? enrolments.reduce((sum, e) => sum + Math.max(0, e.total_lessons - e.lessons_used), 0)
+    : null;
 
   const today = toDateStr(new Date());
   const paidCount = payments.filter((p) => p.paid_date).length;

@@ -257,6 +257,7 @@ BEGIN
            count(*) FILTER (WHERE ls.attended IS FALSE) AS absent,
            count(*) FILTER (WHERE ls.attended IS FALSE AND ls.absence_category = 'charged') AS charged_absent
     FROM lesson_students ls
+    JOIN lessons l ON l.id = ls.lesson_id AND l.status = 'completed'  -- reopened/cancelled lessons don't count
     GROUP BY ls.student_id
   ),
   ids AS (
@@ -609,7 +610,9 @@ BEGIN
     LIMIT 1;
 
     IF FOUND THEN
-      IF v_existing.instrument_id IS NOT DISTINCT FROM v_tpl.instrument_id THEN
+      -- Only join when the coordinator deliberately picked an existing slot;
+      -- a NEW slot at an occupied time is a clash (never merge into someone's 1:1).
+      IF p_template_id IS NOT NULL AND v_existing.instrument_id IS NOT DISTINCT FROM v_tpl.instrument_id THEN
         INSERT INTO lesson_students (lesson_id, student_id, enrolment_id)
         VALUES (v_existing.id, p_student_id, v_enrolment_id)
         ON CONFLICT (lesson_id, student_id) DO UPDATE SET enrolment_id = EXCLUDED.enrolment_id;
@@ -1217,3 +1220,127 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+-- ── 25. QA fixes: teacher attendance counts; curriculum ownership ─────────
+-- lessons_used recounts ran with the CALLER's permissions. When a teacher
+-- marked attendance, the UPDATE on student_enrolments silently matched 0 rows
+-- (teachers can't update enrolments), so "lessons left" never moved.
+ALTER FUNCTION public.fn_recompute_lessons_used(UUID, TEXT) SECURITY DEFINER;
+ALTER FUNCTION public.fn_lesson_students_recompute_used() SECURITY DEFINER;
+ALTER FUNCTION public.fn_lessons_recompute_used() SECURITY DEFINER;
+REVOKE ALL ON FUNCTION public.fn_recompute_lessons_used(UUID, TEXT) FROM public, anon, authenticated;
+
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT DISTINCT student_id FROM student_enrolments LOOP
+    PERFORM fn_recompute_lessons_used(r.student_id, NULL);
+  END LOOP;
+END $$;
+
+-- An old blanket "teachers manage everything" policy (00010) overrode the
+-- owner-only rules: any teacher could edit/delete anyone's curriculum.
+DROP POLICY IF EXISTS "Teachers manage resources" ON curriculum_resources;
+
+DROP POLICY IF EXISTS "Teachers manage tags" ON curriculum_tags;
+DROP POLICY IF EXISTS "Teachers create tags" ON curriculum_tags;
+CREATE POLICY "Teachers create tags" ON curriculum_tags FOR INSERT
+  WITH CHECK ((SELECT is_approved_teacher()));
+
+DROP POLICY IF EXISTS "Teachers manage resource tags" ON curriculum_resource_tags;
+DROP POLICY IF EXISTS "Teachers tag own resources" ON curriculum_resource_tags;
+CREATE POLICY "Teachers tag own resources" ON curriculum_resource_tags FOR ALL
+  USING ((SELECT is_approved_teacher()) AND EXISTS (
+    SELECT 1 FROM curriculum_resources r WHERE r.id = resource_id AND r.created_by = (SELECT auth.uid())))
+  WITH CHECK ((SELECT is_approved_teacher()) AND EXISTS (
+    SELECT 1 FROM curriculum_resources r WHERE r.id = resource_id AND r.created_by = (SELECT auth.uid())));
+
+-- Students only see APPROVED teachers' profiles (not pending sign-ups).
+DROP POLICY IF EXISTS "Students can view teacher profiles" ON profiles;
+CREATE POLICY "Students can view teacher profiles" ON profiles FOR SELECT
+  USING ((SELECT get_student_id()) IS NOT NULL AND role = 'teacher' AND approved IS TRUE);
+
+
+-- ── 26. Breaks in one transaction; group classes continue for others ──────
+-- A break for selected students used to cancel the WHOLE lesson, including
+-- classmates who aren't on break. Now: if everyone in the lesson is on break
+-- the lesson is cancelled (pending reschedule); otherwise only the students on
+-- break are moved to a cancelled copy of that lesson (pending reschedule) and
+-- the class goes ahead for the rest. p_dry_run = true returns the count only.
+CREATE OR REPLACE FUNCTION public.create_break(
+  p_title TEXT,
+  p_start_date DATE,
+  p_end_date DATE,
+  p_student_ids UUID[],
+  p_dry_run BOOLEAN DEFAULT false
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_all BOOLEAN := COALESCE(array_length(p_student_ids, 1), 0) = 0;
+  v_break_id UUID;
+  v_lesson RECORD;
+  v_copy UUID;
+  v_cancelled INTEGER := 0;
+  v_split INTEGER := 0;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can schedule breaks' USING ERRCODE = '42501';
+  END IF;
+  IF p_start_date IS NULL OR p_end_date IS NULL OR p_end_date < p_start_date THEN
+    RAISE EXCEPTION 'End date must be on or after the start date';
+  END IF;
+
+  IF NOT p_dry_run THEN
+    IF COALESCE(trim(p_title), '') = '' THEN RAISE EXCEPTION 'Please give the break a title'; END IF;
+    INSERT INTO scheduled_breaks (created_by, title, start_date, end_date, student_ids, total_cancelled, total_rescheduled)
+    VALUES (auth.uid(), trim(p_title), p_start_date, p_end_date, COALESCE(p_student_ids, '{}'), 0, 0)
+    RETURNING id INTO v_break_id;
+  END IF;
+
+  FOR v_lesson IN
+    SELECT l.*,
+           (SELECT count(*) FROM lesson_students ls WHERE ls.lesson_id = l.id) AS n_students,
+           (SELECT count(*) FROM lesson_students ls WHERE ls.lesson_id = l.id
+              AND (v_all OR ls.student_id = ANY(p_student_ids))) AS n_on_break
+    FROM lessons l
+    WHERE l.status = 'scheduled' AND l.date BETWEEN p_start_date AND p_end_date
+  LOOP
+    CONTINUE WHEN v_lesson.n_on_break = 0 AND NOT v_all;
+
+    IF v_all OR v_lesson.n_on_break = v_lesson.n_students THEN
+      v_cancelled := v_cancelled + 1;
+      CONTINUE WHEN p_dry_run;
+      UPDATE lessons SET status = 'cancelled', pending_reschedule = true, source_break_id = v_break_id,
+                         cancelled_by_role = 'coordinator', cancelled_by_user_id = auth.uid(),
+                         cancel_reason = COALESCE(cancel_reason, trim(p_title))
+      WHERE id = v_lesson.id;
+    ELSE
+      -- Some classmates aren't on break: split the break students off.
+      v_cancelled := v_cancelled + 1;
+      v_split := v_split + 1;
+      CONTINUE WHEN p_dry_run;
+      INSERT INTO lessons (teacher_id, location_id, instrument_id, lesson_type, status, date, start_time, end_time,
+                           title, is_charged, makeup_direction, pending_reschedule, source_break_id,
+                           cancelled_by_role, cancelled_by_user_id, cancel_reason)
+      VALUES (v_lesson.teacher_id, v_lesson.location_id, v_lesson.instrument_id, v_lesson.lesson_type, 'cancelled',
+              v_lesson.date, v_lesson.start_time, v_lesson.end_time, v_lesson.title, v_lesson.is_charged,
+              v_lesson.makeup_direction, true, v_break_id, 'coordinator', auth.uid(), trim(p_title))
+      RETURNING id INTO v_copy;
+      UPDATE lesson_students SET lesson_id = v_copy
+      WHERE lesson_id = v_lesson.id AND student_id = ANY(p_student_ids);
+    END IF;
+  END LOOP;
+
+  IF NOT p_dry_run THEN
+    UPDATE scheduled_breaks SET total_cancelled = v_cancelled WHERE id = v_break_id;
+  END IF;
+  RETURN jsonb_build_object('break_id', v_break_id, 'cancelled', v_cancelled, 'split_group_lessons', v_split);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.create_break(TEXT, DATE, DATE, UUID[], BOOLEAN) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.create_break(TEXT, DATE, DATE, UUID[], BOOLEAN) TO authenticated;

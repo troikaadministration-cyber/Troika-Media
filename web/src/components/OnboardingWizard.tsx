@@ -281,10 +281,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
           });
           if (enrolErr) throw new Error(`${instrName || 'Class'}: ${enrolErr.message}`);
           setSavedClasses(prev => [...prev, idx]);
-          const r = result as { lessons_scheduled: number; lessons_expected: number; conflicts: number };
-          if (r.lessons_scheduled < r.lessons_expected) {
+          const r = result as { lessons_scheduled: number; lessons_expected: number; conflicts: number; conflict_dates?: string[] };
+          if (r.lessons_scheduled < r.lessons_expected || r.conflicts > 0) {
+            const dates = (r.conflict_dates ?? []).slice(0, 4).join(', ');
             warnings.push(`${instrName || 'Class'}: ${r.lessons_scheduled} of ${r.lessons_expected} lessons scheduled` +
-              (r.conflicts ? ` (${r.conflicts} clashed with the teacher's other lessons)` : ''));
+              (r.conflicts ? ` — ${r.conflicts} week(s) clashed with the teacher's other lessons and were skipped (${dates}${(r.conflict_dates?.length ?? 0) > 4 ? '…' : ''}). Check the schedule.` : ''));
           }
         }
       }

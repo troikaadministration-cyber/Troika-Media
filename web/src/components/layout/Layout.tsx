@@ -98,6 +98,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  // Escape closes the mobile menu and the notifications panel.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setSidebarOpen(false); setNotifOpen(false); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
@@ -151,6 +160,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     key={to}
                     to={to}
                     end={to === '/'}
+                    onClick={() => setSidebarOpen(false)}
                     className={({ isActive }) =>
                       `relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive

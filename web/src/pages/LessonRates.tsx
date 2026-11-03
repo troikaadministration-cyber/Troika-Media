@@ -746,6 +746,7 @@ export function LessonRatesPage() {
     invalidateReference('locations');
     invalidateQueries('lesson-rates:categories');
     invalidateQueries('lesson-rates:usage');
+    invalidateQueries('lesson-rates:all'); // a category rename also renames its rates
   }
 
   const selectedTeacher = teachers.find(t => t.id === selectedTeacherId) ?? null;

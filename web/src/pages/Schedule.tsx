@@ -4,7 +4,8 @@ import { Plus, ChevronLeft, ChevronRight, Filter, X, UserSearch, Calendar as Cal
 import { useLessons } from '../hooks/useLessons';
 import { SkeletonList } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
-import { useQuery, unwrap } from '../lib/queryCache';
+import { useQuery, unwrap, errorMessage } from '../lib/queryCache';
+import { useToast } from '../contexts/ToastContext';
 import { useTeachersList, useInstruments, useActiveStudentsList } from '../hooks/useReference';
 import type { LessonType } from '../types';
 
@@ -90,6 +91,7 @@ function getWeekDays(date: string) {
 
 
 export function SchedulePage() {
+  const { showToast } = useToast();
   const [selectedDate, setSelectedDate] = useState(toDateStr(new Date()));
   const [teacherFilter, setTeacherFilter] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('');
@@ -207,8 +209,9 @@ export function SchedulePage() {
       await createLesson(lessonData);
       setShowForm(false);
       setFormData({ ...formData, title: '', student_ids: [], is_charged: true, makeup_direction: '', special_fee_type: 'regular', special_fee_amount: '' });
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      const msg = errorMessage(err, 'Could not create the lesson');
+      showToast('error', /lessons_end_after_start/.test(msg) ? 'End time must be after the start time.' : msg);
     }
   };
 

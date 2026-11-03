@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/queryCache';
 import { useState } from 'react';
 import { CalendarOff, Plus, X, AlertTriangle, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 import { SkeletonList } from '../components/Skeleton';
@@ -27,7 +28,8 @@ export function BreaksPage() {
 
   const [showForm, setShowForm] = useState(false);
   const { students } = useActiveStudentsList();
-  const [allStudents, setAllStudents] = useState(true);
+  // Off by default: cancelling every student's lessons should be a deliberate choice.
+  const [allStudents, setAllStudents] = useState(false);
   const [preview, setPreview] = useState<number | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -88,11 +90,12 @@ export function BreaksPage() {
         student_ids: allStudents ? [] : form.student_ids,
         created_by: profile.id,
       });
-      showToast('success', `Break created. ${result.cancelled} lesson${result.cancelled !== 1 ? 's' : ''} cancelled and marked for reschedule.`);
+      showToast('success', `Break created. ${result.cancelled} lesson${result.cancelled !== 1 ? 's' : ''} cancelled and marked for reschedule` +
+        (result.split ? ` (${result.split} group class${result.split !== 1 ? 'es' : ''} continue for the other students).` : '.'));
       closeForm();
       setForm({ title: '', start_date: '', end_date: '', student_ids: [] });
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create break');
+      setFormError(errorMessage(err, 'Failed to create break'));
     } finally {
       setCreating(false);
     }

@@ -70,19 +70,19 @@ export function useTeacherLessons(teacherId: string | undefined, date: string) {
     const { error: err } = await supabase.from('lesson_students').update({ attended }).eq('id', lessonStudentId);
     if (err) throw err;
 
-    // Auto-complete lesson when all students are marked
-    if (attended !== null) {
-      const { data: allStudents, error: readErr } = await supabase
-        .from('lesson_students')
-        .select('attended')
-        .eq('lesson_id', lessonId);
-      if (readErr) throw readErr;
-
-      const allMarked = allStudents && allStudents.length > 0 && allStudents.every(s => s.attended !== null);
-      if (allMarked) {
-        const { error: upErr } = await supabase.from('lessons').update({ status: 'completed' }).eq('id', lessonId);
-        if (upErr) throw upErr;
-      }
+    // Lesson is completed once every student is marked; un-marking one
+    // (an undo) puts it back to scheduled.
+    const [{ data: allStudents, error: readErr }, { data: lesson, error: lessonErr }] = await Promise.all([
+      supabase.from('lesson_students').select('attended').eq('lesson_id', lessonId),
+      supabase.from('lessons').select('status').eq('id', lessonId).single(),
+    ]);
+    if (readErr) throw readErr;
+    if (lessonErr) throw lessonErr;
+    const allMarked = !!allStudents && allStudents.length > 0 && allStudents.every(s => s.attended !== null);
+    const nextStatus = allMarked ? 'completed' : 'scheduled';
+    if (lesson && lesson.status !== 'cancelled' && lesson.status !== nextStatus) {
+      const { error: upErr } = await supabase.from('lessons').update({ status: nextStatus }).eq('id', lessonId);
+      if (upErr) throw upErr;
     }
 
     await afterChange();

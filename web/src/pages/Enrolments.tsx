@@ -82,11 +82,24 @@ function emptyForm() {
 }
 
 /** Rates for an academic year; falls back to the latest year that has rates. */
+/**
+ * The rate card for a year: for each teacher/category/location/online combo,
+ * that year's rate, or — if none was set for that year yet — the most recent
+ * earlier one. (Previously one new-year rate hid every other rate.)
+ */
 function ratesForYear(rates: LessonRate[], year: string): { list: LessonRate[]; shownYear: string } {
-  const exact = rates.filter(r => !r.academic_year || r.academic_year === year);
-  if (exact.length > 0 || rates.length === 0) return { list: exact, shownYear: year };
-  const latest = rates.reduce((y, r) => (r.academic_year && r.academic_year > y ? r.academic_year : y), '');
-  return { list: rates.filter(r => r.academic_year === latest), shownYear: latest };
+  const best = new Map<string, LessonRate>();
+  for (const r of rates) {
+    const y = r.academic_year || year;
+    if (y > year) continue;
+    const key = [r.teacher_id ?? '', r.category, r.location_id ?? '', r.is_online].join('|');
+    const cur = best.get(key);
+    if (!cur || (cur.academic_year || year) < y) best.set(key, r);
+  }
+  const list = [...best.values()];
+  const older = list.filter(r => r.academic_year && r.academic_year !== year);
+  const shownYear = older.length === 0 ? year : older.reduce((m, r) => (r.academic_year! < m ? r.academic_year! : m), year);
+  return { list, shownYear };
 }
 
 function fmtShortDate(d: string) {
@@ -286,10 +299,12 @@ export function EnrolmentsPage() {
       const name = instrumentName(slot.instrumentId) || 'Class';
       const joined = r.lessons_joined > 0 ? ` (${r.lessons_joined} in an existing class)` : '';
       let warning: string | null = null;
-      if (r.lessons_scheduled < r.lessons_expected) {
+      if (r.lessons_scheduled < r.lessons_expected || r.conflicts > 0) {
         const dates = r.conflict_dates ?? [];
         const shown = dates.slice(0, 6).map(fmtShortDate).join(', ') + (dates.length > 6 ? ` +${dates.length - 6} more` : '');
-        warning = `Only ${r.lessons_scheduled} of ${r.lessons_expected} lessons fit before the end date.` +
+        warning = (r.lessons_scheduled < r.lessons_expected
+            ? `Only ${r.lessons_scheduled} of ${r.lessons_expected} lessons fit before the end date.`
+            : `All ${r.lessons_scheduled} lessons scheduled, but some weeks were skipped.`) +
           (r.conflicts > 0
             ? ` ${r.conflicts} week${r.conflicts !== 1 ? 's' : ''} clashed with ${teacherName || 'the teacher'}'s other lessons: ${shown}.`
             : '') +
@@ -489,7 +504,7 @@ export function EnrolmentsPage() {
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Lesson Rate</label>
                   {rateYear !== academicYear && (
-                    <p className="text-xs text-yellow-600 mb-1">No {academicYear} rates set — showing {rateYear} rates.</p>
+                    <p className="text-xs text-yellow-600 mb-1">Some rates have no {academicYear} value yet — using the latest earlier rate ({rateYear}).</p>
                   )}
                   {selectedStudent?.location_id && hasLocationRates && (
                     <p className="text-xs text-teal mb-1">Showing rates for this student's location first.</p>
@@ -680,14 +695,15 @@ export function EnrolmentsPage() {
                 {/* Teacher display / picker */}
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Teacher</label>
-                  {teacherId ? (
+                  {/* Fixed when the chosen rate belongs to a teacher; otherwise pick (and re-pick) here. */}
+                  {selectedRate?.teacher_id ? (
                     <div className="px-3 py-2 bg-gray-50 rounded-lg text-sm text-navy font-medium">
                       {teacherName}
                     </div>
                   ) : (
                     <select
                       value={manualTeacherId}
-                      onChange={(e) => setManualTeacherId(e.target.value)}
+                      onChange={(e) => { setManualTeacherId(e.target.value); setSelectedSlot(null); }}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                     >
                       <option value="">Select teacher...</option>
