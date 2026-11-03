@@ -27,6 +27,9 @@ INSERT INTO lesson_categories (name, sort_order) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 -- 4. Migrate existing lesson_rates.category values to new names
+-- The original CHECK (00004) only allowed the old snake_case names; drop it
+-- or this migration fails on a fresh database. (No-op where already dropped.)
+ALTER TABLE lesson_rates DROP CONSTRAINT IF EXISTS lesson_rates_category_check;
 UPDATE lesson_rates SET category = '1:1 Instrumental' WHERE category = '1:1_instrumental';
 UPDATE lesson_rates SET category = '1:1 Theory'       WHERE category = '1:1_theory';
 UPDATE lesson_rates SET category = '1:1 Vocals'       WHERE category = '1:1_vocals';

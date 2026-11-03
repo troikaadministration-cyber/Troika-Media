@@ -1153,3 +1153,26 @@ DROP TRIGGER IF EXISTS trg_cascade_lesson_category_rename ON lesson_categories;
 CREATE TRIGGER trg_cascade_lesson_category_rename
   AFTER UPDATE OF name ON lesson_categories
   FOR EACH ROW EXECUTE FUNCTION cascade_lesson_category_rename();
+
+
+-- ── 22. Free-form lesson categories ────────────────────────────────────────
+-- Categories are managed in lesson_categories; the old fixed-list CHECK on
+-- lesson_rates.category would reject them. (Also dropped in 00011.)
+ALTER TABLE lesson_rates DROP CONSTRAINT IF EXISTS lesson_rates_category_check;
+
+
+-- ── 23. Realtime for live notifications and schedule refresh ──────────────
+-- The app subscribes to changes on these tables; they must be in the
+-- Supabase Realtime publication (RLS still decides who receives what).
+DO $$
+DECLARE t TEXT;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    FOREACH t IN ARRAY ARRAY['notifications', 'lessons'] LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_publication_tables
+                     WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = t) THEN
+        EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
+      END IF;
+    END LOOP;
+  END IF;
+END $$;

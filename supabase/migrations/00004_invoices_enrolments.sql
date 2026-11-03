@@ -344,7 +344,7 @@ INSERT INTO instruments (name) VALUES ('Viola') ON CONFLICT DO NOTHING;
 -- To set up the admin:
 --   1. Go to Supabase Dashboard → Authentication → Users → Add User
 --   2. Email: troika.administration@gmail.com
---   3. Password: Troika_2026
+--   3. Password: (choose a strong password — never commit it)
 --   4. The trigger below auto-assigns coordinator role.
 
 CREATE OR REPLACE FUNCTION handle_new_user()
