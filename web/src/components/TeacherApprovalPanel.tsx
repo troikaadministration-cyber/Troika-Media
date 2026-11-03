@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, UserCheck, UserX } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { errorMessage } from '../lib/queryCache';
 
 interface PendingProfile {
   id: string;
@@ -32,31 +33,35 @@ export function TeacherApprovalPanel({ open, profile, onClose, onComplete }: Pro
   if (!open || !profile) return null;
 
   async function handleApprove() {
+    if (saving) return;
     if (!fullName.trim()) { setError('Full name is required'); return; }
     setSaving(true);
     setError(null);
     try {
       const patch: Record<string, unknown> = { approved: true, full_name: fullName.trim() };
       if (phone.trim()) patch.phone = phone.trim();
-      const { error: err } = await supabase.from('profiles').update(patch).eq('id', profile!.id);
+      const { data, error: err } = await supabase.from('profiles').update(patch).eq('id', profile!.id).select('id');
       if (err) throw err;
+      if (!data?.length) throw new Error('Not allowed to update this profile');
       onComplete();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errorMessage(err, 'Could not save'));
     } finally {
       setSaving(false);
     }
   }
 
   async function handleDeny() {
+    if (saving) return;
     setSaving(true);
     setError(null);
     try {
-      const { error: err } = await supabase.from('profiles').update({ approved: false }).eq('id', profile!.id);
+      const { data, error: err } = await supabase.from('profiles').update({ approved: false }).eq('id', profile!.id).select('id');
       if (err) throw err;
+      if (!data?.length) throw new Error('Not allowed to update this profile');
       onComplete();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errorMessage(err, 'Could not save'));
     } finally {
       setSaving(false);
     }
@@ -64,10 +69,10 @@ export function TeacherApprovalPanel({ open, profile, onClose, onComplete }: Pro
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-md p-6">
+      <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto p-5 sm:p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-navy">Review Teacher Application</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-navy"><X size={20} /></button>
+          <button onClick={onClose} disabled={saving} aria-label="Close" className="text-gray-400 hover:text-navy disabled:opacity-50"><X size={20} /></button>
         </div>
 
         {error && (

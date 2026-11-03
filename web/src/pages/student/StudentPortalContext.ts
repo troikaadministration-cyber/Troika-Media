@@ -32,8 +32,12 @@ export interface StudentPortalValue {
   upcoming: StudentLesson[];
   past: StudentLesson[];
   totalCompleted: number;
+  totalMissed: number;
+  /** True only until upcoming / past lessons first load (show skeletons). */
   loadingLessons: boolean;
-  refresh: () => void;
+  loadingPast: boolean;
+  lessonsError: string | null;
+  refresh: () => Promise<void>;
 }
 
 export const StudentPortalContext = createContext<StudentPortalValue | null>(null);

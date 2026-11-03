@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, errorMessage } from '../lib/queryCache';
+import { invalidateLessonViews } from '../hooks/useLessons';
 import { useToast } from '../contexts/ToastContext';
 import {
   X, Clock, MapPin, Music, Calendar, User, Loader2, ArrowRight
@@ -48,34 +50,18 @@ interface MakeupMatchPanelProps {
 }
 
 export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPanelProps) {
-  const [data, setData] = useState<MatchData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState<string | null>(null);
   const { showToast } = useToast();
 
-  useEffect(() => {
-    fetchMatches();
-  }, [lesson.id]);
-
-  async function fetchMatches() {
-    setLoading(true);
-    setError(null);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await supabase.functions.invoke('find-makeup-matches', {
-        body: { lesson_id: lesson.id },
-      });
-      if (res.error) throw res.error;
-      setData(res.data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch matches');
-    } finally {
-      setLoading(false);
-    }
-  }
+  // `lessons:` prefix so lesson invalidations refresh the matches too.
+  const { data, loading, error } = useQuery<MatchData>(`lessons:makeup-matches:${lesson.id}`, async () => {
+    const res = await supabase.functions.invoke('find-makeup-matches', { body: { lesson_id: lesson.id } });
+    if (res.error) throw new Error(errorMessage(res.error, 'Failed to fetch matches'));
+    return res.data as MatchData;
+  });
 
   async function scheduleMakeup(studentId: string, studentName: string) {
+    if (scheduling) return;
     setScheduling(studentId);
     try {
       // Create a makeup lesson with same date/time/location/teacher
@@ -97,33 +83,39 @@ export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPa
 
       if (createErr) throw createErr;
 
-      // Add the student to the lesson
-      await supabase.from('lesson_students').insert({
+      // Add the student; if that fails, remove the empty lesson again.
+      const { error: lsErr } = await supabase.from('lesson_students').insert({
         lesson_id: newLesson.id,
         student_id: studentId,
       });
+      if (lsErr) {
+        await supabase.from('lessons').delete().eq('id', newLesson.id);
+        throw lsErr;
+      }
+      invalidateLessonViews();
 
-      // Send notification if student has a user_id
+      // Notify the student if they have a login (best effort).
       const { data: student } = await supabase
         .from('students')
         .select('user_id')
         .eq('id', studentId)
-        .single();
-
+        .maybeSingle();
+      let notified = true;
       if (student?.user_id) {
-        await supabase.from('notifications').insert({
+        const { error: nErr } = await supabase.from('notifications').insert({
           user_id: student.user_id,
           type: 'makeup_available',
           title: 'Makeup Lesson Scheduled',
           body: `A makeup lesson has been scheduled for you on ${lesson.date} at ${lesson.start_time?.slice(0, 5)}.`,
         });
+        notified = !nErr;
       }
 
-      showToast('success', `Makeup lesson scheduled for ${studentName}`);
+      showToast('success', `Makeup lesson scheduled for ${studentName}${notified ? '' : ' (notification not sent)'}`);
       onScheduled();
       onClose();
-    } catch (err: any) {
-      showToast('error', err.message || 'Failed to schedule makeup');
+    } catch (err) {
+      showToast('error', errorMessage(err, 'Failed to schedule makeup'));
     } finally {
       setScheduling(null);
     }
@@ -133,12 +125,12 @@ export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPa
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-xl max-h-[85vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-black/5">
           <h2 className="font-semibold text-navy">Find Makeup Match</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-navy"><X size={20} /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
           {/* Lesson info */}
           <div className="bg-gray-50 rounded-xl p-4 space-y-2">
             <p className="text-sm font-semibold text-navy">{lesson.title}</p>
@@ -224,7 +216,7 @@ export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPa
                       </div>
                       <button
                         onClick={() => scheduleMakeup(match.id, match.full_name)}
-                        disabled={scheduling === match.id}
+                        disabled={!!scheduling}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-coral text-white text-xs font-medium hover:bg-coral/90 disabled:opacity-50 flex-shrink-0"
                       >
                         {scheduling === match.id ? (
@@ -242,7 +234,7 @@ export function MakeupMatchPanel({ lesson, onClose, onScheduled }: MakeupMatchPa
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-black/5">
+        <div className="px-4 sm:px-6 py-4 border-t border-black/5">
           <button
             onClick={onClose}
             className="w-full py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"

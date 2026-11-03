@@ -770,7 +770,8 @@ BEGIN
   SELECT email INTO v_email FROM auth.users WHERE id = v_uid;
 
   SELECT * INTO v_profile FROM profiles WHERE id = v_uid FOR UPDATE;
-  IF FOUND AND (v_profile.role = 'coordinator' OR COALESCE(trim(v_profile.full_name), '') <> '') THEN
+  IF FOUND AND (v_profile.role = 'coordinator' OR COALESCE(trim(v_profile.full_name), '') <> ''
+                OR v_profile.approved IS NOT NULL) THEN
     RAISE EXCEPTION 'Your account is already set up';
   END IF;
 
@@ -928,3 +929,170 @@ CREATE TRIGGER trg_guard_profile_privileged_columns
 DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE
   USING (id = (SELECT auth.uid())) WITH CHECK (id = (SELECT auth.uid()));
+
+
+-- ── 19. Security hardening (launch audit) ─────────────────────────────────
+
+-- 19a. link_or_create_student is an internal helper: never callable from the API.
+--      (It trusted a caller-supplied p_user_id/p_email → anyone could claim any
+--      unlinked child record by email.) complete_profile_setup still calls it.
+REVOKE ALL ON FUNCTION public.link_or_create_student(uuid, text, text) FROM public, anon, authenticated;
+
+-- 19b. Only auto-link to a coordinator-created record when the signer-up has a
+--      CONFIRMED email that matches; never overwrite the coordinator's name.
+CREATE OR REPLACE FUNCTION public.link_or_create_student(p_user_id uuid, p_email text, p_full_name text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_student_id uuid;
+BEGIN
+  SELECT id INTO v_student_id FROM students WHERE user_id = p_user_id LIMIT 1;
+  IF v_student_id IS NOT NULL THEN
+    RETURN v_student_id;
+  END IF;
+
+  IF COALESCE(p_email, '') <> '' AND EXISTS (
+       SELECT 1 FROM auth.users u
+       WHERE u.id = p_user_id
+         AND lower(u.email) = lower(p_email)
+         AND u.email_confirmed_at IS NOT NULL) THEN
+    SELECT id INTO v_student_id
+    FROM students
+    WHERE lower(email) = lower(p_email) AND user_id IS NULL
+    LIMIT 1
+    FOR UPDATE;
+    IF v_student_id IS NOT NULL THEN
+      UPDATE students
+      SET user_id = p_user_id,
+          full_name = COALESCE(NULLIF(trim(full_name), ''), p_full_name),
+          updated_at = now()
+      WHERE id = v_student_id;
+      RETURN v_student_id;
+    END IF;
+  END IF;
+
+  BEGIN
+    INSERT INTO students (full_name, email, user_id, is_active, payment_plan)
+    VALUES (p_full_name, COALESCE(p_email, ''), p_user_id, true, 'trial')
+    RETURNING id INTO v_student_id;
+  EXCEPTION WHEN unique_violation THEN
+    SELECT id INTO v_student_id FROM students WHERE user_id = p_user_id LIMIT 1;
+  END;
+  RETURN v_student_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.link_or_create_student(uuid, text, text) FROM public, anon, authenticated;
+
+-- 19c. Pending/denied students see nothing: a student "is" a student only once approved.
+CREATE OR REPLACE FUNCTION public.get_student_id()
+RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT s.id
+  FROM students s
+  JOIN profiles p ON p.id = s.user_id
+  WHERE s.user_id = auth.uid() AND p.role = 'student' AND p.approved IS TRUE
+  LIMIT 1;
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_student_lesson_ids()
+RETURNS SETOF uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT ls.lesson_id FROM lesson_students ls WHERE ls.student_id = get_student_id();
+$$;
+
+DROP POLICY IF EXISTS "Students see own record" ON students;
+CREATE POLICY "Students see own record" ON students FOR SELECT
+  USING (id = (SELECT get_student_id()));
+
+-- Self-registration goes through complete_profile_setup (SECURITY DEFINER).
+DROP POLICY IF EXISTS "Users can create own student record" ON students;
+
+DROP POLICY IF EXISTS "Students read own breaks" ON scheduled_breaks;
+CREATE POLICY "Students read own breaks" ON scheduled_breaks FOR SELECT
+  USING ((SELECT get_student_id()) = ANY (student_ids));
+
+DROP POLICY IF EXISTS "Students can view teacher profiles" ON profiles;
+CREATE POLICY "Students can view teacher profiles" ON profiles FOR SELECT
+  USING ((SELECT get_student_id()) IS NOT NULL AND role = 'teacher');
+
+DROP POLICY IF EXISTS "Students read lesson_rates" ON lesson_rates;
+CREATE POLICY "Students read lesson_rates" ON lesson_rates FOR SELECT
+  USING ((SELECT get_student_id()) IS NOT NULL);
+
+DROP POLICY IF EXISTS "Students read own invoice files" ON storage.objects;
+CREATE POLICY "Students read own invoice files" ON storage.objects FOR SELECT
+  USING (
+    bucket_id = 'invoices'
+    AND EXISTS (SELECT 1 FROM invoices i
+                WHERE i.pdf_path = storage.objects.name
+                  AND i.student_id = (SELECT get_student_id()))
+  );
+
+-- 19d. lesson-media: students only get files of THEIR lessons (was: every
+--      file in the bucket for anyone whose role is 'student', incl. fresh sign-ups).
+DROP POLICY IF EXISTS "Students read own lesson media files" ON storage.objects;
+CREATE POLICY "Students read own lesson media files" ON storage.objects FOR SELECT
+  USING (
+    bucket_id = 'lesson-media'
+    AND EXISTS (SELECT 1 FROM media_uploads m
+                WHERE m.supabase_path = storage.objects.name
+                  AND m.lesson_id IN (SELECT get_student_lesson_ids()))
+  );
+
+-- 19e. Teachers can't pull arbitrary students into their lessons (which exposed
+--      that student's phone/parent contact/fees). Only coordinators enrol.
+DROP POLICY IF EXISTS "Teachers insert own lesson students" ON lesson_students;
+
+CREATE OR REPLACE FUNCTION public.guard_lesson_students_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon')
+     AND jwt_role() IS DISTINCT FROM 'coordinator'
+     AND (NEW.student_id IS DISTINCT FROM OLD.student_id
+          OR NEW.lesson_id IS DISTINCT FROM OLD.lesson_id
+          OR NEW.enrolment_id IS DISTINCT FROM OLD.enrolment_id) THEN
+    RAISE EXCEPTION 'Only a coordinator can move students between lessons' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_guard_lesson_students_update ON lesson_students;
+CREATE TRIGGER trg_guard_lesson_students_update
+  BEFORE UPDATE ON lesson_students
+  FOR EACH ROW EXECUTE FUNCTION guard_lesson_students_update();
+
+-- 19f. Unapproved teachers (anyone can self-register as one) can't touch curriculum.
+DROP POLICY IF EXISTS "Teachers create curriculum_resources" ON curriculum_resources;
+CREATE POLICY "Teachers create curriculum_resources" ON curriculum_resources FOR INSERT
+  WITH CHECK ((SELECT is_approved_teacher()));
+DROP POLICY IF EXISTS "Teachers read curriculum_resources" ON curriculum_resources;
+DROP POLICY IF EXISTS "Teachers update own curriculum_resources" ON curriculum_resources;
+CREATE POLICY "Teachers update own curriculum_resources" ON curriculum_resources FOR UPDATE
+  USING ((SELECT is_approved_teacher()) AND (created_by = (SELECT auth.uid()) OR created_by IS NULL));
+DROP POLICY IF EXISTS "Teachers delete own curriculum_resources" ON curriculum_resources;
+CREATE POLICY "Teachers delete own curriculum_resources" ON curriculum_resources FOR DELETE
+  USING ((SELECT is_approved_teacher()) AND (created_by = (SELECT auth.uid()) OR created_by IS NULL));
+
+DROP POLICY IF EXISTS "Teachers view student instruments" ON student_instruments;
+CREATE POLICY "Teachers view student instruments" ON student_instruments FOR SELECT
+  USING ((SELECT is_approved_teacher()) AND teaches_student(student_id));
+
+-- 19g. Curriculum/reference data: signed-in users only (was readable by anon).
+DROP POLICY IF EXISTS "Anyone can view resources" ON curriculum_resources;
+CREATE POLICY "Anyone can view resources" ON curriculum_resources FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Anyone can view tags" ON curriculum_tags;
+CREATE POLICY "Anyone can view tags" ON curriculum_tags FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Anyone can view resource tags" ON curriculum_resource_tags;
+CREATE POLICY "Anyone can view resource tags" ON curriculum_resource_tags FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Teachers read lesson_rates" ON lesson_rates;
+CREATE POLICY "Teachers read lesson_rates" ON lesson_rates FOR SELECT
+  USING ((SELECT is_approved_teacher()));

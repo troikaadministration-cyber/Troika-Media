@@ -3,6 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Search, CornerDownLeft, User, ArrowRight } from 'lucide-react';
 
+const STUDENT_RESULTS = 6;
+
+/** Escape LIKE wildcards so "%" or "_" in the query match literally. */
+const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+type StudentHit = { id: string; full_name: string; instrument: { name: string } | null };
+
 export interface CommandItem {
   id: string;
   label: string;
@@ -43,23 +50,28 @@ export function CommandPalette({
     }
   }, [open]);
 
-  // Live student search
+  // Live student search: debounced, and only the latest request may update
+  // results (a slow response for "ab" must not overwrite one for "abc").
+  const searchSeq = useRef(0);
   useEffect(() => {
-    if (!open || !canSearchStudents || query.trim().length < 2) {
+    const term = query.trim();
+    const seq = ++searchSeq.current;
+    if (!open || !canSearchStudents || term.length < 2) {
       setStudents([]);
       return;
     }
-    let cancelled = false;
     const t = setTimeout(async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('students')
-        .select('id, full_name, instrument:instruments(name)')
-        .ilike('full_name', `%${query.trim()}%`)
+        // Plain `instruments(...)` is ambiguous since the student_instruments junction table.
+        .select('id, full_name, instrument:instruments!students_instrument_id_fkey(name)')
+        .ilike('full_name', `%${escapeLike(term)}%`)
         .order('full_name')
-        .limit(6);
-      if (cancelled) return;
+        .limit(STUDENT_RESULTS);
+      if (seq !== searchSeq.current) return;
+      if (error) { setStudents([]); return; }
       setStudents(
-        (data || []).map((s: any) => ({
+        ((data ?? []) as unknown as StudentHit[]).map((s) => ({
           id: `student-${s.id}`,
           label: s.full_name,
           hint: s.instrument?.name || 'Student',
@@ -67,8 +79,8 @@ export function CommandPalette({
           kind: 'student' as const,
         }))
       );
-    }, 140);
-    return () => { cancelled = true; clearTimeout(t); };
+    }, 200);
+    return () => clearTimeout(t);
   }, [query, open, canSearchStudents]);
 
   const q = query.trim().toLowerCase();

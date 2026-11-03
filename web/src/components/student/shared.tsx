@@ -46,11 +46,11 @@ export function LessonRow({
   variant: 'upcoming' | 'past';
 }) {
   const l = item.lesson;
-  const teacher = (l.teacher as any)?.full_name as string | undefined;
-  const location = (l.location as any)?.name as string | undefined;
+  const teacher = l.teacher?.full_name;
+  const location = l.location?.name;
 
   return (
-    <div className="px-5 py-3 flex items-center gap-4 hover:bg-gray-50/50">
+    <div className="px-4 sm:px-5 py-3 flex items-center gap-3 sm:gap-4 hover:bg-gray-50/50">
       <div className="flex-shrink-0 w-16 text-center">
         <span className="block text-sm font-semibold text-navy">{l.start_time?.slice(0, 5)}</span>
         <span className="text-[10px] text-gray-400">
@@ -68,7 +68,7 @@ export function LessonRow({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+        <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap mt-0.5 text-xs text-gray-500">
           {teacher && <span>{teacher}</span>}
           {location && <span className="flex items-center gap-0.5"><MapPin size={10} />{location}</span>}
         </div>

@@ -43,21 +43,27 @@ serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('authorization');
-    if (!authHeader) throw new Error('Unauthorized');
-
-    const supabaseAuth = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
-    if (authError || !user) throw new Error('Unauthorized');
-
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
+
+    // Callable by the scheduler (x-cron-secret header = CRON_SECRET) or a coordinator.
+    const cronSecret = Deno.env.get('CRON_SECRET');
+    const isCron = !!cronSecret && req.headers.get('x-cron-secret') === cronSecret;
+    if (!isCron) {
+      const authHeader = req.headers.get('authorization');
+      if (!authHeader) throw new Error('Unauthorized');
+      const supabaseAuth = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_ANON_KEY')!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+      if (authError || !user) throw new Error('Unauthorized');
+      const { data: caller } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+      if (caller?.role !== 'coordinator') throw new Error('Unauthorized');
+    }
 
     const today = new Date();
     const sevenDaysLater = new Date(today);
