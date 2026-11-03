@@ -23,6 +23,21 @@ function isAllowedOrigin(origin: string): boolean {
   return false;
 }
 
+/** Escape text for safe insertion into HTML (names/labels are user-controlled). */
+function esc(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Today's date (YYYY-MM-DD) in India, not UTC. */
+function todayIST(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+}
+
 function corsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
   const allowed = isAllowedOrigin(origin) ? origin : "";
@@ -126,7 +141,7 @@ serve(async (req) => {
         *,
         student:students(
           id, full_name, email, parent_email,
-          instrument:instruments(name),
+          instrument:instruments!students_instrument_id_fkey(name),
           location:locations(name)
         )
       `
@@ -148,54 +163,63 @@ serve(async (req) => {
     await supabase
       .from("payment_records")
       .update({
-        paid_date: payment.paid_date || new Date().toISOString().split("T")[0],
+        paid_date: payment.paid_date || todayIST(),
         verified_at: new Date().toISOString(),
         verified_by: user.id,
       })
       .eq("id", payment_id);
 
-    // 2. Fetch enrolments for this student (current academic year — may have multiple)
-    const currentYear = new Date().getFullYear().toString();
+    // 2. The enrolment this payment belongs to (linked directly when known;
+    //    older records fall back to the student's enrolments for that year).
+    const currentYear = todayIST().slice(0, 4);
+    const enrolmentYear = String(payment.due_date || currentYear).slice(0, 4);
     const { data: enrolmentList } = await supabase
       .from("student_enrolments")
-      .select("*, lesson_rate:lesson_rates(category, rate_per_lesson)")
+      .select("*, lesson_rate:lesson_rates(category, rate_per_lesson), instrument:instruments(name)")
       .eq("student_id", payment.student_id)
-      .eq("academic_year", currentYear);
-    const enrolment = enrolmentList?.[0] || null;
+      .eq("academic_year", enrolmentYear);
+    const enrolment =
+      (payment.enrolment_id && enrolmentList?.find((e: any) => e.id === payment.enrolment_id)) ||
+      enrolmentList?.[0] || null;
 
-    // 3. Get total instalments for this plan
-    const { count: totalInstalments } = await supabase
+    // 3. Total instalments in this payment's schedule
+    let instalmentQuery = supabase
       .from("payment_records")
       .select("id", { count: "exact", head: true })
-      .eq("student_id", payment.student_id)
-      .eq("plan", payment.plan);
+      .eq("student_id", payment.student_id);
+    instalmentQuery = payment.enrolment_id
+      ? instalmentQuery.eq("enrolment_id", payment.enrolment_id)
+      : instalmentQuery.eq("plan", payment.plan);
+    const { count: totalInstalments } = await instalmentQuery;
 
-    // 4. Generate invoice number
-    const { data: invoiceNumber } = await supabase.rpc("next_invoice_number");
+    // 4. Allocate the invoice number (atomic in the database)
+    const { data: invoiceNumber, error: numErr } = await supabase.rpc("next_invoice_number");
+    if (numErr || !invoiceNumber) throw new Error(numErr?.message || "Could not allocate an invoice number");
 
     // 5. Build invoice HTML
-    const studentName = payment.student?.full_name || "Student";
-    const instrumentName = payment.student?.instrument?.name || "";
-    const locationName = payment.student?.location?.name || "";
-    const lessonCategory =
-      enrolment?.lesson_rate?.category?.replace(/_/g, " ") || "";
+    const studentName = esc(payment.student?.full_name || "Student");
+    const instrumentName = esc(enrolment?.instrument?.name || payment.student?.instrument?.name || "");
+    const locationName = esc(payment.student?.location?.name || "");
+    const lessonCategory = esc(enrolment?.lesson_rate?.category?.replace(/_/g, " ") || "");
     const ratePerLesson = enrolment?.rate_per_lesson || "";
     const lessonsRemaining = enrolment
       ? enrolment.total_lessons - enrolment.lessons_used
       : "";
     const lessonsCompleted = enrolment ? enrolment.lessons_used : "";
-    const planLabel = payment.plan?.replace(/_/g, " ");
+    const planLabel = esc(payment.plan?.replace(/_/g, " ") || "");
+    const chargeLabel = esc(payment.label || "");
     // Misc charge (recital tickets, books, exam fee, ...): label set, plan null.
     const isMiscCharge = !!payment.label;
 
     // Build multi-enrolment summary if more than one
     const multiEnrolmentHtml = (enrolmentList && enrolmentList.length > 1)
       ? enrolmentList.map((e: any) => {
-          const cat = e.lesson_rate?.category?.replace(/_/g, " ") || "General";
+          const cat = esc(e.instrument?.name || e.lesson_rate?.category?.replace(/_/g, " ") || "General");
           return `<tr><td style="padding:6px 0;font-size:13px;">${cat}</td><td style="padding:6px 0;font-size:13px;text-align:right;">${e.lessons_used} / ${e.total_lessons}</td></tr>`;
         }).join("")
       : "";
     const issuedDate = new Date().toLocaleDateString("en-IN", {
+      timeZone: "Asia/Kolkata",
       day: "2-digit",
       month: "long",
       year: "numeric",
@@ -206,6 +230,8 @@ serve(async (req) => {
 <html>
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+  <title>Invoice ${esc(invoiceNumber)}</title>
   <style>
     body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a1a2e; margin: 0; padding: 40px; }
     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
@@ -233,7 +259,7 @@ serve(async (req) => {
     </div>
     <div>
       <div class="invoice-label">INVOICE</div>
-      <div class="invoice-number">${invoiceNumber}</div>
+      <div class="invoice-number">${esc(invoiceNumber)}</div>
       <div class="invoice-number">${issuedDate}</div>
     </div>
   </div>
@@ -248,10 +274,10 @@ serve(async (req) => {
     <div class="details-col" style="text-align:right;">
       <strong>Payment Details</strong>
       ${isMiscCharge
-        ? `<span style="font-size:15px;font-weight:600;color:#1a1a2e;">${payment.label}</span><br/>`
+        ? `<span style="font-size:15px;font-weight:600;color:#1a1a2e;">${chargeLabel}</span><br/>`
         : `<span style="font-size:15px;font-weight:600;color:#1a1a2e;">Plan: ${planLabel}</span><br/>
       Instalment: ${payment.instalment_number} of ${totalInstalments || payment.instalment_number}<br/>`}
-      Academic Year: ${enrolment?.academic_year || currentYear}
+      Academic Year: ${esc(enrolment?.academic_year || enrolmentYear)}
       ${lessonsCompleted !== "" ? "<br/>Lessons Completed: <strong>" + lessonsCompleted + "</strong>" : ""}
       ${lessonsRemaining !== "" ? "<br/>Lessons Remaining: <strong>" + lessonsRemaining + "</strong> / " + (enrolment?.total_lessons || 39) : ""}
     </div>
@@ -268,7 +294,7 @@ serve(async (req) => {
       <tr>
         <td>
           ${isMiscCharge
-            ? payment.label
+            ? chargeLabel
             : `${lessonCategory ? lessonCategory + " — " : ""}${instrumentName ? instrumentName + " lessons" : "Music lessons"}<br/>
           <span style="font-size:12px;color:#999;">
             ${ratePerLesson ? "Rate: ₹" + Number(ratePerLesson).toLocaleString("en-IN") + "/lesson" : ""}
@@ -309,19 +335,26 @@ serve(async (req) => {
       ""
     );
     const pdfContent = new TextEncoder().encode(html);
-    const fileName = `${safeInvoiceNumber}.html`;
+    // Unique per payment and never overwritten, so one family's invoice can
+    // never replace another's.
+    const fileName = `${safeInvoiceNumber}-${String(payment_id).replace(/[^a-zA-Z0-9-]/g, "")}.html`;
     const storagePath = `${currentYear}/${fileName}`;
 
-    // Upload to storage
     const { error: uploadErr } = await supabase.storage
       .from("invoices")
       .upload(storagePath, pdfContent, {
         contentType: "text/html; charset=utf-8",
-        upsert: true,
+        upsert: false,
       });
 
     if (uploadErr) {
+      // Don't record an invoice whose file doesn't exist (it could never be
+      // downloaded or regenerated). The caller can retry.
       console.error("Upload error:", uploadErr);
+      return new Response(JSON.stringify({ error: `Could not store the invoice file: ${uploadErr.message}` }), {
+        status: 500,
+        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
+      });
     }
 
     // 7. Build email recipients
@@ -332,7 +365,9 @@ serve(async (req) => {
     const emailedTo = emailRecipients.join(", ");
 
     // 8. Insert invoice record
-    const description = `${planLabel} — Instalment ${payment.instalment_number}/${totalInstalments || payment.instalment_number} — ${instrumentName || "Music"} lessons`;
+    const description = isMiscCharge
+      ? String(payment.label)
+      : `${payment.plan?.replace(/_/g, " ") || ""} — Instalment ${payment.instalment_number}/${totalInstalments || payment.instalment_number} — ${enrolment?.instrument?.name || payment.student?.instrument?.name || "Music"} lessons`;
     const { data: invoice, error: insertErr } = await supabase
       .from("invoices")
       .insert({
@@ -342,15 +377,17 @@ serve(async (req) => {
         amount: payment.amount,
         currency: "INR",
         description,
-        issued_date: new Date().toISOString().split("T")[0],
+        issued_date: todayIST(),
         pdf_path: storagePath,
         emailed_to: emailedTo || null,
-        emailed_at: emailRecipients.length > 0 ? new Date().toISOString() : null,
+        emailed_at: null, // set below only once the email is actually accepted
       })
       .select()
       .single();
 
     if (insertErr) {
+      // e.g. a concurrent request already invoiced this payment — remove our orphan file.
+      await supabase.storage.from("invoices").remove([storagePath]);
       return new Response(JSON.stringify({ error: insertErr.message }), {
         status: 500,
         headers: { ...corsHeaders(req), "Content-Type": "application/json" },
@@ -365,9 +402,11 @@ serve(async (req) => {
             <h2 style="color:#1a1a2e;">Invoice ${invoiceNumber}</h2>
             <p>Dear ${studentName},</p>
             <p>Your payment of <strong>₹${Number(payment.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> has been received and verified.</p>
-            <p>Invoice Number: <strong>${invoiceNumber}</strong><br/>
-            Plan: ${planLabel}<br/>
-            Instalment: ${payment.instalment_number} of ${totalInstalments || payment.instalment_number}</p>
+            <p>Invoice Number: <strong>${esc(invoiceNumber)}</strong><br/>
+            ${isMiscCharge
+              ? `For: ${chargeLabel}`
+              : `Plan: ${planLabel}<br/>
+            Instalment: ${payment.instalment_number} of ${totalInstalments || payment.instalment_number}`}</p>
             ${lessonsRemaining !== "" ? `<p>Lessons remaining this year: <strong>${lessonsRemaining} / ${enrolment?.total_lessons || 39}</strong></p>` : ""}
             <p>Please find your invoice attached to this email.</p>
             <p style="color:#999;font-size:12px;margin-top:30px;">Troika Music · System-generated invoice</p>
@@ -376,7 +415,7 @@ serve(async (req) => {
         // btoa() throws on characters >255 (e.g. ₹). Encode to UTF-8 bytes first.
         const htmlBase64 = btoa(unescape(encodeURIComponent(html)));
 
-        await fetch("https://api.resend.com/emails", {
+        const emailRes = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${resendApiKey}`,
@@ -385,7 +424,7 @@ serve(async (req) => {
           body: JSON.stringify({
             from: "Troika Music <invoices@troikamusic.in>",
             to: emailRecipients,
-            subject: `Invoice ${invoiceNumber} — Troika Music`,
+            subject: `Invoice ${invoiceNumber} — Troika Music`, // invoice number is server-generated
             html: emailHtml,
             attachments: [
               {
@@ -395,6 +434,11 @@ serve(async (req) => {
             ],
           }),
         });
+        if (emailRes.ok) {
+          await supabase.from("invoices").update({ emailed_at: new Date().toISOString() }).eq("id", invoice.id);
+        } else {
+          console.error("Email send failed:", emailRes.status, await emailRes.text());
+        }
       } catch (emailErr) {
         console.error("Email send error:", emailErr);
         // Non-fatal: invoice is still created even if email fails

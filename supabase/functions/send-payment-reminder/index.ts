@@ -25,6 +25,13 @@ function isAllowedOrigin(origin: string): boolean {
   return false;
 }
 
+/** Escape text for safe insertion into HTML (names/labels are user-controlled). */
+function esc(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 function corsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
   const allowed = isAllowedOrigin(origin) ? origin : "";
@@ -72,7 +79,7 @@ serve(async (req) => {
         *,
         student:students(
           id, full_name, email, parent_email,
-          instrument:instruments(name),
+          instrument:instruments!students_instrument_id_fkey(name),
           location:locations(name, address)
         )
       `)
@@ -82,33 +89,37 @@ serve(async (req) => {
     if (payErr || !payment) throw new Error("Payment not found");
 
     const student = payment.student;
-    const studentName = student?.full_name || "Student";
-    const instrumentName = student?.instrument?.name || "";
+    const studentName = esc(student?.full_name || "Student");
+    const instrumentName = esc(student?.instrument?.name || "");
+    const locationName = esc(student?.location?.name || "");
 
     // Get total instalments count for this student/plan
     const { count: totalInstalments } = await supabase
       .from("payment_records")
       .select("id", { count: "exact", head: true })
       .eq("student_id", payment.student_id)
-      .eq("plan", payment.plan);
+      .eq(payment.enrolment_id ? "enrolment_id" : "plan", payment.enrolment_id || payment.plan);
 
     // Get enrolment details
-    const currentYear = new Date().getFullYear().toString();
+    const currentYear = String(payment.due_date || new Date().toISOString()).slice(0, 4);
     const { data: enrolmentList } = await supabase
       .from("student_enrolments")
       .select("*, lesson_rate:lesson_rates(category, rate_per_lesson)")
       .eq("student_id", payment.student_id)
       .eq("academic_year", currentYear);
-    const enrolment = enrolmentList?.[0] || null;
+    const enrolment =
+      (payment.enrolment_id && enrolmentList?.find((e: any) => e.id === payment.enrolment_id)) ||
+      enrolmentList?.[0] || null;
 
-    const planLabel = (payment.plan || "").replace(/_/g, " ");
+    const planLabel = esc(payment.label || (payment.plan || "").replace(/_/g, " "));
     const dueDate = new Date(payment.due_date + "T00:00:00").toLocaleDateString("en-IN", {
       day: "2-digit", month: "long", year: "numeric",
     });
     const issuedDate = new Date().toLocaleDateString("en-IN", {
+      timeZone: "Asia/Kolkata",
       day: "2-digit", month: "long", year: "numeric",
     });
-    const lessonCategory = enrolment?.lesson_rate?.category?.replace(/_/g, " ") || "";
+    const lessonCategory = esc(enrolment?.lesson_rate?.category?.replace(/_/g, " ") || "");
     const lessonsRemaining = enrolment ? enrolment.total_lessons - enrolment.lessons_used : "";
 
     // Build reminder invoice HTML
@@ -117,6 +128,7 @@ serve(async (req) => {
 <html>
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
   <style>
     body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a1a2e; margin: 0; padding: 40px; }
     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
@@ -159,7 +171,7 @@ serve(async (req) => {
       <strong>Bill To</strong>
       ${studentName}<br/>
       ${instrumentName ? instrumentName + "<br/>" : ""}
-      ${student?.location?.name ? student.location.name : ""}
+      ${locationName}
     </div>
     <div class="details-col" style="text-align:right;">
       <strong>Payment Details</strong>
@@ -201,8 +213,6 @@ serve(async (req) => {
 </body>
 </html>`;
 
-    // Mark reminder sent in DB
-    await supabase.from("payment_records").update({ reminder_sent: true }).eq("id", payment_id);
 
     // Build recipient list
     const emailRecipients: string[] = [];
@@ -263,7 +273,11 @@ serve(async (req) => {
       }),
     });
 
-    const emailResult = await emailRes.json();
+    const emailResult = await emailRes.json().catch(() => ({}));
+    // Only record the reminder as sent once the email provider accepted it.
+    if (emailRes.ok) {
+      await supabase.from("payment_records").update({ reminder_sent: true }).eq("id", payment_id);
+    }
 
     return new Response(
       JSON.stringify({ success: true, emailed: emailRes.ok, to: emailRecipients, resend: emailResult }),
