@@ -13,34 +13,32 @@ functions are deployed. Do the steps in order. Total time: ~20 minutes.
       `pg_dump`). The migration is designed to be safe and re-runnable, but take
       a backup first.
 
-## 1. Pre-checks (Supabase → SQL Editor)
+## 1–2. Database: start fresh (chosen path)
 
-Students now only see their data once their profile is **approved** (before,
-this was only enforced in the browser). Find linked students who would lose
-access:
+You're clearing the existing project and installing the app fresh. **This
+permanently deletes all existing app data** (students, lessons, payments…).
 
-```sql
-select p.email, p.full_name, p.approved
-from profiles p join students s on s.user_id = p.id
-where p.approved is not true;
-```
+1. [ ] **Backup** (Database → Backups) in case you ever need the old data.
+2. [ ] **SQL Editor → New query** → paste all of `supabase/reset_app.sql` →
+       to also delete every user account (recommended for a true fresh
+       start), change the line `-- DELETE FROM auth.users;` to
+       `DELETE FROM auth.users;` → **Run**. Removes the app completely; leaves
+       Supabase's own setup alone.
+3. [ ] **New query** → paste all of `supabase/schema.sql` → **Run**. Installs
+       every table, function, security rule, storage rule and the starter
+       data (instruments, categories, locations, default rates).
+4. [ ] Create the coordinator: **Authentication → Users → Add user** (email,
+       strong password, Auto confirm), then in SQL Editor:
+       ```sql
+       UPDATE public.profiles SET role = 'coordinator', approved = true,
+              full_name = 'Your Name' WHERE email = 'you@example.com';
+       ```
+5. [ ] Optional: **Storage** → empty the `invoices` and `lesson-media`
+       buckets (old files from before the reset).
 
-Approve the ones that should have access (or do it after step 2 in the app):
-
-```sql
-update profiles set approved = true where email in ('…', '…');
-```
-
-## 2. Database migration
-
-- [ ] Open `supabase/migrations/00020_troika_app_updates.sql`, paste the whole
-      file into the SQL Editor and run it. It is idempotent (safe to run again).
-      New sections are 7–27 at the bottom: dashboard/report functions,
-      per-enrolment billing, `enrol_student` / `delete_enrolment`, atomic
-      invoice numbers, faster RLS, security fixes, breaks that keep group
-      classes running, and group classes.
-- [ ] It should finish with "Success. No rows returned". NOTICE lines are
-      normal.
+(Alternative, if you ever need to keep existing data instead: skip the reset
+and run `supabase/migrations/00020_troika_app_updates.sql` — it upgrades in
+place to the same end state.)
 
 ## 3. Edge functions
 
