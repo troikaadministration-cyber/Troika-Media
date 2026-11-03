@@ -35,9 +35,10 @@ update profiles set approved = true where email in ('…', '…');
 
 - [ ] Open `supabase/migrations/00020_troika_app_updates.sql`, paste the whole
       file into the SQL Editor and run it. It is idempotent (safe to run again).
-      New sections are 7–22 at the bottom: dashboard/report functions,
+      New sections are 7–27 at the bottom: dashboard/report functions,
       per-enrolment billing, `enrol_student` / `delete_enrolment`, atomic
-      invoice numbers, faster RLS, and the security fixes.
+      invoice numbers, faster RLS, security fixes, breaks that keep group
+      classes running, and group classes.
 - [ ] It should finish with "Success. No rows returned". NOTICE lines are
       normal.
 
@@ -88,11 +89,23 @@ Coordinator:
 - [ ] Enrol a test student into a class → "N lessons scheduled"; delete
       that enrolment → its unpaid instalments and future lessons disappear.
 
-Teacher (phone): today's schedule → mark Present → lesson completes.
+- [ ] Groups → New group (a few students, a free evening slot) → sessions
+      appear on the Schedule; add/remove a member; schedule a one-time session
+      that doesn't count; end the group.
+
+Teacher (phone): today's schedule → mark Present → lesson completes and the
+student's "lessons left" goes down by one.
 
 Student (phone): Home shows upcoming lessons; Payments shows instalments.
 
 ## Known limitations / decisions for the owner
+
+- **Group sessions and billing:** adding students to a group from the Groups
+  page puts them in the sessions but doesn't bill them. To bill a student for
+  a group class, enrol them from Enrolments and pick the group's slot.
+- **Absences marked by teachers** are recorded as "not charged" (they don't
+  use up a lesson). Charging an absence is a coordinator decision on the
+  Schedule page.
 
 - A **break** for selected students cancels the whole lesson slot (including
   other students in a group class). Same as before.
