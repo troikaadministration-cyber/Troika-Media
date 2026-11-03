@@ -105,8 +105,10 @@ export function ReportsPage() {
       Math.round(perStudent.reduce((s, r) => s + r.outstanding, 0)),
     ];
     const escape = (v: string | number) => {
-      const s = String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      let s = String(v);
+      // A text cell starting with = + - @ would run as a formula in Excel/Sheets.
+      if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+      return /[",\n']/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const csv = [header, ...rows, totalRow].map(r => r.map(escape).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

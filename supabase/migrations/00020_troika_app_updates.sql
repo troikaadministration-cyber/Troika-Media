@@ -1176,3 +1176,44 @@ BEGIN
     END LOOP;
   END IF;
 END $$;
+
+
+-- ── 24. Teacher double-booking: block overlapping times, not just equal ones
+-- Only checked on new lessons or when a lesson's teacher/date/time changes,
+-- so editing notes/status on legacy overlapping lessons still works.
+CREATE OR REPLACE FUNCTION fn_check_teacher_double_booking()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_end TIME := COALESCE(NEW.end_time, NEW.start_time + INTERVAL '45 minutes');
+  v_clash RECORD;
+BEGIN
+  IF NEW.teacher_id IS NULL OR NEW.status = 'cancelled' THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE'
+     AND NEW.teacher_id IS NOT DISTINCT FROM OLD.teacher_id
+     AND NEW.date IS NOT DISTINCT FROM OLD.date
+     AND NEW.start_time IS NOT DISTINCT FROM OLD.start_time
+     AND NEW.end_time IS NOT DISTINCT FROM OLD.end_time
+     AND OLD.status <> 'cancelled' THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT start_time, title INTO v_clash FROM lessons
+  WHERE id <> NEW.id
+    AND teacher_id = NEW.teacher_id
+    AND date = NEW.date
+    AND status <> 'cancelled'
+    AND start_time < v_end
+    AND COALESCE(end_time, start_time + INTERVAL '45 minutes') > NEW.start_time
+  LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'Teacher already has a lesson at % on % (%)',
+      to_char(v_clash.start_time, 'HH24:MI'), to_char(NEW.date, 'DD Mon'), v_clash.title;
+  END IF;
+  RETURN NEW;
+END;
+$$;
