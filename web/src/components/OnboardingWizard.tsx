@@ -31,7 +31,7 @@ interface ClassRow {
   end_time: string;
   rate: string;
   instrument_id: string;
-  is_online: boolean;
+  location_id: string; // where this class happens (any location, incl. Online)
 }
 
 // 0 = Sunday … 6 = Saturday, matching JS getDay()/getUTCDay() and the rest of the app.
@@ -48,7 +48,7 @@ const PAYMENT_PLANS = [
 
 
 function emptyClass(): ClassRow {
-  return { teacher_id: '', category: '', day_of_week: '1', start_time: '09:00', end_time: '09:45', rate: '', instrument_id: '', is_online: false };
+  return { teacher_id: '', category: '', day_of_week: '1', start_time: '09:00', end_time: '09:45', rate: '', instrument_id: '', location_id: '' };
 }
 
 function StepBar({ step }: { step: number }) {
@@ -145,29 +145,34 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   function handleStep1Next() {
     if (!s1.full_name.trim()) { setError('Full name is required'); return; }
     setError(null);
+    // Classes default to the student's location (each can be changed).
+    setClasses(prev => prev.map(c => c.location_id ? c : { ...c, location_id: s1.location_id }));
     setStep(1);
   }
 
   // Step 2 helpers
-  function autoRate(teacherId: string, category: string, isOnline: boolean): string {
-    const exact = allRates.find(r =>
-      r.teacher_id === teacherId && r.category === category && r.is_online === isOnline
-    );
-    if (exact) return String(exact.rate_per_lesson);
-    // fallback: any rate for this teacher+category regardless of online flag
-    const fallback = allRates.find(r => r.teacher_id === teacherId && r.category === category);
-    return fallback ? String(fallback.rate_per_lesson) : '';
+  // Rate for teacher + category at a location: the "Online" location uses the
+  // teacher's online rate; other locations use that location's rate, else the
+  // teacher's general (no-location) rate for the category.
+  const isOnlineLocation = (locId: string) => /^online$/i.test(locations.find(l => l.id === locId)?.name ?? '');
+  function autoRate(teacherId: string, category: string, locationId: string): string {
+    const mine = allRates.filter(r => r.teacher_id === teacherId && r.category === category);
+    const pick = isOnlineLocation(locationId)
+      ? mine.find(r => r.is_online)
+      : mine.find(r => !r.is_online && locationId && r.location_id === locationId)
+        ?? mine.find(r => !r.is_online && !r.location_id);
+    return pick ? String(pick.rate_per_lesson) : '';
   }
 
   function updateClass(idx: number, patch: Partial<ClassRow>) {
     setClasses(prev => prev.map((c, i) => {
       if (i !== idx) return c;
       const updated = { ...c, ...patch };
-      if (patch.teacher_id !== undefined || patch.category !== undefined || patch.is_online !== undefined) {
+      if (patch.teacher_id !== undefined || patch.category !== undefined || patch.location_id !== undefined) {
         const tId = patch.teacher_id ?? c.teacher_id;
         const cat = patch.category ?? c.category;
-        const online = patch.is_online ?? c.is_online;
-        if (tId && cat) updated.rate = autoRate(tId, cat, online);
+        const loc = patch.location_id ?? c.location_id;
+        if (tId && cat) updated.rate = autoRate(tId, cat, loc);
       }
       return updated;
     }));
@@ -277,7 +282,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
             p_end_time: cls.end_time || null,
             p_instrument_id: cls.instrument_id || null,
             p_title: `${s1.full_name.trim()}${instrName ? ` – ${instrName}` : ''}`,
-            p_location_id: s1.location_id || null,
+            p_location_id: cls.location_id || s1.location_id || null,
           });
           if (enrolErr) throw new Error(`${instrName || 'Class'}: ${enrolErr.message}`);
           setSavedClasses(prev => [...prev, idx]);
@@ -476,13 +481,16 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                         </div>
                       </div>
                     </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
+                      <select value={cls.location_id} onChange={e => updateClass(idx, { location_id: e.target.value })}
+                        className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                        <option value="">— Select location —</option>
+                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                    </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3 flex-wrap">
-                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                          <input type="checkbox" checked={cls.is_online} onChange={e => updateClass(idx, { is_online: e.target.checked })}
-                            className="accent-teal w-3.5 h-3.5" />
-                          <span className="text-xs font-semibold text-gray-500">Online</span>
-                        </label>
                         <label className="text-xs font-semibold text-gray-500">Rate per lesson (₹)</label>
                         <input type="number" min={0} value={cls.rate} onChange={e => updateClass(idx, { rate: e.target.value })}
                           className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white focus:border-teal focus:outline-none"
@@ -496,7 +504,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                   </div>
                 ))}
               </div>
-              <button onClick={() => setClasses(prev => [...prev, emptyClass()])}
+              <button onClick={() => setClasses(prev => [...prev, { ...emptyClass(), location_id: s1.location_id }])}
                 className="flex items-center gap-1 text-sm text-teal font-semibold hover:underline mt-2">
                 <Plus size={14} /> Add another class
               </button>
