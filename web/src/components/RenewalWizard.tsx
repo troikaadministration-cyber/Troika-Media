@@ -343,6 +343,7 @@ function RenewalPanel({ onClose }: { onClose: () => void }) {
     const total = groups.reduce((n, g) => n + g.plan.items.length, 0);
     setProgress({ done: 0, total });
     const succeededAdded = new Set<string>();
+    const hadFailure = new Set<string>();
 
     await runPool(groups, CONCURRENCY, async ({ c, plan }) => {
       const f = freshById.get(c.student_id);
@@ -368,6 +369,7 @@ function RenewalPanel({ onClose }: { onClose: () => void }) {
             rows.push({ student: c.full_name, label: it.label, status: 'ok', message: `${r.lessons_scheduled} lessons · ${inr(it.totalFee + it.regFee)}` });
           }
         } catch (err) {
+          hadFailure.add(c.student_id);
           rows.push({ student: c.full_name, label: it.label, status: 'failed', message: errorMessage(err, 'Failed') });
         } finally {
           setProgress(p => ({ ...p, done: p.done + 1 }));
@@ -377,18 +379,21 @@ function RenewalPanel({ onClose }: { onClose: () => void }) {
         if (!d.template_id) continue;
         try { await releaseSlot(c.student_id, d.template_id, toYear); }
         catch (err) {
+          hadFailure.add(c.student_id);
           rows.push({ student: c.full_name, label: `${d.instrument_name ?? 'Class'} (dropped)`, status: 'failed',
             message: `Couldn't take them off the weekly slot: ${errorMessage(err, 'error')}` });
         }
       }
     });
 
-    // Forget edits that are done (renewed classes now show as "Already renewed").
+    // Forget edits that are done (renewed classes now show as "Already renewed");
+    // students with a failure keep theirs, minus the classes that did get added.
+    const processed = new Set(groups.map(g => g.c.student_id));
     setEdits(prev => {
       const next: Record<string, StudentEdit> = {};
       for (const [sid, e] of Object.entries(prev)) {
-        const added = (e.added ?? []).filter(a => !succeededAdded.has(a.key));
-        next[sid] = { ...e, added };
+        if (processed.has(sid) && !hadFailure.has(sid)) continue;
+        next[sid] = { ...e, added: (e.added ?? []).filter(a => !succeededAdded.has(a.key)) };
       }
       return next;
     });

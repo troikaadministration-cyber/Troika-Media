@@ -1972,3 +1972,321 @@ BEGIN
 END $$;
 
 NOTIFY pgrst, 'reload schema';
+
+
+-- ── 30. In-app absence requests (students/parents → coordinator) ─────────
+-- ── Absence / cancellation requests (students & parents → coordinator) ────
+-- Cancellations happen in the app, not on WhatsApp. A student (or a parent on
+-- the student's login) asks not to attend an upcoming lesson; a coordinator
+-- approves (charged / not charged) or declines it.
+--   • Less than 24 hours before the lesson = late notice → charged by default.
+--   • Approve: that student is marked absent on the lesson. If they're the only
+--     student, the lesson is cancelled too, and (when not charged) it goes to
+--     the reschedule queue (pending_reschedule). Group classes go ahead for
+--     everyone else.
+--   • Writes only through the RPCs below; the table has read policies only.
+-- Safe to re-run.
+
+CREATE TABLE IF NOT EXISTS public.absence_requests (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lesson_id     UUID NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  student_id    UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  requested_by  UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  reason        TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  late_notice   BOOLEAN NOT NULL DEFAULT false,
+  charged       BOOLEAN,
+  decided_by    UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  decided_at    TIMESTAMPTZ,
+  decision_note TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.absence_requests DROP CONSTRAINT IF EXISTS absence_requests_status_check;
+ALTER TABLE public.absence_requests
+  ADD CONSTRAINT absence_requests_status_check CHECK (status IN ('pending', 'approved', 'declined', 'withdrawn'));
+ALTER TABLE public.absence_requests DROP CONSTRAINT IF EXISTS absence_requests_reason_check;
+ALTER TABLE public.absence_requests
+  ADD CONSTRAINT absence_requests_reason_check CHECK (char_length(btrim(reason)) BETWEEN 1 AND 300);
+ALTER TABLE public.absence_requests DROP CONSTRAINT IF EXISTS absence_requests_note_check;
+ALTER TABLE public.absence_requests
+  ADD CONSTRAINT absence_requests_note_check CHECK (decision_note IS NULL OR char_length(decision_note) <= 300);
+
+-- One open request per student per lesson.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_absence_requests_pending
+  ON public.absence_requests(lesson_id, student_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_absence_requests_student ON public.absence_requests(student_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_absence_requests_lesson ON public.absence_requests(lesson_id);
+CREATE INDEX IF NOT EXISTS idx_absence_requests_status ON public.absence_requests(status, created_at DESC);
+
+ALTER TABLE public.absence_requests ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Students read own absence requests" ON public.absence_requests;
+CREATE POLICY "Students read own absence requests" ON public.absence_requests FOR SELECT
+  USING (student_id = (SELECT get_student_id()));
+
+DROP POLICY IF EXISTS "Coordinators read absence requests" ON public.absence_requests;
+CREATE POLICY "Coordinators read absence requests" ON public.absence_requests FOR SELECT
+  USING ((SELECT jwt_role()) = 'coordinator');
+
+DROP POLICY IF EXISTS "Teachers read absence requests for own lessons" ON public.absence_requests;
+CREATE POLICY "Teachers read absence requests for own lessons" ON public.absence_requests FOR SELECT
+  USING ((SELECT jwt_role()) = 'teacher' AND (SELECT is_approved_teacher()) AND teaches_lesson(lesson_id));
+
+-- No insert/update/delete policies: writes go through the functions below.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.absence_requests FROM anon, authenticated;
+REVOKE ALL ON public.absence_requests FROM anon;
+GRANT SELECT ON public.absence_requests TO authenticated;
+
+-- Internal: "Sun 8 Nov, 6:00 PM" for notification text.
+CREATE OR REPLACE FUNCTION public._lesson_when_label(p_date DATE, p_time TIME)
+RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
+  SELECT to_char(p_date, 'Dy FMDD Mon') || ', ' || ltrim(to_char(p_time, 'HH12:MI AM'), '0')
+$$;
+REVOKE ALL ON FUNCTION public._lesson_when_label(DATE, TIME) FROM public, anon, authenticated;
+
+-- ── Student: ask not to attend a lesson ────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.request_absence(p_lesson_id UUID, p_reason TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_student UUID := get_student_id();
+  v_student_name TEXT;
+  v_reason TEXT := btrim(COALESCE(p_reason, ''));
+  v_lesson lessons%ROWTYPE;
+  v_starts TIMESTAMPTZ;
+  v_late BOOLEAN;
+  v_id UUID;
+BEGIN
+  IF v_student IS NULL THEN
+    RAISE EXCEPTION 'Only enrolled students can request an absence' USING ERRCODE = '42501';
+  END IF;
+  IF v_reason = '' THEN RAISE EXCEPTION 'Please tell us why you can''t attend'; END IF;
+  IF char_length(v_reason) > 300 THEN RAISE EXCEPTION 'Please keep the reason under 300 characters'; END IF;
+
+  SELECT l.* INTO v_lesson FROM lessons l
+  WHERE l.id = p_lesson_id
+    AND EXISTS (SELECT 1 FROM lesson_students ls WHERE ls.lesson_id = l.id AND ls.student_id = v_student);
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Lesson not found' USING ERRCODE = '42501';
+  END IF;
+  IF v_lesson.status <> 'scheduled' THEN
+    RAISE EXCEPTION 'This lesson is already %', v_lesson.status;
+  END IF;
+
+  v_starts := (v_lesson.date + v_lesson.start_time) AT TIME ZONE 'Asia/Kolkata';
+  IF v_starts <= now() THEN
+    RAISE EXCEPTION 'This lesson has already started';
+  END IF;
+  v_late := v_starts < now() + INTERVAL '24 hours';
+
+  IF EXISTS (SELECT 1 FROM absence_requests
+             WHERE lesson_id = p_lesson_id AND student_id = v_student AND status = 'approved') THEN
+    RAISE EXCEPTION 'Your absence for this lesson is already approved';
+  END IF;
+
+  BEGIN
+    INSERT INTO absence_requests (lesson_id, student_id, requested_by, reason, late_notice)
+    VALUES (p_lesson_id, v_student, auth.uid(), v_reason, v_late)
+    RETURNING id INTO v_id;
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'You''ve already asked to miss this lesson — it''s waiting for approval';
+  END;
+
+  -- Let coordinators know (in-app).
+  SELECT full_name INTO v_student_name FROM students WHERE id = v_student;
+  INSERT INTO notifications (user_id, type, title, body)
+  SELECT p.id, 'general', 'Absence request',
+         COALESCE(v_student_name, 'A student') || ' can''t attend ' ||
+         _lesson_when_label(v_lesson.date, v_lesson.start_time) ||
+         CASE WHEN v_late THEN ' (late notice)' ELSE '' END || ': ' || v_reason
+  FROM profiles p WHERE p.role = 'coordinator';
+
+  RETURN jsonb_build_object('id', v_id, 'late_notice', v_late);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.request_absence(UUID, TEXT) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.request_absence(UUID, TEXT) TO authenticated;
+
+-- ── Student: withdraw their own pending request ────────────────────────────
+CREATE OR REPLACE FUNCTION public.withdraw_absence_request(p_request_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_student UUID := get_student_id();
+  v_status TEXT;
+BEGIN
+  IF v_student IS NULL THEN
+    RAISE EXCEPTION 'Only enrolled students can withdraw a request' USING ERRCODE = '42501';
+  END IF;
+  SELECT status INTO v_status FROM absence_requests
+  WHERE id = p_request_id AND student_id = v_student FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Request not found' USING ERRCODE = '42501'; END IF;
+  IF v_status <> 'pending' THEN
+    RAISE EXCEPTION 'This request has already been %', v_status;
+  END IF;
+  UPDATE absence_requests SET status = 'withdrawn', decided_at = now() WHERE id = p_request_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.withdraw_absence_request(UUID) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.withdraw_absence_request(UUID) TO authenticated;
+
+-- ── Coordinator: approve or decline ────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.decide_absence_request(
+  p_request_id UUID,
+  p_approve BOOLEAN,
+  p_charged BOOLEAN DEFAULT NULL,
+  p_note TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  r absence_requests%ROWTYPE;
+  v_lesson lessons%ROWTYPE;
+  v_note TEXT := NULLIF(btrim(COALESCE(p_note, '')), '');
+  v_charged BOOLEAN;
+  v_n_students INTEGER;
+  v_cancelled BOOLEAN := false;
+  v_student_user UUID;
+  v_student_name TEXT;
+  v_when TEXT;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can decide absence requests' USING ERRCODE = '42501';
+  END IF;
+  IF p_approve IS NULL THEN RAISE EXCEPTION 'Choose approve or decline'; END IF;
+  IF v_note IS NOT NULL AND char_length(v_note) > 300 THEN
+    RAISE EXCEPTION 'Please keep the note under 300 characters';
+  END IF;
+
+  SELECT * INTO r FROM absence_requests WHERE id = p_request_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Request not found'; END IF;
+  IF r.status <> 'pending' THEN
+    RAISE EXCEPTION 'This request has already been %', r.status;
+  END IF;
+
+  SELECT * INTO v_lesson FROM lessons WHERE id = r.lesson_id FOR UPDATE;
+  SELECT user_id, full_name INTO v_student_user, v_student_name FROM students WHERE id = r.student_id;
+  v_when := _lesson_when_label(v_lesson.date, v_lesson.start_time);
+
+  IF NOT p_approve THEN
+    UPDATE absence_requests
+    SET status = 'declined', decided_by = auth.uid(), decided_at = now(), decision_note = v_note
+    WHERE id = r.id;
+    IF v_student_user IS NOT NULL THEN
+      INSERT INTO notifications (user_id, type, title, body)
+      VALUES (v_student_user, 'general', 'Absence request declined',
+              'Your request to miss the lesson on ' || v_when || ' was declined — please attend as usual.'
+              || COALESCE(' Note: ' || v_note, ''));
+    END IF;
+    RETURN jsonb_build_object('status', 'declined');
+  END IF;
+
+  IF v_lesson.status = 'cancelled' THEN
+    RAISE EXCEPTION 'This lesson has already been cancelled — decline the request instead';
+  END IF;
+
+  v_charged := COALESCE(p_charged, r.late_notice);
+
+  UPDATE lesson_students
+  SET attended = false,
+      absence_category = (CASE WHEN v_charged THEN 'charged' ELSE 'not_charged' END)::absence_category
+  WHERE lesson_id = r.lesson_id AND student_id = r.student_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'This student is no longer on that lesson — decline the request instead';
+  END IF;
+
+  SELECT count(*) INTO v_n_students FROM lesson_students WHERE lesson_id = r.lesson_id;
+
+  -- 1:1 (only this student): the lesson itself is off. Group: goes ahead.
+  IF v_n_students = 1 AND v_lesson.status = 'scheduled' THEN
+    UPDATE lessons
+    SET status = 'cancelled',
+        cancel_reason = left('Absence: ' || r.reason, 300),
+        cancelled_by_role = 'coordinator',
+        cancelled_by_user_id = auth.uid(),
+        cancelled_by_student_id = r.student_id,
+        pending_reschedule = NOT v_charged
+    WHERE id = r.lesson_id;
+    v_cancelled := true;
+  END IF;
+
+  UPDATE absence_requests
+  SET status = 'approved', charged = v_charged, decided_by = auth.uid(), decided_at = now(), decision_note = v_note
+  WHERE id = r.id;
+
+  IF v_student_user IS NOT NULL THEN
+    INSERT INTO notifications (user_id, type, title, body)
+    VALUES (v_student_user,
+            CASE WHEN v_cancelled THEN 'lesson_cancelled' ELSE 'lesson_updated' END::notification_type,
+            'Absence approved',
+            'You''re excused from the lesson on ' || v_when || '. '
+            || CASE WHEN v_charged THEN 'This lesson will still be charged.'
+                    WHEN v_cancelled THEN 'It won''t be charged — we''ll reschedule it.'
+                    ELSE 'It won''t be charged.' END
+            || COALESCE(' Note: ' || v_note, ''));
+  END IF;
+
+  INSERT INTO notifications (user_id, type, title, body)
+  VALUES (v_lesson.teacher_id,
+          CASE WHEN v_cancelled THEN 'lesson_cancelled' ELSE 'lesson_updated' END::notification_type,
+          CASE WHEN v_cancelled THEN 'Lesson cancelled — student absent' ELSE 'Student absent' END,
+          COALESCE(v_student_name, 'A student') || ' won''t attend the lesson on ' || v_when || '.'
+          || CASE WHEN v_cancelled THEN ' The lesson is cancelled.' ELSE ' The class goes ahead for the others.' END);
+
+  RETURN jsonb_build_object('status', 'approved', 'charged', v_charged, 'lesson_cancelled', v_cancelled);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.decide_absence_request(UUID, BOOLEAN, BOOLEAN, TEXT) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.decide_absence_request(UUID, BOOLEAN, BOOLEAN, TEXT) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ── 31. Charged absences always use up a lesson ─────────────────────────────
+-- An approved late-notice absence on a 1:1 lesson cancels the lesson; it must
+-- still count toward the student's lessons used.
+CREATE OR REPLACE FUNCTION fn_recompute_lessons_used(p_student_id UUID, p_acad_year TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE student_enrolments se
+  SET lessons_used = (
+        SELECT COUNT(*)
+        FROM lesson_students lst
+        JOIN lessons l ON l.id = lst.lesson_id
+        WHERE lst.student_id = p_student_id
+          -- A held lesson counts; so does a charged absence even if the
+          -- lesson itself was cancelled (e.g. approved late-notice absence).
+          AND (l.status = 'completed' OR (l.status = 'cancelled' AND lst.absence_category = 'charged'))
+          AND COALESCE(l.is_charged, true) = true
+          AND (l.makeup_direction IS DISTINCT FROM 'teacher_learning')
+          AND (lst.attended = true OR lst.absence_category = 'charged')
+          AND EXTRACT(YEAR FROM l.date)::TEXT = p_acad_year
+      ),
+      updated_at = now()
+  WHERE se.student_id = p_student_id
+    AND se.academic_year = p_acad_year;
+END;
+$$;
+ALTER FUNCTION public.fn_recompute_lessons_used(UUID, TEXT) SECURITY DEFINER;
+
+-- Recount when attendance/absence changes on a cancelled lesson too (the
+-- lesson_students trigger already fires on every change).
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT DISTINCT student_id FROM student_enrolments LOOP
+    PERFORM fn_recompute_lessons_used(r.student_id, NULL);
+  END LOOP;
+END $$;
