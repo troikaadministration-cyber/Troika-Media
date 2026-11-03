@@ -1,19 +1,27 @@
 import { useState } from 'react';
 import { Music } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
-import { LessonRow } from '../../components/student/shared';
+import { LessonRow, NOTICE_RULE } from '../../components/student/shared';
+import { SkeletonList } from '../../components/Skeleton';
+import { ErrorBanner } from '../../components/ErrorBanner';
 
 export function StudentLessonsList() {
-  const { upcoming, past } = useStudentPortal();
+  const { upcoming, past, loadingLessons, loadingPast, lessonsError, refresh } = useStudentPortal();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
 
   const list = tab === 'upcoming' ? upcoming : past;
+  const loading = tab === 'upcoming' ? loadingLessons : loadingPast;
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-navy">My Lessons</h1>
         <p className="text-gray-500 text-sm mt-1">Your scheduled and completed lessons.</p>
+        {tab === 'upcoming' && (
+          <p className="text-gray-400 text-xs mt-1">
+            Can&rsquo;t make it? Tap &ldquo;Can&rsquo;t attend&rdquo; on the lesson. {NOTICE_RULE}
+          </p>
+        )}
       </div>
 
       {/* Segmented control */}
@@ -22,28 +30,34 @@ export function StudentLessonsList() {
         <SegBtn active={tab === 'past'} onClick={() => setTab('past')} label={`Past (${past.length})`} />
       </div>
 
-      <div className="bg-white rounded-xl border border-black/5 overflow-hidden">
-        {list.length === 0 ? (
-          <div className="p-10 text-center">
-            <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mx-auto mb-3">
-              <Music size={22} className="text-gray-300" />
+      {lessonsError && <ErrorBanner message={lessonsError} onRetry={() => { void refresh(); }} />}
+
+      {loading ? (
+        <SkeletonList rows={4} />
+      ) : (
+        <div className="bg-white rounded-xl border border-black/5 overflow-hidden">
+          {list.length === 0 ? (
+            <div className="p-10 text-center">
+              <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mx-auto mb-3">
+                <Music size={22} className="text-gray-300" />
+              </div>
+              <p className="text-gray-500 text-sm">
+                {tab === 'upcoming' ? 'No upcoming lessons scheduled.' : 'No past lessons yet.'}
+              </p>
             </div>
-            <p className="text-gray-500 text-sm">
-              {tab === 'upcoming' ? 'No upcoming lessons scheduled.' : 'No past lessons yet.'}
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-black/5">
-            {list.map((item) => (
-              <LessonRow
-                key={item.id}
-                item={item}
-                variant={tab}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="divide-y divide-black/5">
+              {list.map((item) => (
+                <LessonRow
+                  key={item.id}
+                  item={item}
+                  variant={tab}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

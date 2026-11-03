@@ -59,6 +59,12 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
+    // Only coordinators and approved teachers.
+    const { data: caller } = await supabase.from('profiles').select('role, approved').eq('id', user.id).single();
+    if (!caller || !(caller.role === 'coordinator' || (caller.role === 'teacher' && caller.approved === true))) {
+      throw new Error('Unauthorized');
+    }
+
     const { media_id } = await req.json();
     if (!media_id) throw new Error('media_id is required');
 
@@ -69,6 +75,9 @@ serve(async (req) => {
       .single();
 
     if (mediaError || !media) throw new Error(`Media not found: ${mediaError?.message}`);
+
+    // The approved teacher may only sync media they uploaded.
+    if (caller.role !== 'coordinator' && media.teacher_id !== user.id) throw new Error('Unauthorized');
 
     const { data: fileData, error: downloadError } = await supabase.storage
       .from('lesson-media')

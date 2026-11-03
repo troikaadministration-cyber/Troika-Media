@@ -1,10 +1,12 @@
 import { toDateStr } from '../lib/dates';
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { Users, GraduationCap, IndianRupee, AlertCircle, CheckCircle } from 'lucide-react';
 import { Skeleton } from '../components/Skeleton';
+import { useQuery, unwrap } from '../lib/queryCache';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { AbsenceRequestsPanel } from '../components/AbsenceRequestsPanel';
 
 interface TodayLesson {
   id: string; title: string; start_time: string; end_time: string | null; status: string;
@@ -45,12 +47,23 @@ function Spark({ data, color }: { data: number[]; color: string }) {
   );
 }
 
+interface DashboardSummary {
+  active_students: number;
+  total_students: number;
+  collected_month: number;
+  outstanding: number;
+  upcoming: number;
+  overdue_count: number;
+  week_series: number[];
+  top_dues: DuePayment[];
+}
+
+interface DashboardData {
+  summary: DashboardSummary;
+  todayLessons: TodayLesson[];
+}
+
 export function DashboardPage() {
-  const [loading, setLoading] = useState(true);
-  const [todayLessons, setTodayLessons] = useState<TodayLesson[]>([]);
-  const [weekSeries, setWeekSeries] = useState<number[]>([]);
-  const [dues, setDues] = useState<DuePayment[]>([]);
-  const [k, setK] = useState({ active: 0, totalStudents: 0, doneToday: 0, totalToday: 0, collected: 0, outstanding: 0, overdue: 0 });
   const navigate = useNavigate();
   const { profile } = useAuth();
 
@@ -59,52 +72,35 @@ export function DashboardPage() {
   const hr = now.getHours();
   const greeting = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
   const firstName = profile?.full_name?.split(' ')[0] || '';
-  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-  const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 6);
-  const weekAgoStr = toDateStr(weekAgo);
 
-  useEffect(() => {
-    Promise.all([
-      supabase.from('students').select('id, is_active'),
+  // Totals are computed in the database (dashboard_summary) — only today's
+  // lessons are fetched as rows.
+  const { data, loading, error, refresh } = useQuery<DashboardData>(`dashboard:${today}`, async () => {
+    const [summaryRes, lessonsRes] = await Promise.all([
+      supabase.rpc('dashboard_summary', { p_today: today }),
       supabase.from('lessons').select(`id, title, start_time, end_time, status,
         teacher:profiles!lessons_teacher_id_fkey(full_name), location:locations(name),
         instrument:instruments(name, icon), students:lesson_students(student:students(full_name))`)
         .eq('date', today).order('start_time'),
-      supabase.from('payment_records').select('amount, paid_date, due_date, label, student:students(id, full_name)'),
-      supabase.from('lessons').select('date').gte('date', weekAgoStr).lte('date', today),
-    ]).then(([studentsRes, lessonsRes, payRes, weekRes]) => {
-      const students = studentsRes.data || [];
-      const lessons = (lessonsRes.data || []) as unknown as TodayLesson[];
-      const pays = (payRes.data || []) as any[];
+    ]);
+    const summary = unwrap(summaryRes) as DashboardSummary;
+    const todayLessons = unwrap(lessonsRes, []) as unknown as TodayLesson[];
+    return { summary, todayLessons };
+  });
 
-      let collected = 0, outstanding = 0, overdue = 0;
-      const unpaid: DuePayment[] = [];
-      for (const p of pays) {
-        const amt = Number(p.amount) || 0;
-        if (p.paid_date) { if (p.paid_date >= monthStart) collected += amt; }
-        else { outstanding += amt; if (p.due_date < today) overdue++; unpaid.push(p); }
-      }
-      unpaid.sort((a, b) => a.due_date.localeCompare(b.due_date));
-
-      // 7-day lesson counts
-      const counts: Record<string, number> = {};
-      for (const r of (weekRes.data || []) as { date: string }[]) counts[r.date] = (counts[r.date] || 0) + 1;
-      const series: number[] = [];
-      for (let i = 6; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i); series.push(counts[toDateStr(d)] || 0); }
-
-      setTodayLessons(lessons);
-      setWeekSeries(series);
-      setDues(unpaid.slice(0, 4));
-      setK({
-        active: students.filter(s => s.is_active).length,
-        totalStudents: students.length,
-        doneToday: lessons.filter(l => l.status === 'completed').length,
-        totalToday: lessons.length,
-        collected, outstanding, overdue,
-      });
-      setLoading(false);
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const todayLessons = data?.todayLessons ?? [];
+  const weekSeries = (data?.summary.week_series ?? []).map(Number);
+  const dues = data?.summary.top_dues ?? [];
+  const k = {
+    active: Number(data?.summary.active_students ?? 0),
+    totalStudents: Number(data?.summary.total_students ?? 0),
+    doneToday: todayLessons.filter(l => l.status === 'completed').length,
+    totalToday: todayLessons.filter(l => l.status !== 'cancelled').length,
+    collected: Number(data?.summary.collected_month ?? 0),
+    outstanding: Number(data?.summary.outstanding ?? 0),
+    upcoming: Number(data?.summary.upcoming ?? 0),
+    overdue: Number(data?.summary.overdue_count ?? 0),
+  };
 
   const collectPct = k.collected + k.outstanding > 0 ? Math.round((k.collected / (k.collected + k.outstanding)) * 100) : 0;
 
@@ -112,7 +108,7 @@ export function DashboardPage() {
     { label: 'Active students', value: loading ? '—' : String(k.active), sub: `of ${k.totalStudents} total`, icon: Users, tint: 'bg-teal/10 text-teal', spark: null },
     { label: 'Lessons today', value: loading ? '—' : String(k.totalToday), sub: `${k.doneToday} completed`, icon: GraduationCap, tint: 'bg-teal/10 text-teal', spark: { data: weekSeries, color: 'var(--teal)' } },
     { label: `Collected · ${now.toLocaleDateString('en-IN', { month: 'short' })}`, value: loading ? '—' : inr(k.collected), sub: `${collectPct}% of billed`, icon: IndianRupee, tint: 'bg-teal/10 text-teal', spark: null },
-    { label: 'Outstanding dues', value: loading ? '—' : inr(k.outstanding), sub: k.overdue > 0 ? `${k.overdue} overdue` : 'all on track', icon: AlertCircle, tint: 'bg-coral/10 text-coral', spark: null, onClick: () => navigate('/payments') },
+    { label: 'Outstanding dues', value: loading ? '—' : inr(k.outstanding), sub: [k.overdue > 0 ? `${k.overdue} overdue` : 'nothing overdue', k.upcoming > 0 ? `${inr(k.upcoming)} upcoming` : ''].filter(Boolean).join(' · '), icon: AlertCircle, tint: 'bg-coral/10 text-coral', spark: null, onClick: () => navigate('/payments') },
   ];
 
   return (
@@ -124,6 +120,8 @@ export function DashboardPage() {
           {!loading && ` · ${k.totalToday} lesson${k.totalToday !== 1 ? 's' : ''} today · ${k.doneToday} done`}
         </p>
       </div>
+
+      {error && !data && <ErrorBanner message={error} onRetry={refresh} />}
 
       {/* KPI tiles */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -142,6 +140,9 @@ export function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Students' "can't attend" requests (approve / decline) */}
+      <AbsenceRequestsPanel />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Today's schedule */}

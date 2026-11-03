@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { StudentLesson } from '../../hooks/useStudentLessons';
+import type { StudentLesson, AbsenceRequest } from '../../hooks/useStudentLessons';
 
 export interface Enrolment {
   id: string;
@@ -32,8 +32,16 @@ export interface StudentPortalValue {
   upcoming: StudentLesson[];
   past: StudentLesson[];
   totalCompleted: number;
+  totalMissed: number;
+  /** True only until upcoming / past lessons first load (show skeletons). */
   loadingLessons: boolean;
-  refresh: () => void;
+  loadingPast: boolean;
+  lessonsError: string | null;
+  /** Latest absence request per lesson id (withdrawn ones omitted). */
+  absences: Record<string, AbsenceRequest>;
+  requestAbsence: (lessonId: string, reason: string) => Promise<{ id: string; late_notice: boolean }>;
+  withdrawAbsence: (requestId: string) => Promise<void>;
+  refresh: () => Promise<void>;
 }
 
 export const StudentPortalContext = createContext<StudentPortalValue | null>(null);

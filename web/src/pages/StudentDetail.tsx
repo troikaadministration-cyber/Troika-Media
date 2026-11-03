@@ -1,16 +1,18 @@
 import { toDateStr } from '../lib/dates';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, X, BookOpen, BookmarkPlus, Trash2, Clock, User, CalendarDays, History } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useQuery, unwrap, invalidateQueries, setQueryData, errorMessage } from '../lib/queryCache';
+import { useInstruments, useLocationsList, useTeachersList, invalidateReference } from '../hooks/useReference';
+import { invalidateLessonViews } from '../hooks/useLessons';
+import { useToast } from '../contexts/ToastContext';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { Skeleton, SkeletonCards } from '../components/Skeleton';
+import type { AbsenceCategory, StudentEnrolment, StudentStats } from '../types';
 
 type Tab = 'overview' | 'enrolment' | 'schedule' | 'history';
-import { supabase } from '../lib/supabase';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { Skeleton, SkeletonCards } from '../components/Skeleton';
-import type { Student, StudentStats, AbsenceCategory, StudentEnrolment } from '../types';
-
-interface Instrument { id: string; name: string; }
-interface Location { id: string; name: string; }
 
 const PAYMENT_PLANS = [
   { value: 'trial',          label: 'Trial' },
@@ -19,117 +21,200 @@ const PAYMENT_PLANS = [
   { value: '10_instalments', label: '10 Instalments' },
 ];
 
+const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+const HAS_PAYMENTS_MSG = 'This student has payment history — deactivate them instead.';
+
+interface StudentRow {
+  id: string;
+  full_name: string;
+  phone: string | null;
+  email: string | null;
+  instrument_id: string | null;
+  location_id: string | null;
+  payment_plan: string | null;
+  parent_name: string | null;
+  parent_phone: string | null;
+  parent_email: string | null;
+  notes: string | null;
+  is_active: boolean;
+  location: { name: string } | null;
+  instrument: { name: string } | null;
+}
+
+type EnrolmentRow = Pick<StudentEnrolment, 'id' | 'academic_year' | 'total_lessons' | 'lessons_used' | 'rate_per_lesson' | 'total_fee' | 'payment_plan'> & {
+  lesson_rate: { category: string } | null;
+  instrument: { name: string } | null;
+};
+
+interface StudentCore {
+  student: StudentRow | null;
+  stats: Pick<StudentStats, 'total_lessons' | 'regular_lessons' | 'makeup_lessons' | 'charged_absences'> | null;
+  enrolments: EnrolmentRow[];
+  instrumentIds: string[];
+}
+
+interface HistoryRow {
+  id: string;
+  attended: boolean | null;
+  absence_category: AbsenceCategory | null;
+  lesson: { title: string | null; date: string; start_time: string | null; teacher: { full_name: string } | null };
+}
+
+interface ScheduleRow {
+  id: string;
+  teacher_id: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string | null;
+  instrument_id: string | null;
+  location_id: string | null;
+  student_ids: string[];
+  teacher: { full_name: string } | null;
+  instrument: { name: string } | null;
+  location: { name: string } | null;
+}
+
+// Note: students has two relationships to instruments (instrument_id and the
+// student_instruments junction), so the embed must name the FK.
+const STUDENT_COLS = `id, full_name, phone, email, instrument_id, location_id, payment_plan,
+  parent_name, parent_phone, parent_email, notes, is_active,
+  location:locations(name), instrument:instruments!students_instrument_id_fkey(name)`;
+
 export function StudentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
-  const [student, setStudent] = useState<any>(null);
-  const [stats, setStats] = useState<StudentStats | null>(null);
-  const [lessons, setLessons] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [enrolments, setEnrolments] = useState<(StudentEnrolment & { lesson_rate?: { category: string } | null; instrument?: { name: string } | null })[]>([]);
+  const today = toDateStr(new Date());
+
+  // Reference lists (shared cache across pages).
+  const { instruments } = useInstruments();
+  const { locations } = useLocationsList();
+  const { teachers } = useTeachersList();
+
+  // Student, stats, enrolments and extra instruments — one parallel round trip.
+  const coreKey = id ? `student-detail:${id}` : null;
+  const core = useQuery<StudentCore>(coreKey, async () => {
+    const [studentRes, statsRes, enrolRes, instrRes] = await Promise.all([
+      supabase.from('students').select(STUDENT_COLS).eq('id', id!).maybeSingle(),
+      supabase.from('student_stats')
+        .select('total_lessons, regular_lessons, makeup_lessons, charged_absences')
+        .eq('student_id', id!).maybeSingle(),
+      // All enrolments (not just the current calendar year, which hides everything on 1 Jan).
+      supabase.from('student_enrolments')
+        .select('id, academic_year, total_lessons, lessons_used, rate_per_lesson, total_fee, payment_plan, lesson_rate:lesson_rates(category), instrument:instruments(name)')
+        .eq('student_id', id!)
+        .order('academic_year', { ascending: false })
+        .order('created_at', { ascending: false }),
+      supabase.from('student_instruments').select('instrument_id').eq('student_id', id!),
+    ]);
+    return {
+      student: unwrap(studentRes) as unknown as StudentRow | null,
+      stats: unwrap(statsRes) as StudentCore['stats'],
+      enrolments: unwrap(enrolRes, []) as unknown as EnrolmentRow[],
+      instrumentIds: (unwrap(instrRes, []) as { instrument_id: string }[]).map((r) => r.instrument_id),
+    };
+  });
+
+  // Last 50 past lessons, newest lesson date first.
+  const lessonsQ = useQuery<HistoryRow[]>(id ? `student-detail:${id}:lessons:${today}` : null, async () =>
+    unwrap(await supabase.from('lesson_students')
+      .select('id, attended, absence_category, lesson:lessons!inner(title, date, start_time, teacher:profiles!lessons_teacher_id_fkey(full_name))')
+      .eq('student_id', id!)
+      .lte('lesson.date', today)
+      .order('lesson(date)', { ascending: false })
+      .order('lesson(start_time)', { ascending: false })
+      .limit(50), []) as unknown as HistoryRow[],
+  );
+
+  const schedulesQ = useQuery<ScheduleRow[]>(id ? `student-detail:${id}:schedules` : null, async () =>
+    unwrap(await supabase.from('teacher_schedule_templates')
+      .select('id, teacher_id, day_of_week, start_time, end_time, instrument_id, location_id, student_ids, teacher:profiles!teacher_schedule_templates_teacher_id_fkey(full_name), instrument:instruments(name), location:locations(name)')
+      .contains('student_ids', [id!])
+      .order('day_of_week').order('start_time'), []) as unknown as ScheduleRow[],
+  );
+
+  const student = core.data?.student ?? null;
+  const stats = core.data?.stats ?? null;
+  const enrolments = core.data?.enrolments ?? [];
+  const studentInstruments = core.data?.instrumentIds ?? [];
+  const lessons = lessonsQ.data ?? [];
+  const schedules = schedulesQ.data ?? [];
 
   // Absence modal
   const [absenceModal, setAbsenceModal] = useState<{ lessonStudentId: string; studentName: string } | null>(null);
   const [absenceCategory, setAbsenceCategory] = useState<AbsenceCategory>('charged');
+  const [attendanceBusy, setAttendanceBusy] = useState<string | null>(null);
 
   // Edit modal
   const [editOpen, setEditOpen] = useState(false);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
   const [editForm, setEditForm] = useState<any>({});
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
   // Delete confirm
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
 
   // Schedule templates
-  const [schedules, setSchedules] = useState<any[]>([]);
-  const [teachers, setTeachers] = useState<{ id: string; full_name: string }[]>([]);
   const [scheduleEditOpen, setScheduleEditOpen] = useState(false);
-  const [editingSchedule, setEditingSchedule] = useState<any | null>(null);
+  const [editingSchedule, setEditingSchedule] = useState<ScheduleRow | null>(null);
   const [scheduleForm, setScheduleForm] = useState<any>({});
   const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
 
-  // Multiple instruments
-  const [studentInstruments, setStudentInstruments] = useState<string[]>([]);
-
-  const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-
-  useEffect(() => {
-    if (!id) return;
-    fetchData();
-    supabase.from('instruments').select('id, name').order('name').then(({ data }) => setInstruments(data || []));
-    supabase.from('locations').select('id, name').order('name').then(({ data }) => setLocations(data || []));
-    supabase.from('profiles').select('id, full_name').eq('role', 'teacher').eq('approved', true).order('full_name').then(({ data }) => setTeachers(data || []));
-    fetchSchedules();
-    fetchStudentInstruments();
-  }, [id]);
-
-  function fetchSchedules() {
-    if (!id) return;
-    supabase.from('teacher_schedule_templates')
-      .select('*, teacher:profiles!teacher_schedule_templates_teacher_id_fkey(full_name), instrument:instruments(name), location:locations(name)')
-      .contains('student_ids', [id])
-      .order('day_of_week').order('start_time')
-      .then(({ data }) => setSchedules(data || []));
+  /** Student row changed: refresh this page and every list that shows students. */
+  function afterStudentChange() {
+    invalidateQueries('students:');
+    invalidateReference('students');
+    return core.refresh();
   }
 
-  function fetchStudentInstruments() {
-    if (!id) return;
-    supabase.from('student_instruments').select('instrument_id').eq('student_id', id)
-      .then(({ data }) => setStudentInstruments((data || []).map((r: any) => r.instrument_id)));
-  }
-
-  function fetchData() {
-    if (!id) return;
-    setLoading(true);
-    const currentYear = new Date().getFullYear().toString();
-    Promise.all([
-      supabase.from('students').select('*, location:locations(*), instrument:instruments(*)').eq('id', id).single(),
-      supabase.from('student_stats').select('*').eq('student_id', id).single(),
-      supabase.from('lesson_students')
-        .select('*, lesson:lessons(*, teacher:profiles!lessons_teacher_id_fkey(full_name), instrument:instruments(name))')
-        .eq('student_id', id)
-        .order('created_at', { ascending: false })
-        .limit(50),
-      supabase.from('student_enrolments').select('*, lesson_rate:lesson_rates(category), instrument:instruments(name)').eq('student_id', id).eq('academic_year', currentYear),
-    ]).then(([studentRes, statsRes, lessonsRes, enrolmentRes]) => {
-      setStudent(studentRes.data);
-      setStats(statsRes.data as StudentStats);
-      setLessons((lessonsRes.data || []).filter((l: any) => l.lesson));
-      if (enrolmentRes.data) setEnrolments(enrolmentRes.data as any);
-      setLoading(false);
-    });
+  /** Attendance changed: history, stats/enrolment usage and lesson views. */
+  function afterAttendanceChange() {
+    invalidateLessonViews();
+    return Promise.all([lessonsQ.refresh(), core.refresh()]);
   }
 
   async function markAbsence() {
-    if (!absenceModal) return;
+    if (!absenceModal || attendanceBusy) return;
+    setAttendanceBusy(absenceModal.lessonStudentId);
     const { error } = await supabase
       .from('lesson_students')
       .update({ attended: false, absence_category: absenceCategory })
       .eq('id', absenceModal.lessonStudentId);
-    if (error) { alert(error.message); return; }
+    setAttendanceBusy(null);
+    if (error) { showToast('error', `Couldn't mark absence: ${error.message}`); return; }
     setAbsenceModal(null);
-    fetchData();
+    afterAttendanceChange();
   }
 
   async function markAttended(lessonStudentId: string) {
-    await supabase.from('lesson_students').update({ attended: true, absence_category: null }).eq('id', lessonStudentId);
-    fetchData();
+    if (attendanceBusy) return;
+    setAttendanceBusy(lessonStudentId);
+    const { error } = await supabase.from('lesson_students').update({ attended: true, absence_category: null }).eq('id', lessonStudentId);
+    setAttendanceBusy(null);
+    if (error) { showToast('error', `Couldn't mark attendance: ${error.message}`); return; }
+    afterAttendanceChange();
   }
 
   async function toggleActive() {
-    if (!student) return;
+    if (!student || togglingActive) return;
     const next = !student.is_active;
     const msg = next ? 'Reactivate this student?' : 'Deactivate this student?';
     if (!confirm(msg)) return;
-    await supabase.from('students').update({ is_active: next }).eq('id', id!);
-    fetchData();
+    setTogglingActive(true);
+    const { error } = await supabase.from('students').update({ is_active: next }).eq('id', id!);
+    setTogglingActive(false);
+    if (error) { showToast('error', error.message); return; }
+    showToast('success', next ? 'Student reactivated' : 'Student deactivated');
+    afterStudentChange();
   }
 
   function openEdit() {
+    if (!student) return;
     setEditForm({
       full_name: student.full_name || '',
       phone: student.phone || '',
@@ -147,13 +232,41 @@ export function StudentDetailPage() {
   }
 
   async function handleDelete() {
-    const { error } = await supabase.from('students').delete().eq('id', id!);
-    if (error) { alert(error.message); return; }
-    navigate('/students');
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      // Payment records/invoices block deletion (FK) — check first for a clear message.
+      const [pay, inv] = await Promise.all([
+        supabase.from('payment_records').select('id', { count: 'exact', head: true }).eq('student_id', id!),
+        supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('student_id', id!),
+      ]);
+      if (pay.error) throw pay.error;
+      if (inv.error) throw inv.error;
+      if ((pay.count ?? 0) + (inv.count ?? 0) > 0) {
+        showToast('error', HAS_PAYMENTS_MSG);
+        setDeleteConfirmOpen(false);
+        return;
+      }
+      const { error } = await supabase.from('students').delete().eq('id', id!);
+      if (error) {
+        if (error.code === '23503') { showToast('error', HAS_PAYMENTS_MSG); setDeleteConfirmOpen(false); return; }
+        throw error;
+      }
+      invalidateQueries('students:');
+      invalidateReference('students');
+      invalidateLessonViews();
+      showToast('success', 'Student deleted');
+      navigate('/students');
+    } catch (err) {
+      showToast('error', `Couldn't delete student: ${errorMessage(err)}`);
+    } finally {
+      setDeleting(false);
+    }
   }
 
-  function openScheduleEdit(sched: any | null) {
+  function openScheduleEdit(sched: ScheduleRow | null) {
     setEditingSchedule(sched);
+    setScheduleError(null);
     setScheduleForm(sched ? {
       teacher_id: sched.teacher_id,
       day_of_week: sched.day_of_week,
@@ -172,50 +285,89 @@ export function StudentDetailPage() {
     setScheduleEditOpen(true);
   }
 
+  /** Slot changed: refresh our list, plus any other student sharing the slot. */
+  function afterScheduleChange(studentIds: string[]) {
+    studentIds.filter((s) => s !== id).forEach((s) => invalidateQueries(`student-detail:${s}:schedules`));
+    invalidateQueries('teachers:');
+    return schedulesQ.refresh();
+  }
+
+  /** Current student_ids of a slot (read fresh so we never drop someone added meanwhile). */
+  async function currentSlotStudents(slotId: string): Promise<string[]> {
+    const row = unwrap(await supabase.from('teacher_schedule_templates').select('student_ids').eq('id', slotId).single()) as { student_ids: string[] | null };
+    return row.student_ids ?? [];
+  }
+
   async function saveSchedule() {
+    if (!student || scheduleSaving) return;
     setScheduleSaving(true);
+    setScheduleError(null);
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         teacher_id: scheduleForm.teacher_id,
         day_of_week: Number(scheduleForm.day_of_week),
         start_time: scheduleForm.start_time,
         end_time: scheduleForm.end_time || null,
         instrument_id: scheduleForm.instrument_id || null,
         location_id: scheduleForm.location_id || null,
-        title: `${student.full_name} – ${instruments.find(i => i.id === scheduleForm.instrument_id)?.name ?? ''}`,
-        student_ids: [id],
         is_active: true,
       };
+      const title = `${student.full_name} – ${instruments.find(i => i.id === scheduleForm.instrument_id)?.name ?? ''}`;
+      let affected: string[] = [id!];
       if (editingSchedule) {
-        await supabase.from('teacher_schedule_templates').update(payload).eq('id', editingSchedule.id);
+        // Shared group slot: keep the other students, only make sure this one is in it.
+        const existing = await currentSlotStudents(editingSchedule.id);
+        const others = existing.filter((s) => s !== id);
+        payload.student_ids = [...others, id];
+        if (others.length === 0) payload.title = title; // don't rename a group slot after one student
+        affected = [...others, id!];
+        const { error } = await supabase.from('teacher_schedule_templates').update(payload).eq('id', editingSchedule.id);
+        if (error) throw error;
       } else {
-        await supabase.from('teacher_schedule_templates').insert(payload);
+        const { error } = await supabase.from('teacher_schedule_templates').insert({ ...payload, title, student_ids: [id] });
+        if (error) throw error;
       }
       setScheduleEditOpen(false);
-      fetchSchedules();
-    } catch (err: any) {
-      alert(err.message);
+      showToast('success', editingSchedule ? 'Class updated' : 'Class added');
+      afterScheduleChange(affected);
+    } catch (err) {
+      setScheduleError(errorMessage(err, "Couldn't save class"));
     } finally {
       setScheduleSaving(false);
     }
   }
 
-  async function deleteSchedule(schedId: string) {
-    if (!confirm('Remove this class slot?')) return;
-    await supabase.from('teacher_schedule_templates').delete().eq('id', schedId);
-    fetchSchedules();
+  async function deleteSchedule(sched: ScheduleRow) {
+    const shared = sched.student_ids.some((s) => s !== id);
+    if (!confirm(shared ? 'Remove this student from this group class slot?' : 'Remove this class slot?')) return;
+    try {
+      // Shared slot: remove only this student. Otherwise delete the slot.
+      const existing = await currentSlotStudents(sched.id);
+      const others = existing.filter((s) => s !== id);
+      const { error } = others.length > 0
+        ? await supabase.from('teacher_schedule_templates').update({ student_ids: others }).eq('id', sched.id)
+        : await supabase.from('teacher_schedule_templates').delete().eq('id', sched.id);
+      if (error) throw error;
+      showToast('success', 'Class removed');
+      afterScheduleChange(existing);
+    } catch (err) {
+      showToast('error', `Couldn't remove class: ${errorMessage(err)}`);
+    }
   }
 
   async function toggleStudentInstrument(instrId: string) {
+    if (!coreKey) return;
     const has = studentInstruments.includes(instrId);
+    const setIds = (fn: (ids: string[]) => string[]) =>
+      setQueryData<StudentCore>(coreKey, (prev) => prev ? { ...prev, instrumentIds: fn(prev.instrumentIds) } : prev!);
     // Optimistic update so the chip responds instantly.
-    setStudentInstruments(prev => has ? prev.filter(x => x !== instrId) : [...prev, instrId]);
+    setIds(ids => has ? ids.filter(x => x !== instrId) : [...ids, instrId]);
     const { error } = has
       ? await supabase.from('student_instruments').delete().eq('student_id', id!).eq('instrument_id', instrId)
       : await supabase.from('student_instruments').insert({ student_id: id, instrument_id: instrId });
     if (error) {
       // Revert and surface the reason (e.g. a permission error) instead of failing silently.
-      setStudentInstruments(prev => has ? [...prev, instrId] : prev.filter(x => x !== instrId));
+      setIds(ids => has ? [...ids, instrId] : ids.filter(x => x !== instrId));
       setEditError(`Couldn't update instruments: ${error.message}`);
     }
   }
@@ -239,16 +391,18 @@ export function StudentDetailPage() {
     setEditSaving(false);
     if (error) { setEditError(error.message); return; }
     setEditOpen(false);
-    fetchData();
+    showToast('success', 'Student updated');
+    afterStudentChange();
   }
 
-  if (loading) return (
+  if (core.loading) return (
     <div className="max-w-4xl mx-auto space-y-4">
       <Skeleton className="h-9 w-56" />
       <SkeletonCards count={4} className="grid-cols-2 sm:grid-cols-4" />
       <Skeleton className="h-40 w-full rounded-2xl" />
     </div>
   );
+  if (core.error && !core.data) return <ErrorBanner message={core.error} onRetry={core.refresh} />;
   if (!student) return <p className="text-center text-gray-400 py-12">Student not found</p>;
 
   const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -277,7 +431,7 @@ export function StudentDetailPage() {
           <button onClick={() => navigate('/enrolments')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal text-white text-sm font-medium hover:bg-teal/90">
             <BookmarkPlus size={13} /> New enrolment
           </button>
-          <button onClick={toggleActive} className={`px-3 py-1.5 rounded-lg border text-sm font-medium ${
+          <button onClick={toggleActive} disabled={togglingActive} className={`px-3 py-1.5 rounded-lg border text-sm font-medium disabled:opacity-50 ${
             student.is_active ? 'border-coral/30 text-coral hover:bg-coral/5' : 'border-teal/30 text-teal hover:bg-teal/5'
           }`}>
             {student.is_active ? 'Deactivate' : 'Activate'}
@@ -374,7 +528,7 @@ export function StudentDetailPage() {
           {/* Enrolment cards */}
           {enrolments.length === 0 ? (
             <div className="bg-white rounded-xl border border-black/5 p-10 text-center text-gray-400 text-sm">
-              No enrolment for current year.{' '}
+              No enrolments yet.{' '}
               <button onClick={() => navigate('/enrolments')} className="text-teal font-medium hover:underline">Create one on the Enrolments page</button>
             </div>
           ) : enrolments.map((enrolment) => {
@@ -430,7 +584,10 @@ export function StudentDetailPage() {
               + Add Class
             </button>
           </div>
-          {schedules.length === 0 ? (
+          {schedulesQ.error && <div className="p-4"><ErrorBanner message={schedulesQ.error} onRetry={schedulesQ.refresh} /></div>}
+          {schedulesQ.loading ? (
+            <div className="p-6 space-y-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
+          ) : schedules.length === 0 ? (
             <div className="py-16 text-center text-gray-400 text-sm">No class slots set up for this student</div>
           ) : (
             <table className="w-full text-sm">
@@ -444,7 +601,7 @@ export function StudentDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/5">
-                {schedules.map((s: any) => (
+                {schedules.map((s) => (
                   <tr key={s.id} className="hover:bg-gray-50/50">
                     <td className="px-6 py-3.5">
                       <p className="font-semibold text-navy">{DAYS[s.day_of_week]}</p>
@@ -455,7 +612,7 @@ export function StudentDetailPage() {
                     <td className="px-6 py-3.5 text-gray-600">{s.location?.name || '—'}</td>
                     <td className="px-6 py-3.5 text-right">
                       <button onClick={() => openScheduleEdit(s)} className="text-xs text-gray-400 hover:text-navy px-2 py-1 rounded hover:bg-gray-100 mr-1">Edit</button>
-                      <button onClick={() => deleteSchedule(s.id)} className="text-xs text-coral px-2 py-1 rounded hover:bg-coral/5">Remove</button>
+                      <button onClick={() => deleteSchedule(s)} className="text-xs text-coral px-2 py-1 rounded hover:bg-coral/5">Remove</button>
                     </td>
                   </tr>
                 ))}
@@ -472,7 +629,10 @@ export function StudentDetailPage() {
             <h2 className="font-semibold text-navy">Lesson History</h2>
             <p className="text-xs text-gray-400 mt-0.5">Last 50 lessons</p>
           </div>
-          {lessons.length === 0 ? (
+          {lessonsQ.error && <div className="p-4"><ErrorBanner message={lessonsQ.error} onRetry={lessonsQ.refresh} /></div>}
+          {lessonsQ.loading ? (
+            <div className="p-6 space-y-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
+          ) : lessons.length === 0 ? (
             <div className="py-16 text-center text-gray-400 text-sm">No lessons recorded</div>
           ) : (
             <table className="w-full text-sm">
@@ -486,7 +646,7 @@ export function StudentDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/5">
-                {lessons.map((item: any) => (
+                {lessons.map((item) => (
                   <tr key={item.id} className="hover:bg-gray-50/50">
                     <td className="pl-6 py-3.5">
                       <div className={`w-1.5 h-6 rounded-full ${item.attended === true ? 'bg-teal' : item.attended === false ? 'bg-coral' : 'bg-gray-200'}`} />
@@ -508,8 +668,8 @@ export function StudentDetailPage() {
                       )}
                       {item.attended === null && (
                         <div className="flex gap-1.5 justify-end">
-                          <button onClick={() => markAttended(item.id)} className="text-xs px-2.5 py-1 rounded-full border border-teal/30 text-teal hover:bg-teal/10 font-medium">Present</button>
-                          <button onClick={() => setAbsenceModal({ lessonStudentId: item.id, studentName: student.full_name })} className="text-xs px-2.5 py-1 rounded-full border border-coral/30 text-coral hover:bg-coral/10 font-medium">Absent</button>
+                          <button onClick={() => markAttended(item.id)} disabled={!!attendanceBusy} className="disabled:opacity-50 text-xs px-2.5 py-1 rounded-full border border-teal/30 text-teal hover:bg-teal/10 font-medium">Present</button>
+                          <button onClick={() => setAbsenceModal({ lessonStudentId: item.id, studentName: student.full_name })} disabled={!!attendanceBusy} className="disabled:opacity-50 text-xs px-2.5 py-1 rounded-full border border-coral/30 text-coral hover:bg-coral/10 font-medium">Absent</button>
                         </div>
                       )}
                     </td>
@@ -542,7 +702,7 @@ export function StudentDetailPage() {
               ))}
             </div>
             <div className="flex gap-3">
-              <button onClick={markAbsence} className="flex-1 bg-coral text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-coral/90">Confirm Absence</button>
+              <button onClick={markAbsence} disabled={!!attendanceBusy} className="flex-1 bg-coral text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-coral/90 disabled:opacity-50">{attendanceBusy ? 'Saving...' : 'Confirm Absence'}</button>
               <button onClick={() => setAbsenceModal(null)} className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200">Cancel</button>
             </div>
           </div>
@@ -657,6 +817,10 @@ export function StudentDetailPage() {
               <h3 className="font-semibold text-navy text-lg">{editingSchedule ? 'Edit Class' : 'Add Class'}</h3>
               <button onClick={() => setScheduleEditOpen(false)} className="text-gray-400 hover:text-navy"><X size={20} /></button>
             </div>
+            {scheduleError && <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600">{scheduleError}</div>}
+            {editingSchedule && editingSchedule.student_ids.some((s) => s !== id) && (
+              <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">Group class — changes apply to every student in this slot.</p>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Teacher</label>
@@ -718,7 +882,8 @@ export function StudentDetailPage() {
       <ConfirmDialog
         open={deleteConfirmOpen}
         title="Delete Student"
-        message={`This will permanently delete ${student.full_name} and all their lesson and payment records. This cannot be undone.`}
+        message={`This will permanently delete ${student.full_name} and all their lesson records. This cannot be undone.`}
+        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
         onConfirm={handleDelete}
         onCancel={() => setDeleteConfirmOpen(false)}
       />

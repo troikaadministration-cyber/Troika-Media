@@ -5,18 +5,25 @@ import {
   CheckCircle, XCircle, CalendarClock, Sparkles, AlertCircle, Clock,
 } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
+import { Skeleton } from '../../components/Skeleton';
+import { ErrorBanner } from '../../components/ErrorBanner';
+import { AbsenceControls } from '../../components/student/shared';
 import { greeting, firstName, fmtDate, fmtTime, fmtMoney } from './format';
 
 export function StudentHome() {
-  const { upcoming, past, totalCompleted, enrolments, payments, studentName } = useStudentPortal();
+  const {
+    upcoming, totalCompleted, totalMissed, enrolments, payments, studentName,
+    loadingLessons, lessonsError, refresh,
+  } = useStudentPortal();
 
   const next = upcoming.find((i) => i.lesson.status !== 'cancelled') || null;
-  const nextTeacher = next ? ((next.lesson.teacher as any)?.full_name as string | undefined) : undefined;
-  const nextLocation = next ? ((next.lesson.location as any)?.name as string | undefined) : undefined;
+  const nextTeacher = next ? next.lesson.teacher?.full_name : undefined;
+  const nextLocation = next ? next.lesson.location?.name : undefined;
 
-  const totalMissed = past.filter((l) => l.attended === false).length;
-  const primary = enrolments[0] || null;
-  const remaining = primary ? primary.total_lessons - primary.lessons_used : null;
+  // Across all of the student's classes (one enrolment per class).
+  const remaining = enrolments.length
+    ? enrolments.reduce((sum, e) => sum + Math.max(0, e.total_lessons - e.lessons_used), 0)
+    : null;
 
   const today = toDateStr(new Date());
   const paidCount = payments.filter((p) => p.paid_date).length;
@@ -38,8 +45,12 @@ export function StudentHome() {
         <p className="text-gray-500 text-sm mt-1">Here's everything in one place.</p>
       </div>
 
+      {lessonsError && <ErrorBanner message={lessonsError} onRetry={() => { void refresh(); }} />}
+
       {/* Next lesson hero */}
-      {next ? (
+      {loadingLessons ? (
+        <Skeleton className="h-40 w-full rounded-2xl" />
+      ) : next ? (
         <div className="rounded-2xl bg-gradient-to-br from-coral to-[#ef7a64] text-white p-6 shadow-sm">
           <div className="flex items-center gap-2 text-white/85 text-sm font-medium mb-3">
             <CalendarClock size={16} /> Your next lesson
@@ -62,6 +73,7 @@ export function StudentHome() {
               </div>
             </div>
           </div>
+          <AbsenceControls item={next} onAccent className="mt-4" />
         </div>
       ) : (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 p-8 text-center">

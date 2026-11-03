@@ -1,0 +1,5 @@
+# Per-function settings used by `supabase functions deploy`.
+# calendar-feed is fetched by calendar apps, which can't send a login token;
+# it authenticates with the private token in its URL instead.
+[functions.calendar-feed]
+verify_jwt = false

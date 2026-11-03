@@ -265,6 +265,7 @@ export interface PendingLesson {
   title: string;
   date: string;       // YYYY-MM-DD
   start_time: string; // HH:MM:SS
+  end_time?: string | null;
   source_break_id: string;
   students: Array<{ student_id: string; student: { full_name: string } }>;
   teacher: { full_name: string };

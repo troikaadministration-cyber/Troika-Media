@@ -1,6 +1,6 @@
+import { Logo } from '../components/Logo';
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { supabase } from '../lib/supabase';
 import { BookOpen, GraduationCap, Music } from 'lucide-react';
 
 type SetupRole = 'teacher' | 'student';
@@ -38,18 +38,8 @@ export function RoleSetupPage() {
     setLoading(true);
     setError('');
     try {
+      // Also links (or creates) the student record server-side for students.
       await createProfile(selectedRole, fullName.trim());
-
-      // If student role, use server-side function to link or create student record
-      // This bypasses RLS so it can find coordinator-created records (user_id IS NULL)
-      if (selectedRole === 'student' && session?.user) {
-        const { error: linkErr } = await supabase.rpc('link_or_create_student', {
-          p_user_id: session.user.id,
-          p_email: session.user.email || '',
-          p_full_name: fullName.trim(),
-        });
-        if (linkErr) console.error('Student link error:', linkErr);
-      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -61,7 +51,7 @@ export function RoleSetupPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto" />
+          <Logo className="h-20 w-auto mx-auto" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-6 sm:p-8">

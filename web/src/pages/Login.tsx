@@ -1,3 +1,4 @@
+import { Logo } from '../components/Logo';
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { isConfigured, supabase } from '../lib/supabase';
@@ -18,7 +19,7 @@ export function LoginPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="w-full max-w-md text-center">
-          <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto mx-auto mb-2" />
+          <Logo className="h-16 w-auto mx-auto mb-2" />
           <div className="mt-8 bg-yellow-light border border-yellow/30 rounded-xl p-6 text-left">
             <p className="font-semibold text-navy text-sm mb-2">Setup Required</p>
             <p className="text-sm text-gray-600">
@@ -44,11 +45,15 @@ export function LoginPage() {
     setLoading(true);
     try {
       if (isSignUp) {
-        await signUp(email, password, fullName);
-        setSuccess('Account created! Check your email to confirm, then sign in.');
-        setIsSignUp(false);
-        setFullName('');
-        setPassword('');
+        if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+        const { needsConfirmation } = await signUp(email, password, fullName);
+        if (needsConfirmation) {
+          setSuccess('Account created! Check your email to confirm, then sign in.');
+          setIsSignUp(false);
+          setFullName('');
+          setPassword('');
+        }
+        // Otherwise the new session signs them straight in (next: choose role).
       } else {
         await signIn(email, password);
       }
@@ -73,7 +78,7 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         {/* Branding */}
         <div className="text-center mb-8">
-          <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto" />
+          <Logo className="h-20 w-auto mx-auto" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-6 sm:p-8">
@@ -168,7 +173,7 @@ export function LoginPage() {
                   className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-coral/30 focus:border-coral text-sm"
                   placeholder={isSignUp ? 'Create a password' : 'Enter your password'}
                   required
-                  minLength={isSignUp ? 6 : undefined}
+                  minLength={isSignUp ? 8 : undefined}
                 />
               </div>
               <button

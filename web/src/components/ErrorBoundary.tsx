@@ -1,6 +1,7 @@
+import { Logo } from './Logo';
 import { Component, type ReactNode } from 'react';
 
-interface Props { children: ReactNode; fallbackRoute?: boolean }
+interface Props { children: ReactNode; /** When this changes, a shown error is cleared (e.g. the route). */ resetKey?: string }
 interface State { hasError: boolean }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -8,6 +9,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError() {
     return { hasError: true };
+  }
+
+  componentDidUpdate(prev: Props) {
+    if (this.state.hasError && prev.resetKey !== this.props.resetKey) this.setState({ hasError: false });
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
@@ -36,7 +41,7 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="text-center max-w-md">
-          <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto mx-auto mb-6" />
+          <Logo className="h-16 w-auto mx-auto mb-6" />
           <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-6">
             <p className="text-coral text-lg font-semibold mb-2">Something went wrong</p>
             <p className="text-gray-500 text-sm mb-4">

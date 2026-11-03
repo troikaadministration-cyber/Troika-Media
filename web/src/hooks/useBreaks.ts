@@ -1,95 +1,62 @@
-import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, unwrap, invalidateQueries } from '../lib/queryCache';
+import { invalidateLessonViews } from './useLessons';
 import type { ScheduledBreak } from '../types';
 
-export function useBreaks() {
-  const [breaks, setBreaks] = useState<ScheduledBreak[]>([]);
-  const [pendingRescheduleCount, setPendingRescheduleCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+const BREAK_COLUMNS = 'id, created_by, title, start_date, end_date, student_ids, total_cancelled, total_rescheduled, created_at';
 
-  const fetchBreaks = useCallback(async () => {
-    setLoading(true);
+export function useBreaks() {
+  const { data, loading, error, refresh } = useQuery('breaks:list', async () => {
     const [breaksRes, countRes] = await Promise.all([
-      supabase.from('scheduled_breaks').select('*').order('start_date', { ascending: false }),
+      supabase.from('scheduled_breaks').select(BREAK_COLUMNS).order('start_date', { ascending: false }),
       supabase.from('lessons').select('id', { count: 'exact', head: true }).eq('pending_reschedule', true),
     ]);
-    setBreaks((breaksRes.data as ScheduledBreak[]) || []);
-    setPendingRescheduleCount(countRes.count || 0);
-    setLoading(false);
-  }, []);
+    if (countRes.error) throw new Error(countRes.error.message);
+    return {
+      breaks: unwrap(breaksRes, []) as ScheduledBreak[],
+      pendingRescheduleCount: countRes.count ?? 0,
+    };
+  });
 
-  useEffect(() => { fetchBreaks(); }, [fetchBreaks]);
-
-  async function createBreak(data: {
+  // One database transaction (create_break): cancels lessons where everyone is
+  // on break; in group classes only the students on break are split off, so the
+  // class goes ahead for the others. Empty student list = whole school.
+  async function createBreak(input: {
     title: string;
     start_date: string;
     end_date: string;
     student_ids: string[];
     created_by: string;
   }) {
-    // Find all scheduled lessons in the range for selected students
-    const { data: lessons } = await supabase
-      .from('lessons')
-      .select('id, students:lesson_students(student_id)')
-      .gte('date', data.start_date)
-      .lte('date', data.end_date)
-      .eq('status', 'scheduled');
-
-    // Filter lessons that involve any of the selected students
-    const affectedLessons = (lessons || []).filter((l: any) => {
-      if (data.student_ids.length === 0) return true; // "All students" mode
-      return l.students?.some((s: any) => data.student_ids.includes(s.student_id));
+    const { data: result, error: err } = await supabase.rpc('create_break', {
+      p_title: input.title,
+      p_start_date: input.start_date,
+      p_end_date: input.end_date,
+      p_student_ids: input.student_ids,
     });
-
-    // Create break record
-    const { data: breakRecord, error: breakErr } = await supabase
-      .from('scheduled_breaks')
-      .insert({
-        created_by: data.created_by,
-        title: data.title,
-        start_date: data.start_date,
-        end_date: data.end_date,
-        student_ids: data.student_ids,
-        total_cancelled: affectedLessons.length,
-        total_rescheduled: 0,
-      })
-      .select()
-      .single();
-    if (breakErr) throw breakErr;
-
-    // Cancel all affected lessons
-    if (affectedLessons.length > 0) {
-      const ids = affectedLessons.map((l: any) => l.id);
-      await supabase
-        .from('lessons')
-        .update({
-          status: 'cancelled',
-          pending_reschedule: true,
-          source_break_id: breakRecord.id,
-          cancelled_by_role: 'coordinator',
-          cancelled_by_user_id: data.created_by,
-        })
-        .in('id', ids);
-    }
-
-    await fetchBreaks();
-    return { cancelled: affectedLessons.length };
+    if (err) throw err;
+    invalidateLessonViews();
+    invalidateQueries('pending-reschedules');
+    await refresh();
+    const r = result as { cancelled: number; split_group_lessons: number };
+    return { cancelled: r.cancelled, split: r.split_group_lessons };
   }
 
   async function previewBreak(startDate: string, endDate: string, studentIds: string[]) {
-    const { data: lessons } = await supabase
-      .from('lessons')
-      .select('id, students:lesson_students(student_id)')
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .eq('status', 'scheduled');
-
-    const affected = (lessons || []).filter((l: any) => {
-      if (studentIds.length === 0) return true;
-      return l.students?.some((s: any) => studentIds.includes(s.student_id));
+    const { data: result, error: err } = await supabase.rpc('create_break', {
+      p_title: 'preview', p_start_date: startDate, p_end_date: endDate, p_student_ids: studentIds, p_dry_run: true,
     });
-    return affected.length;
+    if (err) throw err;
+    return (result as { cancelled: number }).cancelled;
   }
 
-  return { breaks, pendingRescheduleCount, loading, fetchBreaks, createBreak, previewBreak };
+  return {
+    breaks: data?.breaks ?? [],
+    pendingRescheduleCount: data?.pendingRescheduleCount ?? 0,
+    loading,
+    error,
+    fetchBreaks: refresh,
+    createBreak,
+    previewBreak,
+  };
 }

@@ -1,11 +1,17 @@
-import { toDateStr } from '../lib/dates';
-import { useState, useEffect, useCallback } from 'react';
+import { toDateStr, parseDateStr } from '../lib/dates';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, unwrap, invalidateQueries, errorMessage } from '../lib/queryCache';
+import { fetchAll } from '../lib/fetchAll';
+import { useActiveStudentsList, useInstruments, useTeachersList } from '../hooks/useReference';
+import { invalidateLessonViews } from '../hooks/useLessons';
+import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { SlotPicker } from '../components/SlotPicker';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { SlotPicker, slotError } from '../components/SlotPicker';
 import type { SelectedSlot } from '../components/SlotPicker';
-import type { Profile, Instrument } from '../types';
-import { Plus, X, RefreshCw, BookOpen, ChevronRight } from 'lucide-react';
+import { Plus, X, BookOpen, ChevronRight, CalendarPlus } from 'lucide-react';
+import { RenewalWizard } from '../components/RenewalWizard';
 import { useNavigate } from 'react-router-dom';
 import { lessonsForPlan } from '../lib/lessonCount';
 import { SkeletonList } from '../components/Skeleton';
@@ -17,17 +23,37 @@ interface Enrolment {
   academic_year: string;
   total_lessons: number;
   lessons_used: number;
-  start_date: string;
   payment_plan: string;
   rate_per_lesson: number;
   total_fee: number;
-  registration_fee: number;
-  lesson_rate_id: string | null;
-  student?: { id: string; full_name: string; instrument?: { name: string } | null };
+  student: { id: string; full_name: string } | null;
+  instrument: { name: string } | null; // the enrolment's own class instrument
 }
 
-interface Student { id: string; full_name: string; location_id: string | null; instrument?: { name: string } | null; }
-interface LessonRate { id: string; teacher_id: string | null; category: string; rate_per_lesson: number; is_online: boolean; location_id: string | null; teacher?: { id: string; full_name: string } | null; }
+interface LessonRate {
+  id: string;
+  teacher_id: string | null;
+  category: string;
+  rate_per_lesson: number;
+  is_online: boolean;
+  location_id: string | null;
+  academic_year: string | null;
+}
+
+interface EnrolResult {
+  enrolment_id: string;
+  lessons_scheduled: number;
+  lessons_expected: number;
+  lessons_joined: number;
+  lessons_created: number;
+  conflicts: number;
+  conflict_dates: string[];
+}
+
+const ENROLMENT_COLUMNS =
+  'id, student_id, academic_year, total_lessons, lessons_used, payment_plan, rate_per_lesson, total_fee, ' +
+  'student:students(id, full_name), instrument:instruments(name)';
+
 const PLAN_OPTIONS = [
   { value: 'trial', label: 'Trial (no payment)' },
   { value: '1_instalment', label: '1 Instalment' },
@@ -35,79 +61,115 @@ const PLAN_OPTIONS = [
   { value: '10_instalments', label: '10 Instalments' },
 ];
 
-export function EnrolmentsPage() {
-  const [enrolments, setEnrolments] = useState<Enrolment[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [rates, setRates] = useState<LessonRate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [modal, setModal] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [step, setStep] = useState<1 | 2>(1);
-  const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
-  const [manualTeacherId, setManualTeacherId] = useState('');
-  const [teachers, setTeachers] = useState<Profile[]>([]);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [generateResult, setGenerateResult] = useState<string | null>(null);
-  const [classDone, setClassDone] = useState(false);   // a class was just created; offer "add another"
-  const [addedCount, setAddedCount] = useState(0);      // classes created this session
-  const navigate = useNavigate();
+function oneYearFromToday() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + 1);
+  return toDateStr(d);
+}
 
-  // Form state
-  const [form, setForm] = useState({
+function emptyForm() {
+  return {
     student_id: '',
     lesson_rate_id: '',
     payment_plan: '3_instalments',
     start_date: toDateStr(new Date()),
-    end_date: (() => {
-      const d = new Date();
-      d.setFullYear(d.getFullYear() + 1);
-      return toDateStr(d);
-    })(),
+    end_date: oneYearFromToday(),
     registration_fee: 0,
     rate_override: 0,
     discount_primary: 'none' as DiscountPrimary,
     discount_special: 0,
     discount_multilesson: false,
-    academic_year: new Date().getFullYear().toString(),
-  });
+  };
+}
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [enrolRes, studentRes, rateRes, teacherRes, instrumentRes] = await Promise.all([
-        supabase.from('student_enrolments').select('*, student:students(id, full_name, instrument:instruments(name))').order('created_at', { ascending: false }),
-        supabase.from('students').select('id, full_name, location_id, instrument:instruments(name)').eq('is_active', true).order('full_name'),
-        supabase.from('lesson_rates').select('id, teacher_id, category, rate_per_lesson, is_online, location_id, teacher:profiles(id, full_name)').order('category'),
-        supabase.from('profiles').select('id, full_name, role, email, phone, approved, created_at, updated_at').eq('role', 'teacher').order('full_name'),
-        supabase.from('instruments').select('*').order('name'),
-      ]);
-      if (enrolRes.error) throw enrolRes.error;
-      setEnrolments((enrolRes.data || []) as any);
-      setStudents((studentRes.data || []) as any);
-      setRates((rateRes.data || []) as any);
-      setTeachers((teacherRes.data as Profile[]) || []);
-      setInstruments((instrumentRes.data || []) as any);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+/** Rates for an academic year; falls back to the latest year that has rates. */
+/**
+ * The rate card for a year: for each teacher/category/location/online combo,
+ * that year's rate, or — if none was set for that year yet — the most recent
+ * earlier one. (Previously one new-year rate hid every other rate.)
+ */
+function ratesForYear(rates: LessonRate[], year: string): { list: LessonRate[]; shownYear: string } {
+  const best = new Map<string, LessonRate>();
+  for (const r of rates) {
+    const y = r.academic_year || year;
+    if (y > year) continue;
+    const key = [r.teacher_id ?? '', r.category, r.location_id ?? '', r.is_online].join('|');
+    const cur = best.get(key);
+    if (!cur || (cur.academic_year || year) < y) best.set(key, r);
+  }
+  const list = [...best.values()];
+  const older = list.filter(r => r.academic_year && r.academic_year !== year);
+  const shownYear = older.length === 0 ? year : older.reduce((m, r) => (r.academic_year! < m ? r.academic_year! : m), year);
+  return { list, shownYear };
+}
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+function fmtShortDate(d: string) {
+  return parseDateStr(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
 
-  const selectedRate = rates.find(r => r.id === form.lesson_rate_id);
+/** Everything an enrolment create/delete touches. */
+function invalidateAfterEnrolmentChange() {
+  invalidateQueries('enrolments:');
+  invalidateQueries('payments');
+  invalidateQueries('students:');
+  invalidateQueries('teacher-schedule:');
+  invalidateLessonViews(); // also dashboard: and reports:
+}
+
+export function EnrolmentsPage() {
+  const navigate = useNavigate();
+  const { showToast } = useToast();
+
+  // ── Data (cached: revisits render instantly) ──
+  const enrolmentsQ = useQuery<Enrolment[]>('enrolments:list', () =>
+    fetchAll<Enrolment>((from, to) =>
+      supabase.from('student_enrolments').select(ENROLMENT_COLUMNS)
+        .order('created_at', { ascending: false }).order('id').range(from, to)));
+  const ratesQ = useQuery<LessonRate[]>('lesson-rates:enrol-picker', async () =>
+    unwrap(await supabase.from('lesson_rates')
+      .select('id, teacher_id, category, rate_per_lesson, is_online, location_id, academic_year')
+      .order('category'), []) as LessonRate[]);
+  const { students } = useActiveStudentsList();
+  const { teachers } = useTeachersList(); // approved only
+  const { instruments } = useInstruments();
+  const enrolments = enrolmentsQ.data ?? [];
+
+  const [modal, setModal] = useState(false);
+  const [renewOpen, setRenewOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [showErrors, setShowErrors] = useState(false); // inline field errors after "Next"
+  const [confirmDelete, setConfirmDelete] = useState<Enrolment | null>(null);
+  const [step, setStep] = useState<1 | 2>(1);
+  const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
+  const [manualTeacherId, setManualTeacherId] = useState('');
+  const [result, setResult] = useState<{ text: string; warning: string | null } | null>(null);
+  const [classDone, setClassDone] = useState(false);   // a class was just created; offer "add another"
+  const [addedCount, setAddedCount] = useState(0);      // classes created this session
+  const [form, setForm] = useState(emptyForm);
+
+  // Only rates of approved teachers (or teacher-less rates) can be picked.
+  const rates = useMemo(() => {
+    const approved = new Set(teachers.map(t => t.id));
+    return (ratesQ.data ?? []).filter(r => !r.teacher_id || approved.has(r.teacher_id));
+  }, [ratesQ.data, teachers]);
+
+  // Academic year always follows the start date.
+  const academicYear = form.start_date.slice(0, 4);
+  const { list: yearRates, shownYear: rateYear } = ratesForYear(rates, academicYear);
+
+  const isTrial = form.payment_plan === 'trial';
+  const selectedRate = yearRates.find(r => r.id === form.lesson_rate_id);
   // Per-student rate: defaults to the rate-card value but can be overridden.
   const effectiveRate = form.rate_override || 0;
   const selectedStudent = students.find(s => s.id === form.student_id);
+  const instrumentName = (id: string | null | undefined) => instruments.find(i => i.id === id)?.name;
   const filteredRates = selectedStudent?.location_id
-    ? rates.filter(r => r.location_id === selectedStudent.location_id || r.location_id === null)
-    : rates;
+    ? yearRates.filter(r => r.location_id === selectedStudent.location_id || r.location_id === null)
+    : yearRates;
   const hasLocationRates = !!(selectedStudent?.location_id &&
-    rates.some(r => r.location_id === selectedStudent.location_id));
+    yearRates.some(r => r.location_id === selectedStudent.location_id));
   const totalLessons = lessonsForPlan(form.payment_plan, form.start_date);
   const tuition = effectiveRate * totalLessons;
   const discount = computeDiscount(tuition, {
@@ -119,32 +181,56 @@ export function EnrolmentsPage() {
   const tuitionDiscount = discount.discountAmount;
   // total_fee stores discounted tuition; registration fee is separate.
   const totalFee = discount.discounted;
-  const teacherId = selectedRate?.teacher?.id ?? selectedRate?.teacher_id ?? manualTeacherId ?? '';
-  const teacherName = teachers.find(t => t.id === teacherId)?.full_name
-    || (selectedRate as any)?.teacher?.full_name
-    || '';
+  const teacherId = selectedRate?.teacher_id || manualTeacherId || '';
+  const teacherName = teachers.find(t => t.id === teacherId)?.full_name || '';
+
+  // A slot belongs to one teacher: forget it whenever the teacher changes.
+  useEffect(() => { setSelectedSlot(null); }, [teacherId]);
+
+  // Client-side checks mirroring enrol_student (negative values flag immediately).
+  const fieldErrors = {
+    student: !form.student_id ? 'Please select a student' : null,
+    rate: !isTrial && !form.lesson_rate_id ? 'Please select a lesson rate'
+      : !isTrial && !(effectiveRate > 0) ? 'Enter a rate greater than ₹0 (or choose the Trial plan)'
+      : effectiveRate < 0 ? 'Rate cannot be negative' : null,
+    dates: form.end_date <= form.start_date ? 'End date must be after the start date' : null,
+    registration: !(form.registration_fee >= 0) ? 'Registration fee cannot be negative' : null,
+    discount: form.discount_primary === 'special' && !(form.discount_special >= 0) ? 'Discount cannot be negative' : null,
+  };
+  const hasFieldErrors = Object.values(fieldErrors).some(Boolean);
+  const fieldError = (k: keyof typeof fieldErrors) =>
+    (showErrors || k === 'registration' || k === 'discount') ? fieldErrors[k] : null;
 
   function handleStep1Next() {
-    if (!form.student_id || (!form.lesson_rate_id && form.payment_plan !== 'trial')) {
-      setError('Please select a student and lesson rate');
-      return;
-    }
-    if (form.end_date <= form.start_date) {
-      setError('End date must be after start date');
-      return;
-    }
-    setError(null);
+    setShowErrors(true);
+    if (hasFieldErrors) return;
+    setFormError(null);
     setStep(2);
   }
 
-  // Reset only the class-specific fields, keeping the student, year and plan, so
+  function pickRate(id: string) {
+    const picked = yearRates.find(r => r.id === id);
+    setForm(f => ({ ...f, lesson_rate_id: id, rate_override: Number(picked?.rate_per_lesson) || 0 }));
+    setSelectedSlot(null); // the slot was chosen for the previous rate's teacher
+  }
+
+  function changeStartDate(start_date: string) {
+    setForm(f => {
+      // A new academic year may offer different rates: drop a rate that's no longer listed.
+      const stillListed = ratesForYear(rates, start_date.slice(0, 4)).list.some(r => r.id === f.lesson_rate_id);
+      return stillListed ? { ...f, start_date } : { ...f, start_date, lesson_rate_id: '', rate_override: 0 };
+    });
+  }
+
+  // Reset only the class-specific fields, keeping the student, dates and plan, so
   // the coordinator can add another class (e.g. Violin after Guitar) in one pass.
   function resetForNextClass() {
     setStep(1);
     setSelectedSlot(null);
     setManualTeacherId('');
-    setGenerateResult(null);
-    setError(null);
+    setResult(null);
+    setFormError(null);
+    setShowErrors(false);
     setClassDone(false);
     setForm(f => ({
       ...f,
@@ -162,248 +248,93 @@ export function EnrolmentsPage() {
     setStep(1);
     setSelectedSlot(null);
     setManualTeacherId('');
-    setGenerateResult(null);
-    setError(null);
+    setResult(null);
+    setFormError(null);
+    setShowErrors(false);
     setClassDone(false);
     setAddedCount(0);
-    setForm({
-      student_id: '', lesson_rate_id: '', payment_plan: '3_instalments',
-      start_date: toDateStr(new Date()),
-      end_date: (() => {
-        const d = new Date();
-        d.setFullYear(d.getFullYear() + 1);
-        return toDateStr(d);
-      })(),
-      registration_fee: 0,
-      rate_override: 0,
-      discount_primary: 'none',
-      discount_special: 0,
-      discount_multilesson: false,
-      academic_year: new Date().getFullYear().toString(),
-    });
+    setForm(emptyForm());
   }
 
+  // One transactional call: enrolment + weekly slot + lessons + instalments.
   async function handleCreate() {
-    if (!form.student_id || (!form.lesson_rate_id && form.payment_plan !== 'trial')) {
-      setError('Please select a student and lesson rate');
-      return;
-    }
-    if (!selectedSlot) {
-      setError('Please select or create a schedule slot');
-      return;
-    }
-    const resolvedTeacherId = teacherId;
-    if (!resolvedTeacherId) {
-      setError('Please select a teacher');
-      return;
-    }
+    if (saving) return;
+    if (hasFieldErrors) { setStep(1); setShowErrors(true); return; }
+    if (!teacherId) { setFormError('Please select a teacher'); return; }
+    const slotErr = slotError(selectedSlot);
+    if (slotErr || !selectedSlot) { setFormError(slotErr); return; }
+    const slot = selectedSlot;
 
     setSaving(true);
-    setError(null);
-    setGenerateResult(null);
-
-    let createdEnrolmentId: string | null = null;
-    let createdTemplateId: string | null = null;        // set if new template was inserted
-    let templateStudentUndo: { id: string; ids: string[] } | null = null; // set if existing was updated
-    let createdLessonIds: string[] = [];                // generated lessons, for rollback
-
+    setFormError(null);
+    setResult(null);
     try {
-      // 1. Create enrolment
-      const { data: enrolment, error: enrolErr } = await supabase
-        .from('student_enrolments')
-        .insert({
-          student_id: form.student_id,
-          academic_year: form.academic_year,
-          lesson_rate_id: form.lesson_rate_id || null,
-          total_lessons: totalLessons,
-          lessons_used: 0,
-          start_date: form.start_date,
-          payment_plan: form.payment_plan,
-          rate_per_lesson: effectiveRate,
-          total_fee: totalFee,
-          registration_fee: form.registration_fee,
-          instrument_id: selectedSlot.instrumentId || null,
-          discount_primary: form.discount_primary,
-          discount_multilesson: form.discount_multilesson,
-          discount_value: form.discount_primary === 'special' ? (form.discount_special || 0) : 0,
-        })
-        .select()
-        .single();
+      const { data, error } = await supabase.rpc('enrol_student', {
+        p_student_id: form.student_id,
+        p_teacher_id: teacherId,
+        p_payment_plan: form.payment_plan,
+        p_start_date: form.start_date,
+        p_end_date: form.end_date,
+        p_total_lessons: totalLessons,
+        p_rate_per_lesson: effectiveRate,
+        p_total_fee: totalFee,
+        p_registration_fee: form.registration_fee || 0,
+        p_lesson_rate_id: form.lesson_rate_id || null,
+        p_academic_year: academicYear,
+        p_discount_primary: form.discount_primary,
+        p_discount_multilesson: form.discount_multilesson,
+        p_discount_value: form.discount_primary === 'special' ? (form.discount_special || 0) : 0,
+        p_location_id: selectedStudent?.location_id ?? null,
+        ...(slot.mode === 'existing'
+          ? { p_template_id: slot.templateId }
+          : {
+              p_day_of_week: slot.dayOfWeek,
+              p_start_time: slot.startTime,
+              p_end_time: slot.endTime || null,
+              p_instrument_id: slot.instrumentId,
+              p_title: slot.title.trim() || null,
+            }),
+      });
+      if (error) throw error;
+      const r = data as EnrolResult;
 
-      if (enrolErr) throw enrolErr;
-      createdEnrolmentId = enrolment.id;
-
-      // Instalments are generated LAST (see below) so a failure in the
-      // scheduling steps can't leave orphan payment_records that a retry would
-      // then duplicate.
-
-      // 2. Assign student to schedule template slot
-      let templateDayOfWeek: number;
-      let templateStartTime: string;
-      let templateEndTime: string | null;
-      let templateInstrumentId: string | null;
-      let templateTitle: string;
-
-      if (selectedSlot.mode === 'existing') {
-        const { data: tpl, error: tplErr } = await supabase
-          .from('teacher_schedule_templates')
-          .select('student_ids')
-          .eq('id', selectedSlot.templateId)
-          .single();
-        if (tplErr) throw tplErr;
-
-        const existingIds: string[] = tpl?.student_ids || [];
-        if (!existingIds.includes(form.student_id)) {
-          const { error: updateErr } = await supabase
-            .from('teacher_schedule_templates')
-            .update({ student_ids: [...existingIds, form.student_id] })
-            .eq('id', selectedSlot.templateId);
-          if (updateErr) throw updateErr;
-          // Track for rollback
-          templateStudentUndo = { id: selectedSlot.templateId, ids: existingIds };
-        }
-
-        templateDayOfWeek = selectedSlot.dayOfWeek;
-        templateStartTime = selectedSlot.startTime;
-        templateEndTime = selectedSlot.endTime;
-        templateInstrumentId = selectedSlot.instrumentId;
-        templateTitle = selectedSlot.title;
-      } else {
-        const { data: newTpl, error: insertErr } = await supabase
-          .from('teacher_schedule_templates')
-          .insert({
-            teacher_id: resolvedTeacherId,
-            day_of_week: selectedSlot.dayOfWeek,
-            start_time: selectedSlot.startTime,
-            end_time: selectedSlot.endTime || null,
-            instrument_id: selectedSlot.instrumentId || null,
-            title: selectedSlot.title || 'Lesson',
-            student_ids: [form.student_id],
-          })
-          .select('id')
-          .single();
-        if (insertErr) throw insertErr;
-        createdTemplateId = newTpl.id;
-
-        templateDayOfWeek = selectedSlot.dayOfWeek;
-        templateStartTime = selectedSlot.startTime;
-        templateEndTime = selectedSlot.endTime || null;
-        templateInstrumentId = selectedSlot.instrumentId;
-        templateTitle = selectedSlot.title || 'Lesson';
+      const name = instrumentName(slot.instrumentId) || 'Class';
+      const joined = r.lessons_joined > 0 ? ` (${r.lessons_joined} in an existing class)` : '';
+      let warning: string | null = null;
+      if (r.lessons_scheduled < r.lessons_expected || r.conflicts > 0) {
+        const dates = r.conflict_dates ?? [];
+        const shown = dates.slice(0, 6).map(fmtShortDate).join(', ') + (dates.length > 6 ? ` +${dates.length - 6} more` : '');
+        warning = (r.lessons_scheduled < r.lessons_expected
+            ? `Only ${r.lessons_scheduled} of ${r.lessons_expected} lessons fit before the end date.`
+            : `All ${r.lessons_scheduled} lessons scheduled, but some weeks were skipped.`) +
+          (r.conflicts > 0
+            ? ` ${r.conflicts} week${r.conflicts !== 1 ? 's' : ''} clashed with ${teacherName || 'the teacher'}'s other lessons: ${shown}.`
+            : '') +
+          ' Add the missing lessons from the Schedule page or extend the end date.';
       }
-
-      // 4. Pre-compute all target dates
-      const startDate = new Date(form.start_date + 'T00:00:00');
-      const endDate = new Date(form.end_date + 'T00:00:00');
-      const targetDates: string[] = [];
-      const current = new Date(startDate);
-      while (current <= endDate) {
-        if (current.getDay() === templateDayOfWeek) {
-          targetDates.push(toDateStr(current));
-        }
-        current.setDate(current.getDate() + 1);
-      }
-
-      let created = 0;
-      let skipped = 0;
-
-      if (targetDates.length > 0) {
-        // Batch check for existing lessons
-        const { data: existingLessons } = await supabase
-          .from('lessons')
-          .select('date')
-          .eq('teacher_id', resolvedTeacherId)
-          .eq('start_time', templateStartTime)
-          .in('date', targetDates);
-
-        const existingDates = new Set((existingLessons || []).map((l: { date: string }) => l.date));
-        const dedupedDates = targetDates.filter(d => !existingDates.has(d));
-        const newDates = dedupedDates.slice(0, totalLessons);
-        skipped = targetDates.length - dedupedDates.length; // only true conflicts, not cap overflow
-
-        if (newDates.length > 0) {
-          // Batch insert lessons
-          const { data: insertedLessons, error: lessonsErr } = await supabase
-            .from('lessons')
-            .insert(newDates.map(date => ({
-              teacher_id: resolvedTeacherId,
-              location_id: null,
-              instrument_id: templateInstrumentId || null,
-              lesson_type: 'regular' as const,
-              date,
-              start_time: templateStartTime,
-              end_time: templateEndTime,
-              title: templateTitle,
-            })))
-            .select('id');
-
-          if (lessonsErr) throw lessonsErr;
-
-          if (insertedLessons && insertedLessons.length > 0) {
-            // Batch insert lesson_students
-            const { error: lsErr } = await supabase
-              .from('lesson_students')
-              .insert(insertedLessons.map((l: { id: string }) => ({
-                lesson_id: l.id,
-                student_id: form.student_id,
-              })));
-            if (lsErr) throw lsErr;
-            created = insertedLessons.length;
-            createdLessonIds = insertedLessons.map((l: { id: string }) => l.id);
-          }
-        }
-      }
-
-      // 5. Auto-generate payment instalments — the last step, so any earlier
-      // failure rolls back cleanly without leaving duplicate-able instalments.
-      if (form.payment_plan !== 'trial') {
-        const { error: genErr } = await supabase.rpc('generate_instalments', {
-          p_enrolment_id: enrolment.id,
-        });
-        if (genErr) throw genErr;
-      }
-
-      const instrName = instruments.find(i => i.id === selectedSlot?.instrumentId)?.name || 'Class';
-      setGenerateResult(`${instrName} added — ${created} lesson${created !== 1 ? 's' : ''} generated${skipped > 0 ? `, ${skipped} skipped` : ''}.`);
+      setResult({ text: `${name} added — ${r.lessons_scheduled} lesson${r.lessons_scheduled !== 1 ? 's' : ''} scheduled${joined}.`, warning });
       setAddedCount(c => c + 1);
-      setClassDone(true);   // show the "add another class / done" choice
-      fetchAll();
-    } catch (err: any) {
-      // Compensating delete if enrolment was created but later steps failed.
-      // Delete generated lessons first (and their student links) so they don't
-      // orphan, then the template, then the enrolment.
-      if (createdLessonIds.length > 0) {
-        await supabase.from('lesson_students').delete().in('lesson_id', createdLessonIds);
-        await supabase.from('lessons').delete().in('id', createdLessonIds);
-      }
-      if (createdEnrolmentId) {
-        await supabase.from('student_enrolments').delete().eq('id', createdEnrolmentId);
-      }
-      if (createdTemplateId) {
-        await supabase.from('teacher_schedule_templates').delete().eq('id', createdTemplateId);
-      }
-      if (templateStudentUndo) {
-        await supabase
-          .from('teacher_schedule_templates')
-          .update({ student_ids: templateStudentUndo.ids })
-          .eq('id', templateStudentUndo.id);
-      }
-      setError(err.message || 'Failed to create enrolment');
+      setClassDone(true); // show the "add another class / done" choice
+      invalidateAfterEnrolmentChange();
+    } catch (err: unknown) {
+      setFormError(errorMessage(err, 'Failed to create enrolment'));
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(id: string) {
-    try {
-      const { error: err } = await supabase.from('student_enrolments').delete().eq('id', id);
-      if (err) throw err;
-      setConfirmDelete(null);
-      fetchAll();
-    } catch (err: any) {
-      setError(err.message);
-      setConfirmDelete(null);
-    }
+  // delete_enrolment removes unpaid instalments + future lessons; paid history stays.
+  async function handleDelete(e: Enrolment) {
+    if (deleting) return;
+    setDeleting(true);
+    const { data, error } = await supabase.rpc('delete_enrolment', { p_enrolment_id: e.id });
+    setDeleting(false);
+    setConfirmDelete(null);
+    if (error) { showToast('error', `Couldn't delete enrolment: ${error.message}`); return; }
+    const r = (data ?? {}) as { unpaid_instalments_removed?: number; future_lessons_removed?: number };
+    const n = (v: number | undefined, word: string) => `${v ?? 0} ${word}${v === 1 ? '' : 's'}`;
+    showToast('success', `Enrolment deleted — removed ${n(r.unpaid_instalments_removed, 'unpaid instalment')} and ${n(r.future_lessons_removed, 'upcoming lesson')}.`);
+    invalidateAfterEnrolmentChange();
   }
 
   // All active students are available (multi-instrument enrolments allowed)
@@ -416,22 +347,27 @@ export function EnrolmentsPage() {
           <h1 className="text-2xl font-bold text-navy">Enrolments</h1>
           <p className="text-gray-500 text-sm mt-1">Annual lesson plans & payment instalments</p>
         </div>
-        <button
-          onClick={() => setModal(true)}
-          className="flex items-center gap-2 bg-teal text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal/80"
-        >
-          <Plus size={16} /> Enrol Student
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setRenewOpen(true)}
+            className="flex items-center gap-2 border border-teal text-teal px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal/5"
+          >
+            <CalendarPlus size={16} /> <span className="hidden sm:inline">Renew for next year</span><span className="sm:hidden">Renew</span>
+          </button>
+          <button
+            onClick={() => setModal(true)}
+            className="flex items-center gap-2 bg-teal text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal/80"
+          >
+            <Plus size={16} /> Enrol Student
+          </button>
+        </div>
       </div>
 
-      {error && (
-        <div className="bg-coral/10 border border-coral/20 rounded-xl p-3 flex items-center justify-between">
-          <p className="text-coral text-sm">{error}</p>
-          <button onClick={() => setError(null)} className="text-coral text-xs font-medium">Dismiss</button>
-        </div>
-      )}
+      <RenewalWizard open={renewOpen} onClose={() => setRenewOpen(false)} />
 
-      {loading ? (
+      {enrolmentsQ.error && <ErrorBanner message={enrolmentsQ.error} onRetry={enrolmentsQ.refresh} />}
+
+      {enrolmentsQ.loading ? (
         <SkeletonList rows={5} />
       ) : enrolments.length === 0 ? (
         <div className="text-center py-16">
@@ -463,7 +399,7 @@ export function EnrolmentsPage() {
                       <td className="px-5 py-3">
                         <button onClick={() => navigate(`/students/${e.student_id}`)} className="text-left">
                           <p className="text-sm font-medium text-navy hover:underline">{e.student?.full_name || '-'}</p>
-                          {e.student?.instrument && <p className="text-xs text-gray-400">{e.student.instrument.name}</p>}
+                          {e.instrument && <p className="text-xs text-gray-400">{e.instrument.name}</p>}
                         </button>
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-500">{e.academic_year}</td>
@@ -479,7 +415,7 @@ export function EnrolmentsPage() {
                       </td>
                       <td className="px-5 py-3 text-sm font-semibold text-navy">₹{Number(e.total_fee).toLocaleString('en-IN')}</td>
                       <td className="px-5 py-3">
-                        <button onClick={() => setConfirmDelete(e.id)} className="text-gray-400 hover:text-coral text-xs">Delete</button>
+                        <button onClick={() => setConfirmDelete(e)} className="text-gray-400 hover:text-coral text-xs">Delete</button>
                       </td>
                     </tr>
                   );
@@ -500,7 +436,7 @@ export function EnrolmentsPage() {
                     <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{e.payment_plan?.replace(/_/g, ' ')}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                    <span>{e.academic_year} · ₹{Number(e.rate_per_lesson).toLocaleString('en-IN')}/lesson</span>
+                    <span>{e.instrument ? `${e.instrument.name} · ` : ''}{e.academic_year} · ₹{Number(e.rate_per_lesson).toLocaleString('en-IN')}/lesson</span>
                     <span className="font-semibold text-navy">₹{Number(e.total_fee).toLocaleString('en-IN')}</span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -520,9 +456,11 @@ export function EnrolmentsPage() {
       <ConfirmDialog
         open={!!confirmDelete}
         title="Delete Enrolment"
-        message="This will delete the enrolment. Payment records won't be deleted."
+        message={`Delete ${confirmDelete?.student?.full_name || 'this student'}'s ${confirmDelete?.instrument?.name || ''} enrolment? `
+          + 'Its unpaid instalments and upcoming lessons will be removed. Paid instalments and past lessons are kept.'}
+        confirmLabel={deleting ? 'Deleting…' : 'Delete'}
         onConfirm={() => confirmDelete && handleDelete(confirmDelete)}
-        onCancel={() => setConfirmDelete(null)}
+        onCancel={() => { if (!deleting) setConfirmDelete(null); }}
       />
 
       {/* Create Modal */}
@@ -537,7 +475,7 @@ export function EnrolmentsPage() {
                   Step {step} of 2 — {step === 1 ? 'Enrolment Details' : 'Assign Schedule Slot'}
                 </p>
               </div>
-              <button onClick={closeModal} className="text-gray-400 hover:text-navy"><X size={20} /></button>
+              <button onClick={closeModal} disabled={saving} className="text-gray-400 hover:text-navy disabled:opacity-50"><X size={20} /></button>
             </div>
 
             {/* Step indicator */}
@@ -546,9 +484,9 @@ export function EnrolmentsPage() {
               <div className={`flex-1 h-1 rounded-full ${step >= 2 ? 'bg-teal' : 'bg-gray-200'}`} />
             </div>
 
-            {error && (
+            {formError && (
               <div className="bg-coral/10 border border-coral/20 rounded-lg p-3">
-                <p className="text-coral text-sm">{error}</p>
+                <p className="text-coral text-sm">{formError}</p>
               </div>
             )}
 
@@ -564,10 +502,12 @@ export function EnrolmentsPage() {
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   >
                     <option value="">Select student...</option>
-                    {availableStudents.map((s) => (
-                      <option key={s.id} value={s.id}>{s.full_name}{s.instrument ? ` (${s.instrument.name})` : ''}</option>
-                    ))}
+                    {availableStudents.map((s) => {
+                      const instr = instrumentName(s.instrument_id);
+                      return <option key={s.id} value={s.id}>{s.full_name}{instr ? ` (${instr})` : ''}</option>;
+                    })}
                   </select>
+                  {fieldError('student') && <p className="text-xs text-coral mt-1">{fieldError('student')}</p>}
                   {availableStudents.length === 0 && (
                     <p className="text-xs text-gray-400 mt-1">No active students found</p>
                   )}
@@ -575,6 +515,9 @@ export function EnrolmentsPage() {
 
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Lesson Rate</label>
+                  {rateYear !== academicYear && (
+                    <p className="text-xs text-yellow-600 mb-1">Some rates have no {academicYear} value yet — using the latest earlier rate ({rateYear}).</p>
+                  )}
                   {selectedStudent?.location_id && hasLocationRates && (
                     <p className="text-xs text-teal mb-1">Showing rates for this student's location first.</p>
                   )}
@@ -583,10 +526,7 @@ export function EnrolmentsPage() {
                   )}
                   <select
                     value={form.lesson_rate_id}
-                    onChange={(e) => {
-                      const picked = rates.find(r => r.id === e.target.value);
-                      setForm({ ...form, lesson_rate_id: e.target.value, rate_override: picked?.rate_per_lesson || 0 });
-                    }}
+                    onChange={(e) => pickRate(e.target.value)}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   >
                     <option value="">Select rate...</option>
@@ -594,7 +534,7 @@ export function EnrolmentsPage() {
                       <option key={r.id} value={r.id}>
                         {r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}
                         {r.is_online ? ' (Online)' : ''}
-                        {r.teacher ? ` — ${r.teacher.full_name}` : ''}
+                        {r.teacher_id ? ` — ${teachers.find(t => t.id === r.teacher_id)?.full_name ?? ''}` : ''}
                         {r.location_id ? ' ★' : ''}
                       </option>
                     ))}
@@ -609,11 +549,12 @@ export function EnrolmentsPage() {
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                       placeholder="0"
                     />
-                    {selectedRate && effectiveRate !== selectedRate.rate_per_lesson && (
+                    {selectedRate && effectiveRate !== Number(selectedRate.rate_per_lesson) && (
                       <p className="text-xs text-yellow-600 mt-1">
                         Overriding rate-card default of ₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')}.
                       </p>
                     )}
+                    {fieldError('rate') && <p className="text-xs text-coral mt-1">{fieldError('rate')}</p>}
                   </div>
                 </div>
 
@@ -632,9 +573,10 @@ export function EnrolmentsPage() {
                     <label className="block text-xs font-medium text-gray-500 mb-1">Academic Year</label>
                     <input
                       type="text"
-                      value={form.academic_year}
-                      onChange={(e) => setForm({ ...form, academic_year: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      readOnly
+                      value={academicYear}
+                      title="Follows the start date"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
                     />
                   </div>
                 </div>
@@ -645,7 +587,7 @@ export function EnrolmentsPage() {
                     <input
                       type="date"
                       value={form.start_date}
-                      onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+                      onChange={(e) => changeStartDate(e.target.value)}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                     />
                   </div>
@@ -659,6 +601,7 @@ export function EnrolmentsPage() {
                     />
                   </div>
                 </div>
+                {fieldError('dates') && <p className="text-xs text-coral -mt-2">{fieldError('dates')}</p>}
 
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Registration Fee (₹)</label>
@@ -670,6 +613,7 @@ export function EnrolmentsPage() {
                     placeholder="500"
                     min={0}
                   />
+                  {fieldError('registration') && <p className="text-xs text-coral mt-1">{fieldError('registration')}</p>}
                 </div>
 
                 <div>
@@ -694,6 +638,7 @@ export function EnrolmentsPage() {
                       placeholder="Flat ₹ amount"
                     />
                   )}
+                  {fieldError('discount') && <p className="text-xs text-coral mt-1">{fieldError('discount')}</p>}
                   <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
                     <input
                       type="checkbox"
@@ -762,14 +707,15 @@ export function EnrolmentsPage() {
                 {/* Teacher display / picker */}
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Teacher</label>
-                  {teacherId ? (
+                  {/* Fixed when the chosen rate belongs to a teacher; otherwise pick (and re-pick) here. */}
+                  {selectedRate?.teacher_id ? (
                     <div className="px-3 py-2 bg-gray-50 rounded-lg text-sm text-navy font-medium">
                       {teacherName}
                     </div>
                   ) : (
                     <select
                       value={manualTeacherId}
-                      onChange={(e) => setManualTeacherId(e.target.value)}
+                      onChange={(e) => { setManualTeacherId(e.target.value); setSelectedSlot(null); }}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                     >
                       <option value="">Select teacher...</option>
@@ -793,12 +739,15 @@ export function EnrolmentsPage() {
                   </div>
                 )}
 
-                {generateResult && (
-                  <div className={`rounded-lg p-3 text-sm font-medium ${
-                    generateResult.startsWith('Error') ? 'bg-coral/10 text-coral' : 'bg-teal/10 text-teal'
-                  }`}>
-                    {generateResult}
+                {result && (
+                  <div className="rounded-lg p-3 text-sm font-medium bg-teal/10 text-teal">
+                    {result.text}
                     {addedCount > 1 && <span className="text-teal/70"> ({addedCount} classes added so far)</span>}
+                  </div>
+                )}
+                {result?.warning && (
+                  <div className="rounded-lg p-3 text-sm bg-yellow-50 border border-yellow-200 text-yellow-800">
+                    ⚠ {result.warning}
                   </div>
                 )}
 
@@ -813,7 +762,7 @@ export function EnrolmentsPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => { fetchAll(); closeModal(); }}
+                      onClick={closeModal}
                       className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
                     >
                       Done
@@ -823,15 +772,16 @@ export function EnrolmentsPage() {
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
-                      onClick={() => { setStep(1); setError(null); setGenerateResult(null); }}
-                      className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
+                      onClick={() => { setStep(1); setFormError(null); setResult(null); }}
+                      disabled={saving}
+                      className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200 disabled:opacity-50"
                     >
                       ← Back
                     </button>
                     <button
                       type="button"
                       onClick={handleCreate}
-                      disabled={saving || !selectedSlot || !teacherId}
+                      disabled={saving || !teacherId || !!slotError(selectedSlot)}
                       className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
                     >
                       {saving ? 'Creating...' : 'Save & Generate Lessons'}

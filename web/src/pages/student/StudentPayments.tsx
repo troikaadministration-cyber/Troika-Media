@@ -1,17 +1,29 @@
 import { toDateStr } from '../../lib/dates';
+import { useState } from 'react';
 import { BookOpen, CreditCard, AlertCircle, Clock, Download } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
 import { supabase } from '../../lib/supabase';
 import { openInvoiceHtml } from '../../lib/invoice';
+import { useToast } from '../../contexts/ToastContext';
 import { fmtDate, fmtMoney } from './format';
 
 export function StudentPayments() {
   const { enrolments, payments } = useStudentPortal();
+  const { showToast } = useToast();
+  const [opening, setOpening] = useState<string | null>(null);
 
   async function downloadInvoice(pdfPath: string | null) {
-    if (!pdfPath) return;
-    const { data } = await supabase.storage.from('invoices').createSignedUrl(pdfPath, 3600);
-    if (data?.signedUrl) await openInvoiceHtml(data.signedUrl);
+    if (!pdfPath || opening) return;
+    setOpening(pdfPath);
+    try {
+      const { data, error } = await supabase.storage.from('invoices').createSignedUrl(pdfPath, 3600);
+      if (error || !data?.signedUrl) throw new Error(error?.message || 'Invoice not available');
+      await openInvoiceHtml(data.signedUrl);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Could not open invoice');
+    } finally {
+      setOpening(null);
+    }
   }
 
   const today = toDateStr(new Date());
@@ -121,8 +133,8 @@ export function StudentPayments() {
               const isPaid = !!p.paid_date;
               const isOverdue = !isPaid && p.due_date < today;
               return (
-                <div key={p.id} className="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50">
-                  <div>
+                <div key={p.id} className="px-4 sm:px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50">
+                  <div className="min-w-0">
                     <p className="text-sm font-medium text-navy">Instalment #{p.instalment_number}</p>
                     <p className="text-xs text-gray-500 mt-0.5 capitalize">
                       {p.plan?.replace(/_/g, ' ')} · Due {fmtDate(p.due_date)}
@@ -133,7 +145,7 @@ export function StudentPayments() {
                         {p.invoice && (
                           <button
                             onClick={() => downloadInvoice(p.invoice!.pdf_path)}
-                            disabled={!p.invoice.pdf_path}
+                            disabled={!p.invoice.pdf_path || opening === p.invoice.pdf_path}
                             className="ml-2 text-teal hover:underline disabled:no-underline disabled:text-gray-400 inline-flex items-center gap-1"
                             title={p.invoice.pdf_path ? 'Download invoice' : 'Invoice not available yet'}
                           >

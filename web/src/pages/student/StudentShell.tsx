@@ -1,74 +1,66 @@
-import { useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { Outlet } from 'react-router-dom';
 import { UserX } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { useStudentLessons } from '../../hooks/useStudentLessons';
+import { useStudentLessons, useStudentAbsenceRequests } from '../../hooks/useStudentLessons';
 import { supabase } from '../../lib/supabase';
+import { useQuery, unwrap } from '../../lib/queryCache';
 import { CenterSpinner } from '../../components/student/shared';
+import { ErrorBanner } from '../../components/ErrorBanner';
 import { StudentPortalContext, type Enrolment, type Payment } from './StudentPortalContext';
+
+interface PortalRecord {
+  id: string;
+  enrolments: Enrolment[];
+  payments: Payment[];
+}
 
 /**
  * Layout route for the whole student portal.
- * Resolves the student record + enrolments + payments + lessons ONCE and
- * shares them with every child page via context, so navigating between
- * Home / Lessons / Calendar / Payments doesn't re-fetch.
+ * Loads the student record (+ this year's enrolments and payments in the same
+ * request) and the lessons in parallel, cached, and shares them with every
+ * child page via context — navigating between portal pages never refetches
+ * from scratch.
  */
 export function StudentShell() {
   const { profile } = useAuth();
-  const [studentId, setStudentId] = useState<string>();
-  const [notFound, setNotFound] = useState(false);
-  const [lookupDone, setLookupDone] = useState(false);
-  const [enrolments, setEnrolments] = useState<Enrolment[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const userId = profile?.id;
+  const year = new Date().getFullYear().toString();
 
-  useEffect(() => {
-    if (!profile?.id) return;
-    let active = true;
+  const portal = useQuery<PortalRecord | null>(userId ? `student-portal:${userId}:${year}` : null, async () => {
+    const rec = unwrap(await supabase
+      .from('students')
+      .select(`id,
+        enrolments:student_enrolments!student_enrolments_student_id_fkey(id, academic_year, total_lessons, lessons_used, start_date, payment_plan, rate_per_lesson, total_fee, registration_fee),
+        payments:payment_records!payment_records_student_id_fkey(id, plan, amount, instalment_number, due_date, paid_date, invoice:invoices(id, invoice_number, pdf_path))`)
+      .eq('user_id', userId!)
+      .eq('enrolments.academic_year', year)
+      .maybeSingle(), null) as PortalRecord | null;
+    if (rec) rec.payments = [...(rec.payments ?? [])].sort((a, b) => a.due_date.localeCompare(b.due_date));
+    return rec;
+  }, { staleTime: 60_000 });
 
-    (async () => {
-      const { data: student, error } = await supabase
-        .from('students')
-        .select('id')
-        .eq('user_id', profile.id)
-        .maybeSingle();
+  const lessons = useStudentLessons(userId);
+  const absence = useStudentAbsenceRequests(userId);
+  const { refresh: refreshPortal } = portal;
+  const { refresh: refreshLessons } = lessons;
+  const { refresh: refreshAbsences } = absence;
+  const refresh = useCallback(async () => {
+    await Promise.all([refreshPortal(), refreshLessons(), refreshAbsences()]);
+  }, [refreshPortal, refreshLessons, refreshAbsences]);
 
-      if (!active) return;
-      if (error || !student) {
-        setNotFound(true);
-        setLookupDone(true);
-        return;
-      }
+  if (portal.loading || (!userId && !portal.error)) return <CenterSpinner />;
 
-      setStudentId(student.id);
+  if (portal.error && portal.data === undefined) {
+    return (
+      <div className="max-w-md mx-auto py-10">
+        <ErrorBanner message={portal.error} onRetry={() => { void portal.refresh(); }} />
+      </div>
+    );
+  }
 
-      const year = new Date().getFullYear().toString();
-      const [enrRes, payRes] = await Promise.all([
-        supabase
-          .from('student_enrolments')
-          .select('*')
-          .eq('student_id', student.id)
-          .eq('academic_year', year),
-        supabase
-          .from('payment_records')
-          .select('*, invoice:invoices(id, invoice_number, pdf_path)')
-          .eq('student_id', student.id)
-          .order('due_date', { ascending: true }),
-      ]);
-
-      if (!active) return;
-      if (enrRes.data) setEnrolments(enrRes.data as Enrolment[]);
-      if (payRes.data) setPayments(payRes.data as Payment[]);
-      setLookupDone(true);
-    })();
-
-    return () => { active = false; };
-  }, [profile?.id]);
-
-  const { upcoming, past, loading, totalCompleted, refresh } = useStudentLessons(studentId);
-
-  if (!lookupDone) return <CenterSpinner />;
-
-  if (notFound || !studentId) {
+  const student = portal.data;
+  if (!student) {
     return (
       <div className="max-w-md mx-auto text-center py-16">
         <UserX size={48} className="text-gray-300 mx-auto mb-4" />
@@ -84,15 +76,21 @@ export function StudentShell() {
   return (
     <StudentPortalContext.Provider
       value={{
-        studentId,
+        studentId: student.id,
         studentName: profile?.full_name || '',
         email: profile?.email || '',
-        enrolments,
-        payments,
-        upcoming,
-        past,
-        totalCompleted,
-        loadingLessons: loading,
+        enrolments: student.enrolments ?? [],
+        payments: student.payments ?? [],
+        upcoming: lessons.upcoming,
+        past: lessons.past,
+        totalCompleted: lessons.totalCompleted,
+        totalMissed: lessons.totalMissed,
+        loadingLessons: lessons.loading,
+        loadingPast: lessons.loadingPast,
+        lessonsError: lessons.error,
+        absences: absence.absences,
+        requestAbsence: absence.requestAbsence,
+        withdrawAbsence: absence.withdrawAbsence,
         refresh,
       }}
     >

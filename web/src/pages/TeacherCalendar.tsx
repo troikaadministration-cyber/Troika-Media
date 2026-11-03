@@ -4,6 +4,8 @@ import { useAuth } from '../hooks/useAuth';
 import { useTeacherLessonsRange } from '../hooks/useTeacherLessonsRange';
 import { ChevronLeft, ChevronRight, CheckCircle, Clock, Ban, MapPin, ArrowRight } from 'lucide-react';
 import { Skeleton } from '../components/Skeleton';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { CalendarSyncButton } from '../components/CalendarSyncButton';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -55,7 +57,7 @@ export function TeacherCalendarPage() {
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const endDate = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
-  const { byDate, loading } = useTeacherLessonsRange(profile?.id, startDate, endDate);
+  const { byDate, loading, error, refresh } = useTeacherLessonsRange(profile?.id, startDate, endDate);
 
   const cells = buildCalendarGrid(viewYear, viewMonth);
 
@@ -88,6 +90,9 @@ export function TeacherCalendarPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
+      <div className="flex justify-end">
+        <CalendarSyncButton />
+      </div>
 
       {/* Monthly summary bar */}
       <div className="bg-white rounded-xl border-l-4 border-coral p-4 flex flex-col sm:flex-row sm:items-center gap-3">
@@ -113,10 +118,12 @@ export function TeacherCalendarPage() {
         </div>
       </div>
 
+      {error && <ErrorBanner message={error} onRetry={() => { void refresh(); }} />}
+
       {/* Calendar card */}
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         {/* Month navigation header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-black/5">
+        <div className="flex items-center justify-between px-3 sm:px-5 py-4 border-b border-black/5">
           <button
             onClick={prevMonth}
             className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-navy transition-colors"
@@ -229,7 +236,7 @@ export function TeacherCalendarPage() {
         )}
 
         {/* Legend */}
-        <div className="flex items-center gap-4 px-5 py-3 border-t border-black/5 bg-gray-50/50">
+        <div className="flex items-center flex-wrap gap-x-4 gap-y-1 px-4 sm:px-5 py-3 border-t border-black/5 bg-gray-50/50">
           <span className="text-xs text-gray-400 font-medium">Legend:</span>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-teal inline-block" />
@@ -275,7 +282,7 @@ export function TeacherCalendarPage() {
               const isCancelled = lesson.status === 'cancelled';
 
               return (
-                <div key={lesson.id} className="px-5 py-3.5 flex items-center gap-3">
+                <div key={lesson.id} className="px-4 sm:px-5 py-3.5 flex items-center gap-3">
                   {/* Time */}
                   <div className="w-12 text-sm font-bold text-navy shrink-0">
                     {lesson.start_time?.slice(0, 5)}

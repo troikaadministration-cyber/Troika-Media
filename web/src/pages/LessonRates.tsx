@@ -1,8 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, unwrap, setQueryData, invalidateQueries } from '../lib/queryCache';
+import { fetchAll } from '../lib/fetchAll';
+import { useTeachersList, useLocationsList, useInstruments, invalidateReference } from '../hooks/useReference';
+import { useToast } from '../contexts/ToastContext';
 import { Settings, Check, X, Trash2, Plus } from 'lucide-react';
 import { SkeletonList } from '../components/Skeleton';
-import type { LessonRate, Location } from '../types';
+import { ErrorBanner } from '../components/ErrorBanner';
+import type { LessonRate as LessonRateFull, Location } from '../types';
 
 const CURRENT_YEAR = new Date().getFullYear().toString();
 const YEARS = [CURRENT_YEAR, (Number(CURRENT_YEAR) - 1).toString()];
@@ -12,6 +17,38 @@ const YEARS = [CURRENT_YEAR, (Number(CURRENT_YEAR) - 1).toString()];
 interface Teacher { id: string; full_name: string; }
 interface LessonCategoryRow { id: string; name: string; sort_order: number; }
 interface Instrument { id: string; name: string; }
+type LessonRate = Omit<LessonRateFull, 'created_at'>;
+
+// All rates (a small table) in one cached query: teacher counts, per-teacher
+// editor and "category in use" are all derived from it, so switching teacher
+// or year needs no request.
+const RATES_KEY = 'lesson-rates:all';
+const RATE_COLUMNS = 'id, teacher_id, location_id, category, rate_per_lesson, is_online, academic_year';
+
+/** Other pages (Enrolments' rate picker) cache rates under `lesson-rates:` too. */
+function afterRatesChange() {
+  invalidateQueries('lesson-rates:enrol-picker');
+}
+
+interface Usage { instruments: string[]; locations: string[] }
+
+const count = (v: unknown) => ((v as { count: number }[] | null)?.[0]?.count ?? 0);
+
+/** Which instruments/locations are referenced anywhere (deleting them would cascade or null out data). */
+async function fetchUsage(): Promise<Usage> {
+  const [instr, locs] = await Promise.all([
+    supabase.from('instruments').select(
+      'id, students!students_instrument_id_fkey(count), student_instruments(count), student_enrolments(count), lessons(count), teacher_schedule_templates(count)'),
+    supabase.from('locations').select(
+      'id, students(count), lessons(count), teacher_schedule_templates(count), lesson_rates(count), curriculum_resources(count)'),
+  ]);
+  const used = (rows: Record<string, unknown>[]) =>
+    rows.filter(r => Object.entries(r).some(([k, v]) => k !== 'id' && count(v) > 0)).map(r => r.id as string);
+  return {
+    instruments: used(unwrap(instr, []) as Record<string, unknown>[]),
+    locations: used(unwrap(locs, []) as Record<string, unknown>[]),
+  };
+}
 
 function rateKey(category: string, locationId: string | null) {
   return `${category}::${locationId ?? 'online'}`;
@@ -27,11 +64,22 @@ function EditableItem({ name, onRename, onDelete, deleteDisabled }: {
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
+  const [busy, setBusy] = useState(false);
 
   async function save() {
+    if (busy) return;
     const t = draft.trim();
-    if (t && t !== name) await onRename(t);
+    if (t && t !== name) {
+      setBusy(true);
+      try { await onRename(t); } finally { setBusy(false); }
+    }
     setEditing(false);
+  }
+
+  async function remove() {
+    if (busy) return;
+    setBusy(true);
+    try { await onDelete(); } finally { setBusy(false); }
   }
 
   if (editing) {
@@ -40,7 +88,7 @@ function EditableItem({ name, onRename, onDelete, deleteDisabled }: {
         <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
           className="flex-1 text-sm border border-teal rounded-lg px-3 py-1.5 focus:outline-none" />
-        <button onClick={save} className="text-teal"><Check size={15} /></button>
+        <button onClick={save} disabled={busy} className="text-teal disabled:opacity-50"><Check size={15} /></button>
         <button onClick={() => setEditing(false)} className="text-gray-400"><X size={15} /></button>
       </div>
     );
@@ -50,7 +98,7 @@ function EditableItem({ name, onRename, onDelete, deleteDisabled }: {
     <div className="flex items-center justify-between px-4 py-2 hover:bg-gray-50 group">
       <button onClick={() => { setDraft(name); setEditing(true); }}
         className="text-sm text-navy hover:underline text-left flex-1">{name}</button>
-      <button onClick={onDelete} disabled={deleteDisabled}
+      <button onClick={remove} disabled={deleteDisabled || busy}
         title={deleteDisabled ? 'In use — cannot delete' : 'Delete'}
         className="text-gray-300 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 transition-opacity">
         <Trash2 size={13} />
@@ -181,37 +229,22 @@ function TeacherList({ teachers, rateCounts, selectedId, onSelect }: {
   );
 }
 
-function RateEditor({ teacher, locations, categories, year }: {
+function RateEditor({ teacher, locations, categories, year, rates }: {
   teacher: Teacher;
   locations: Location[];
   categories: LessonCategoryRow[];
   year: string;
+  rates: LessonRate[]; // this teacher's rates for `year`
 }) {
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(
     locations[0]?.id ?? null
   );
-  const [rateMap, setRateMap] = useState<Record<string, LessonRate>>({});
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadRates = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('lesson_rates')
-      .select('*')
-      .eq('teacher_id', teacher.id)
-      .eq('academic_year', year);
-    if (error) { setLoadError(error.message); setLoading(false); return; }
+  const rateMap = useMemo(() => {
     const map: Record<string, LessonRate> = {};
-    for (const r of data ?? []) {
-      map[rateKey(r.category, r.is_online ? null : r.location_id)] = r as LessonRate;
-    }
-    setRateMap(map);
-    setLoadError(null);
-    setLoading(false);
-  }, [teacher.id, year]);
-
-  useEffect(() => { loadRates(); }, [loadRates]);
+    for (const r of rates) map[rateKey(r.category, r.is_online ? null : r.location_id)] = r;
+    return map;
+  }, [rates]);
 
   // Reset to first location when teacher changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,27 +252,24 @@ function RateEditor({ teacher, locations, categories, year }: {
     setSelectedLocationId(locations[0]?.id ?? null);
   }, [teacher.id]);
 
+  // Writes return the saved row, which goes straight into the cache.
   async function saveRate(category: string, locationId: string | null, value: number) {
     const isOnline = locationId === null;
     const existing = rateMap[rateKey(category, locationId)];
-    if (existing) {
-      const { error } = await supabase
-        .from('lesson_rates')
-        .update({ rate_per_lesson: value })
-        .eq('id', existing.id);
-      if (error) throw new Error(error.message);
-    } else {
-      const { error } = await supabase.from('lesson_rates').insert({
-        teacher_id: teacher.id,
-        location_id: isOnline ? null : locationId,
-        category,
-        rate_per_lesson: value,
-        is_online: isOnline,
-        academic_year: year,
-      });
-      if (error) throw new Error(error.message);
-    }
-    await loadRates();
+    const res = existing
+      ? await supabase.from('lesson_rates').update({ rate_per_lesson: value }).eq('id', existing.id).select(RATE_COLUMNS).single()
+      : await supabase.from('lesson_rates').insert({
+          teacher_id: teacher.id,
+          location_id: isOnline ? null : locationId,
+          category,
+          rate_per_lesson: value,
+          is_online: isOnline,
+          academic_year: year,
+        }).select(RATE_COLUMNS).single();
+    if (res.error) throw new Error(res.error.message);
+    const saved = res.data as LessonRate;
+    setQueryData<LessonRate[]>(RATES_KEY, prev => [...(prev ?? []).filter(r => r.id !== saved.id), saved]);
+    afterRatesChange();
   }
 
   async function deleteRate(category: string, locationId: string | null) {
@@ -250,7 +280,8 @@ function RateEditor({ teacher, locations, categories, year }: {
       .delete()
       .eq('id', existing.id);
     if (error) throw new Error(error.message);
-    await loadRates();
+    setQueryData<LessonRate[]>(RATES_KEY, prev => (prev ?? []).filter(r => r.id !== existing.id));
+    afterRatesChange();
   }
 
   const tabs: { id: string | null; label: string }[] = [
@@ -285,11 +316,7 @@ function RateEditor({ teacher, locations, categories, year }: {
 
       {/* Rate rows */}
       <div className="px-5 py-3 flex-1 overflow-y-auto">
-        {loading ? (
-          <SkeletonList rows={4} />
-        ) : loadError ? (
-          <p className="text-red-400 text-sm text-center py-8">{loadError}</p>
-        ) : categories.length === 0 ? (
+        {categories.length === 0 ? (
           <p className="text-gray-400 text-sm text-center py-8">No categories yet. Add via Manage.</p>
         ) : (
           categories.map(cat => (
@@ -318,6 +345,7 @@ function InstrumentsTab({ instruments, inUse, onRefresh }: {
   inUse: Set<string>;
   onRefresh: () => void;
 }) {
+  const { showToast } = useToast();
   const [adding, setAdding] = useState('');
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -335,13 +363,13 @@ function InstrumentsTab({ instruments, inUse, onRefresh }: {
 
   async function rename(id: string, name: string) {
     const { error } = await supabase.from('instruments').update({ name }).eq('id', id);
-    if (error) { alert(error.message); return; }
+    if (error) { showToast('error', error.message); return; }
     onRefresh();
   }
 
   async function remove(id: string) {
     const { error } = await supabase.from('instruments').delete().eq('id', id);
-    if (error) { alert(error.message); return; }
+    if (error) { showToast('error', error.message); return; }
     onRefresh();
   }
 
@@ -378,6 +406,7 @@ function CategoriesTab({ categories, inUse, onRefresh }: {
   inUse: Set<string>;
   onRefresh: () => void;
 }) {
+  const { showToast } = useToast();
   const [adding, setAdding] = useState('');
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -396,13 +425,13 @@ function CategoriesTab({ categories, inUse, onRefresh }: {
 
   async function rename(id: string, name: string) {
     const { error } = await supabase.from('lesson_categories').update({ name }).eq('id', id);
-    if (error) { alert(error.message); return; }
+    if (error) { showToast('error', error.message); return; }
     onRefresh();
   }
 
   async function remove(id: string) {
     const { error } = await supabase.from('lesson_categories').delete().eq('id', id);
-    if (error) { alert(error.message); return; }
+    if (error) { showToast('error', error.message); return; }
     onRefresh();
   }
 
@@ -439,6 +468,7 @@ function LocationsTab({ locations, inUse, onRefresh }: {
   inUse: Set<string>;
   onRefresh: () => void;
 }) {
+  const { showToast } = useToast();
   const [form, setForm] = useState({ name: '', city: '', address: '', zone: '' });
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -467,14 +497,14 @@ function LocationsTab({ locations, inUse, onRefresh }: {
       name: d.name.trim(), city: d.city.trim(),
       address: d.address.trim(), zone: d.zone.trim(),
     }).eq('id', id);
-    if (error) { alert(error.message); return; }
+    if (error) { showToast('error', error.message); return; }
     setEditing(null);
     onRefresh();
   }
 
   async function remove(id: string) {
     const { error } = await supabase.from('locations').delete().eq('id', id);
-    if (error) { alert(error.message); return; }
+    if (error) { showToast('error', error.message); return; }
     onRefresh();
   }
 
@@ -675,58 +705,49 @@ function AdminModal({ open, onClose, locations, instruments, categories,
 // ── LessonRatesPage ───────────────────────────────────────────────────────────
 
 export function LessonRatesPage() {
-  const [teachers, setTeachers] = useState<Teacher[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [categories, setCategories] = useState<LessonCategoryRow[]>([]);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [rateCounts, setRateCounts] = useState<Record<string, number>>({});
   const [year, setYear] = useState(CURRENT_YEAR);
-  const [loading, setLoading] = useState(true);
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
   const [adminOpen, setAdminOpen] = useState(false);
-  const [instrumentsInUse, setInstrumentsInUse] = useState<Set<string>>(new Set());
-  const [categoriesInUse, setCategoriesInUse] = useState<Set<string>>(new Set());
-  const [locationsInUse, setLocationsInUse] = useState<Set<string>>(new Set());
 
-  const loadMeta = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    const [teachersRes, locationsRes, categoriesRes, instrumentsRes,
-      studentsInstrRes, ratesRes, studentsLocRes, lessonsLocRes, rateCountsRes] = await Promise.all([
-      supabase.from('profiles').select('id, full_name').eq('role', 'teacher').order('full_name'),
-      supabase.from('locations').select('*').order('name'),
-      supabase.from('lesson_categories').select('*').order('sort_order'),
-      supabase.from('instruments').select('*').order('name'),
-      supabase.from('students').select('instrument_id').not('instrument_id', 'is', null),
-      supabase.from('lesson_rates').select('category'),
-      supabase.from('students').select('location_id').not('location_id', 'is', null),
-      supabase.from('lessons').select('location_id').not('location_id', 'is', null),
-      supabase.from('lesson_rates').select('teacher_id').eq('academic_year', year),
-    ]);
+  // 2 page queries (rates, categories) + shared cached reference lists.
+  const { teachers, loading: teachersLoading, error: teachersError, refresh: refreshTeachers } = useTeachersList();
+  const { locations } = useLocationsList();
+  const { instruments } = useInstruments();
+  const ratesQ = useQuery<LessonRate[]>(RATES_KEY, () =>
+    fetchAll<LessonRate>((from, to) =>
+      supabase.from('lesson_rates').select(RATE_COLUMNS).order('id').range(from, to)));
+  const categoriesQ = useQuery<LessonCategoryRow[]>('lesson-rates:categories', async () =>
+    unwrap(await supabase.from('lesson_categories').select('id, name, sort_order').order('sort_order'), []) as LessonCategoryRow[]);
+  // Usage counts only matter for the Manage dialog's delete buttons.
+  const usageQ = useQuery<Usage>(adminOpen ? 'lesson-rates:usage' : null, fetchUsage);
 
-    const ts = teachersRes.data ?? [];
-    setTeachers(ts);
-    setLocations(locationsRes.data ?? []);
-    setCategories((categoriesRes.data ?? []) as LessonCategoryRow[]);
-    setInstruments((instrumentsRes.data ?? []) as Instrument[]);
-    setInstrumentsInUse(new Set((studentsInstrRes.data ?? []).map((s: any) => s.instrument_id)));
-    setCategoriesInUse(new Set((ratesRes.data ?? []).map((r: any) => r.category)));
-    setLocationsInUse(new Set([
-      ...(studentsLocRes.data ?? []).map((s: any) => s.location_id),
-      ...(lessonsLocRes.data ?? []).map((l: any) => l.location_id),
-    ]));
+  const allRates = ratesQ.data ?? [];
+  const categories = categoriesQ.data ?? [];
+  const loading = teachersLoading || ratesQ.loading || categoriesQ.loading;
+  const loadError = teachersError || ratesQ.error || categoriesQ.error;
 
+  const yearRates = useMemo(() => allRates.filter(r => r.academic_year === year), [allRates, year]);
+  const rateCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const r of rateCountsRes.data ?? []) {
-      const tid = (r as any).teacher_id;
-      if (tid) counts[tid] = (counts[tid] ?? 0) + 1;
-    }
-    setRateCounts(counts);
+    for (const r of yearRates) if (r.teacher_id) counts[r.teacher_id] = (counts[r.teacher_id] ?? 0) + 1;
+    return counts;
+  }, [yearRates]);
+  const categoriesInUse = useMemo(() => new Set(allRates.map(r => r.category)), [allRates]);
+  // Until usage has loaded, treat everything as in use (deletes stay disabled).
+  const instrumentsInUse = useMemo(() => new Set(usageQ.data?.instruments ?? instruments.map(i => i.id)), [usageQ.data, instruments]);
+  const locationsInUse = useMemo(() => new Set(usageQ.data?.locations ?? locations.map(l => l.id)), [usageQ.data, locations]);
 
-    setSelectedTeacherId(prev => prev ?? (ts[0]?.id ?? null));
-    setLoading(false);
-  }, [year]);
+  useEffect(() => {
+    if (!selectedTeacherId && teachers.length > 0) setSelectedTeacherId(teachers[0].id);
+  }, [teachers, selectedTeacherId]);
 
-  useEffect(() => { loadMeta(); }, [loadMeta]);
+  function refreshAdmin() {
+    invalidateReference('instruments');
+    invalidateReference('locations');
+    invalidateQueries('lesson-rates:categories');
+    invalidateQueries('lesson-rates:usage');
+    invalidateQueries('lesson-rates:all'); // a category rename also renames its rates
+  }
 
   const selectedTeacher = teachers.find(t => t.id === selectedTeacherId) ?? null;
 
@@ -750,6 +771,8 @@ export function LessonRatesPage() {
         </div>
       </div>
 
+      {loadError && <ErrorBanner message={loadError} onRetry={() => { refreshTeachers(); ratesQ.refresh(); categoriesQ.refresh(); }} />}
+
       {/* Body */}
       {loading ? (
         <SkeletonList rows={5} />
@@ -770,6 +793,7 @@ export function LessonRatesPage() {
                 locations={locations}
                 categories={categories}
                 year={year}
+                rates={yearRates.filter(r => r.teacher_id === selectedTeacher.id)}
               />
             ) : (
               <p className="text-gray-400 text-sm">Select a teacher to edit rates.</p>
@@ -781,14 +805,14 @@ export function LessonRatesPage() {
       <AdminModal
         key={adminOpen ? 'open' : 'closed'}
         open={adminOpen}
-        onClose={() => { setAdminOpen(false); loadMeta(); }}
+        onClose={() => setAdminOpen(false)}
         locations={locations}
         instruments={instruments}
         categories={categories}
         locationsInUse={locationsInUse}
         instrumentsInUse={instrumentsInUse}
         categoriesInUse={categoriesInUse}
-        onRefresh={() => loadMeta(true)}
+        onRefresh={refreshAdmin}
       />
     </div>
   );

@@ -63,10 +63,10 @@ serve(async (req) => {
     // Role check: only coordinators and teachers can upload curriculum
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, approved')
       .eq('id', user.id)
       .single();
-    if (!profile || (profile.role !== 'coordinator' && profile.role !== 'teacher')) {
+    if (!profile || !(profile.role === 'coordinator' || (profile.role === 'teacher' && profile.approved === true))) {
       throw new Error('Unauthorized');
     }
 
@@ -134,7 +134,7 @@ serve(async (req) => {
 
       const { data: newResource, error } = await supabase
         .from('curriculum_resources')
-        .insert(resourceData)
+        .insert({ ...resourceData, created_by: user.id })
         .select('id')
         .single();
 

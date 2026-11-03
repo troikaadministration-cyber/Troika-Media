@@ -2,17 +2,23 @@ import { toDateStr } from '../../lib/dates';
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
+import { useStudentLessonsMonth } from '../../hooks/useStudentLessons';
+import { Skeleton } from '../../components/Skeleton';
+import { ErrorBanner } from '../../components/ErrorBanner';
+import { CalendarSyncButton } from '../../components/CalendarSyncButton';
 
 export function StudentCalendar() {
-  const { upcoming, past } = useStudentPortal();
+  const { studentId } = useStudentPortal();
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
 
-  const allLessons = [...upcoming, ...past];
   const year = calMonth.getFullYear();
   const month = calMonth.getMonth();
+  const ym = `${year}-${String(month + 1).padStart(2, '0')}`;
+  // Only the visible month is fetched (cached per month).
+  const { lessons: allLessons, loading, error, refresh } = useStudentLessonsMonth(studentId, ym);
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -31,16 +37,19 @@ export function StudentCalendar() {
     cells.push({ day: d, dateStr });
   }
 
-  const monthLessons = allLessons
-    .filter((l) => l.lesson.date.startsWith(`${year}-${String(month + 1).padStart(2, '0')}`))
-    .sort((a, b) => a.lesson.date.localeCompare(b.lesson.date));
+  const monthLessons = allLessons;
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-navy">Calendar</h1>
-        <p className="text-gray-500 text-sm mt-1">All your lessons, month by month.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-navy">Calendar</h1>
+          <p className="text-gray-500 text-sm mt-1">All your lessons, month by month.</p>
+        </div>
+        <CalendarSyncButton />
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={() => { void refresh(); }} />}
 
       <div className="bg-white rounded-xl border border-black/5 overflow-hidden">
         <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between">
@@ -116,13 +125,15 @@ export function StudentCalendar() {
           </div>
 
           {/* This month's lessons */}
-          {monthLessons.length === 0 ? (
+          {loading ? (
+            <Skeleton className="h-24 w-full mt-4" />
+          ) : monthLessons.length === 0 ? (
             <p className="text-center text-gray-400 text-sm mt-4">No lessons this month</p>
           ) : (
             <div className="mt-4 divide-y divide-black/5">
               {monthLessons.map((item) => {
-                const teacher = (item.lesson.teacher as any)?.full_name as string | undefined;
-                const location = (item.lesson.location as any)?.name as string | undefined;
+                const teacher = item.lesson.teacher?.full_name;
+                const location = item.lesson.location?.name;
                 return (
                   <div key={item.id} className="flex items-center gap-3 py-3">
                     <div className="text-center flex-shrink-0 w-10">

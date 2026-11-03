@@ -1,3 +1,4 @@
+import { Logo } from '../Logo';
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
@@ -7,7 +8,7 @@ import { setTheme } from '../../lib/theme';
 import {
   LayoutDashboard, Calendar, Users, CreditCard, BookOpen,
   LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, CalendarClock,
-  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList, Search, Sun, Moon
+  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList, Search, Sun, Moon, UsersRound
 } from 'lucide-react';
 
 const coordinatorNav = [
@@ -19,6 +20,7 @@ const coordinatorNav = [
   ]},
   { group: 'Teaching', items: [
     { to: '/teachers', label: 'Teachers', icon: GraduationCap },
+    { to: '/groups', label: 'Groups', icon: UsersRound },
     { to: '/teacher-schedules', label: 'Teacher Schedules', icon: CalendarClock },
     { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
   ]},
@@ -97,6 +99,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  // Escape closes the mobile menu and the notifications panel.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setSidebarOpen(false); setNotifOpen(false); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
@@ -126,7 +137,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       `}>
         <div className="relative px-5 pt-6 pb-4 border-b border-black/5">
           <div className="flex flex-col items-center">
-            <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto" />
+            <Logo className="h-16 w-auto" />
             <span className="mt-2 text-xs text-teal font-semibold tracking-wide uppercase">{roleLabel}</span>
           </div>
           <button
@@ -150,6 +161,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     key={to}
                     to={to}
                     end={to === '/'}
+                    onClick={() => setSidebarOpen(false)}
                     className={({ isActive }) =>
                       `relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -196,7 +208,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-500 hover:text-navy lg:hidden" aria-label="Toggle menu">
             <Menu size={22} />
           </button>
-          <img src="/logo.png" alt="Troika Music Lessons" className="lg:hidden h-7 w-auto" />
+          <Logo className="lg:hidden h-7 w-auto" />
           <div className="hidden lg:block" />
           <div className="flex items-center gap-3 sm:gap-4">
             <button

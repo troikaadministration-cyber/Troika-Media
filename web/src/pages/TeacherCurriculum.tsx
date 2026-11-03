@@ -1,16 +1,78 @@
-import { useState } from 'react';
-import { useCurriculum } from '../hooks/useCurriculum';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { supabase } from '../lib/supabase';
+import { sanitizeForPostgrest } from '../lib/sanitize';
+import { useQuery, unwrap, invalidateQueries, errorMessage } from '../lib/queryCache';
+import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { Search, Lightbulb, Calendar, BookOpen, Trash2, RefreshCw } from 'lucide-react';
+import { ErrorBanner } from '../components/ErrorBanner';
+import { Search, Lightbulb, Calendar, BookOpen, Trash2 } from 'lucide-react';
 import { SkeletonList } from '../components/Skeleton';
-import type { ResourceType } from '../types';
+import type { CurriculumResourceWithTags, CurriculumTag, ResourceType } from '../types';
+
+const RESOURCE_LIMIT = 50;
 
 export function TeacherCurriculumPage() {
+  const { showToast } = useToast();
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const {
-    resources, tags, loading, error, searchQuery, setSearchQuery,
-    typeFilter, setTypeFilter, selectedTags, toggleTag, deleteResource, refresh,
-  } = useCurriculum();
+  const [deleting, setDeleting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [search, setSearch] = useState(''); // debounced
+  const [typeFilter, setTypeFilter] = useState<ResourceType | 'all'>('all');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(sanitizeForPostgrest(searchQuery.trim())), 250);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  const resourcesQ = useQuery<CurriculumResourceWithTags[]>(`teacher-curriculum:resources:${typeFilter}:${search}`, async () => {
+    let query = supabase
+      .from('curriculum_resources')
+      .select('id, title, description, type, level, teaching_tip, created_at, tags:curriculum_resource_tags(tag:curriculum_tags(id, name))')
+      .order('created_at', { ascending: false })
+      .limit(RESOURCE_LIMIT);
+    if (typeFilter !== 'all') query = query.eq('type', typeFilter);
+    if (search) query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
+    const rows = unwrap(await query, []) as unknown as (Omit<CurriculumResourceWithTags, 'tags'> & { tags: { tag: CurriculumTag | null }[] })[];
+    return rows.map((r) => ({ ...r, tags: r.tags.map((t) => t.tag).filter((t): t is CurriculumTag => !!t) })) as CurriculumResourceWithTags[];
+  });
+
+  const tagsQ = useQuery<CurriculumTag[]>('teacher-curriculum:tags', async () =>
+    unwrap(await supabase.from('curriculum_tags').select('id, name').order('name'), []) as CurriculumTag[],
+  { staleTime: 5 * 60_000 });
+  const tags = tagsQ.data ?? [];
+
+  // Keep showing the previous results while a new search/filter loads.
+  const lastData = useRef<CurriculumResourceWithTags[] | undefined>(undefined);
+  if (resourcesQ.data) lastData.current = resourcesQ.data;
+  const data = resourcesQ.data ?? lastData.current;
+  const { error, refresh } = resourcesQ;
+  const loading = !data && !error;
+
+  // Tag filter is applied locally to the fetched page (as before).
+  const resources = useMemo(() => {
+    const all = data ?? [];
+    if (selectedTags.length === 0) return all;
+    return all.filter((r) => selectedTags.every((name) => r.tags?.some((t) => t.name === name)));
+  }, [data, selectedTags]);
+
+  const toggleTag = (name: string) =>
+    setSelectedTags((prev) => (prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name]));
+
+  async function deleteResource(id: string) {
+    setDeleting(true);
+    try {
+      const { data, error: err } = await supabase.from('curriculum_resources').delete().eq('id', id).select('id');
+      if (err) throw err;
+      if (!data?.length) throw new Error('You do not have permission to delete this resource');
+      setConfirmDelete(null);
+      invalidateQueries('teacher-curriculum:resources:');
+    } catch (err) {
+      showToast('error', `Could not delete: ${errorMessage(err)}`);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const typeButtons: { label: string; value: ResourceType | 'all' }[] = [
     { label: 'All', value: 'all' },
@@ -84,22 +146,18 @@ export function TeacherCurriculumPage() {
         )}
       </div>
 
-      {error && (
-        <div className="bg-coral/10 border border-coral/20 rounded-xl p-4 flex items-center justify-between">
-          <p className="text-coral text-sm">{error}</p>
-          <button onClick={refresh} className="flex items-center gap-1 text-coral text-sm font-medium hover:underline"><RefreshCw size={14} />Retry</button>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} onRetry={() => { void refresh(); }} />}
 
       <ConfirmDialog
         open={!!confirmDelete}
         title="Delete Resource"
         message="Are you sure you want to delete this resource?"
-        onConfirm={async () => { if (confirmDelete) { await deleteResource(confirmDelete); setConfirmDelete(null); } }}
+        confirmLabel={deleting ? 'Deleting…' : 'Delete'}
+        onConfirm={() => { if (confirmDelete && !deleting) void deleteResource(confirmDelete); }}
         onCancel={() => setConfirmDelete(null)}
       />
 
-      <p className="text-sm text-navy font-medium">{resources.length} resources found</p>
+      <p className="text-sm text-navy font-medium">{loading ? 'Loading…' : `${resources.length} resources found`}</p>
 
       {loading ? (
         <SkeletonList rows={5} />
@@ -118,12 +176,12 @@ export function TeacherCurriculumPage() {
                     {r.level.charAt(0).toUpperCase() + r.level.slice(1)}
                   </span>
                 </div>
-                <button onClick={() => setConfirmDelete(r.id)} className="text-gray-300 hover:text-red-500 flex-shrink-0" aria-label="Delete resource">
+                <button onClick={() => setConfirmDelete(r.id)} className="text-gray-300 hover:text-red-500 flex-shrink-0 p-1 -m-1" aria-label="Delete resource">
                   <Trash2 size={16} />
                 </button>
               </div>
 
-              <h3 className="font-semibold text-navy text-lg mt-2">{r.title}</h3>
+              <h3 className="font-semibold text-navy text-lg mt-2 break-words">{r.title}</h3>
               {r.description && <p className="text-sm text-gray-500 mt-1">{r.description}</p>}
 
               {r.tags && r.tags.length > 0 && (

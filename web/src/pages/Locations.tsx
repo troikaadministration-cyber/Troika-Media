@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, unwrap, invalidateQueries } from '../lib/queryCache';
+import { invalidateReference } from '../hooks/useReference';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MapPin, Plus, Pencil, Trash2, X, RefreshCw } from 'lucide-react';
@@ -8,38 +10,34 @@ import { SkeletonList } from '../components/Skeleton';
 interface LocationRow {
   id: string;
   name: string;
-  address: string;
-  city: string;
-  zone: string;
+  address: string | null;
+  city: string | null;
+  zone: string | null;
 }
 
 const EMPTY = { name: '', address: '', city: '', zone: '' };
 
 export function LocationsPage() {
   const { showToast } = useToast();
-  const [locations, setLocations] = useState<LocationRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error, refresh } = useQuery<LocationRow[]>('locations:list', async () =>
+    unwrap(await supabase
+      .from('locations')
+      .select('id, name, address, city, zone')
+      .order('name'), []) as LocationRow[]);
+  const locations = data ?? [];
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<LocationRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const { data, error: err } = await supabase
-      .from('locations')
-      .select('id, name, address, city, zone')
-      .order('name');
-    if (err) setError(err.message);
-    else setLocations((data || []) as LocationRow[]);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+  /** Refresh this list and every picker that shows locations. */
+  function afterChange() {
+    invalidateReference('locations');
+    invalidateQueries('locations:');
+  }
 
   function openAdd() {
     setEditingId(null);
@@ -49,11 +47,12 @@ export function LocationsPage() {
 
   function openEdit(loc: LocationRow) {
     setEditingId(loc.id);
-    setForm({ name: loc.name, address: loc.address, city: loc.city, zone: loc.zone });
+    setForm({ name: loc.name, address: loc.address ?? '', city: loc.city ?? '', zone: loc.zone ?? '' });
     setModalOpen(true);
   }
 
   async function save() {
+    if (saving) return;
     if (!form.name.trim()) {
       showToast('error', 'Location name is required');
       return;
@@ -75,26 +74,34 @@ export function LocationsPage() {
     }
     showToast('success', editingId ? 'Location updated' : 'Location added');
     setModalOpen(false);
-    load();
+    afterChange();
   }
 
   async function doDelete(loc: LocationRow) {
-    // Block deletion if the location is still referenced anywhere.
-    const [lessons, students, rates] = await Promise.all([
-      supabase.from('lessons').select('id', { count: 'exact', head: true }).eq('location_id', loc.id),
-      supabase.from('students').select('id', { count: 'exact', head: true }).eq('location_id', loc.id),
-      supabase.from('lesson_rates').select('id', { count: 'exact', head: true }).eq('location_id', loc.id),
-    ]);
-    const inUse = (lessons.count || 0) + (students.count || 0) + (rates.count || 0);
-    if (inUse > 0) {
-      showToast('error', `Can't delete "${loc.name}" — it's used by ${inUse} lesson(s)/student(s)/rate(s).`);
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      // Block deletion if the location is still referenced anywhere.
+      const checks = await Promise.all([
+        supabase.from('lessons').select('id', { count: 'exact', head: true }).eq('location_id', loc.id),
+        supabase.from('students').select('id', { count: 'exact', head: true }).eq('location_id', loc.id),
+        supabase.from('lesson_rates').select('id', { count: 'exact', head: true }).eq('location_id', loc.id),
+      ]);
+      const failed = checks.find((c) => c.error);
+      if (failed?.error) { showToast('error', failed.error.message); return; }
+      const inUse = checks.reduce((n, c) => n + (c.count || 0), 0);
+      if (inUse > 0) {
+        showToast('error', `Can't delete "${loc.name}" — it's used by ${inUse} lesson(s)/student(s)/rate(s).`);
+        return;
+      }
+      const { error: err } = await supabase.from('locations').delete().eq('id', loc.id);
+      if (err) { showToast('error', err.message); return; }
+      showToast('success', 'Location deleted');
+      afterChange();
+    } finally {
+      setDeleting(false);
       setConfirmDelete(null);
-      return;
     }
-    const { error: err } = await supabase.from('locations').delete().eq('id', loc.id);
-    if (err) showToast('error', err.message);
-    else { showToast('success', 'Location deleted'); load(); }
-    setConfirmDelete(null);
   }
 
   return (
@@ -115,7 +122,7 @@ export function LocationsPage() {
       {error && (
         <div className="bg-coral/10 text-coral rounded-xl p-4 text-sm mb-4 flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={load} className="flex items-center gap-1 font-semibold"><RefreshCw size={14} /> Retry</button>
+          <button onClick={refresh} className="flex items-center gap-1 font-semibold"><RefreshCw size={14} /> Retry</button>
         </div>
       )}
 
@@ -200,6 +207,7 @@ export function LocationsPage() {
         open={!!confirmDelete}
         title="Delete location"
         message={confirmDelete ? `Delete "${confirmDelete.name}"? This can't be undone.` : ''}
+        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
         onConfirm={() => confirmDelete && doDelete(confirmDelete)}
         onCancel={() => setConfirmDelete(null)}
       />

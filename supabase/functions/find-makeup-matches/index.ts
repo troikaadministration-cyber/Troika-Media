@@ -109,7 +109,7 @@ serve(async (req) => {
     // Fetch all active students (excluding those already in this lesson)
     let query = supabase
       .from('students')
-      .select('*, location:locations(*), instrument:instruments(name)')
+      .select('*, location:locations(*), instrument:instruments!students_instrument_id_fkey(name)')
       .eq('is_active', true);
 
     const { data: allCandidates } = await query;
