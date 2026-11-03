@@ -1,6 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, invalidateQueries } from '../lib/queryCache';
+import { fetchAll } from '../lib/fetchAll';
+import { parseDateStr, toDateStr } from '../lib/dates';
+import { invalidateLessonViews } from './useLessons';
 import type { PendingLesson, AutoReschedulePreviewItem, LessonType, LessonStatus } from '../types';
+
+const PENDING_COLUMNS = `
+  id, teacher_id, instrument_id, location_id, title, date, start_time, source_break_id,
+  students:lesson_students(student_id, student:students(full_name)),
+  teacher:profiles!lessons_teacher_id_fkey(full_name),
+  instrument:instruments(name, icon),
+  break:scheduled_breaks(title, end_date, student_ids)
+`;
 
 function addDays(date: Date, days: number): Date {
   const d = new Date(date);
@@ -14,42 +26,32 @@ function nextDayOfWeek(from: Date, dow: number): Date {
   return d;
 }
 
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+/** Bump a break's "rescheduled" counter (read-modify-write; coordinators only). */
+async function addRescheduled(breakId: string, n: number) {
+  const { data: brk, error } = await supabase
+    .from('scheduled_breaks').select('total_rescheduled').eq('id', breakId).single();
+  if (error) throw new Error(`Makeup created, but the break's progress couldn't be updated: ${error.message}`);
+  const { error: upErr } = await supabase
+    .from('scheduled_breaks').update({ total_rescheduled: brk.total_rescheduled + n }).eq('id', breakId);
+  if (upErr) throw new Error(`Makeup created, but the break's progress couldn't be updated: ${upErr.message}`);
+}
+
+function afterReschedule() {
+  invalidateLessonViews();
+  invalidateQueries('breaks:');
 }
 
 export function usePendingReschedules() {
-  const [lessons, setLessons] = useState<PendingLesson[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchLessons = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { data, error: err } = await supabase
-        .from('lessons')
-        .select(`
-          id, teacher_id, instrument_id, location_id, title, date, start_time, source_break_id,
-          students:lesson_students(student_id, student:students(full_name)),
-          teacher:profiles!lessons_teacher_id_fkey(full_name),
-          instrument:instruments(name, icon),
-          break:scheduled_breaks(title, end_date, student_ids)
-        `)
+  const { data, loading, error, refresh } = useQuery<PendingLesson[]>('pending-reschedules', () =>
+    fetchAll<PendingLesson>((from, to) =>
+      supabase.from('lessons').select(PENDING_COLUMNS)
         .eq('pending_reschedule', true)
         .eq('status', 'cancelled')
         .order('source_break_id')
-        .order('date');
-      if (err) throw err;
-      setLessons((data as unknown as PendingLesson[]) || []);
-    } catch (e: any) {
-      setError(e.message || 'Failed to fetch pending reschedules');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchLessons(); }, [fetchLessons]);
+        .order('date')
+        .order('id')
+        .range(from, to)));
+  const lessons = data ?? [];
 
   const reschedule = useCallback(async (lessonId: string, newDate: string, newTime: string): Promise<void> => {
     const lesson = lessons.find(l => l.id === lessonId);
@@ -74,56 +76,50 @@ export function usePendingReschedules() {
 
     if (lesson.students.length > 0) {
       const { error: lsErr } = await supabase.from('lesson_students').insert(
-        lesson.students.map(s => ({ lesson_id: makeup!.id, student_id: s.student_id }))
+        lesson.students.map(s => ({ lesson_id: makeup.id, student_id: s.student_id }))
       );
-      if (lsErr) throw lsErr;
+      if (lsErr) {
+        await supabase.from('lessons').delete().eq('id', makeup.id); // don't leave an empty makeup behind
+        throw lsErr;
+      }
     }
     // pending_reschedule is cleared by the resolve_pending_on_makeup DB trigger
     // when the makeup's lesson_students rows are inserted above.
 
-    if (lesson.source_break_id) {
-      const { data: brk } = await supabase
-        .from('scheduled_breaks')
-        .select('total_rescheduled')
-        .eq('id', lesson.source_break_id)
-        .single();
-      if (brk) {
-        await supabase
-          .from('scheduled_breaks')
-          .update({ total_rescheduled: brk.total_rescheduled + 1 })
-          .eq('id', lesson.source_break_id);
-      }
+    try {
+      if (lesson.source_break_id) await addRescheduled(lesson.source_break_id, 1);
+    } finally {
+      afterReschedule();
+      await refresh();
     }
-
-    await fetchLessons();
-  }, [lessons, fetchLessons]);
+  }, [lessons, refresh]);
 
   const autoRescheduleBreak = useCallback(async (breakId: string): Promise<AutoReschedulePreviewItem[]> => {
     const breakLessons = lessons.filter(l => l.source_break_id === breakId);
     if (breakLessons.length === 0) return [];
 
-    const breakEndDate = breakLessons[0].break.end_date;
-    const windowEnd = toDateStr(addDays(new Date(breakEndDate + 'T00:00'), 52 * 7));
+    const breakEnd = parseDateStr(breakLessons[0].break.end_date);
+    const breakEndStr = toDateStr(breakEnd);
+    const windowEnd = toDateStr(addDays(breakEnd, 52 * 7));
 
+    // Every affected teacher's booked slots after the break, in one query.
     const teacherIds = [...new Set(breakLessons.map(l => l.teacher_id))];
-    const teacherSlotsMap = new Map<string, Set<string>>();
-
-    for (const tid of teacherIds) {
-      const { data } = await supabase
-        .from('lessons')
-        .select('date, start_time')
-        .eq('teacher_id', tid)
-        .gt('date', breakEndDate)
+    const booked = await fetchAll<{ teacher_id: string; date: string; start_time: string }>((from, to) =>
+      supabase.from('lessons')
+        .select('teacher_id, date, start_time')
+        .in('teacher_id', teacherIds)
+        .gt('date', breakEndStr)
         .lte('date', windowEnd)
-        .neq('status', 'cancelled');
-      const set = new Set<string>((data || []).map((l: any) => `${l.date}|${l.start_time}`));
-      teacherSlotsMap.set(tid, set);
-    }
+        .neq('status', 'cancelled')
+        .order('id')
+        .range(from, to));
+    const teacherSlotsMap = new Map<string, Set<string>>(teacherIds.map(id => [id, new Set<string>()]));
+    for (const l of booked) teacherSlotsMap.get(l.teacher_id)?.add(`${l.date}|${l.start_time}`);
 
     return breakLessons.map(lesson => {
-      const targetDow = new Date(lesson.date + 'T00:00').getDay();
+      const targetDow = parseDateStr(lesson.date).getDay();
       const takenSlots = teacherSlotsMap.get(lesson.teacher_id) ?? new Set<string>();
-      let candidate = nextDayOfWeek(new Date(breakEndDate + 'T00:00'), targetDow);
+      let candidate = nextDayOfWeek(breakEnd, targetDow);
 
       for (let i = 0; i < 52; i++) {
         const dateStr = toDateStr(candidate);
@@ -167,27 +163,23 @@ export function usePendingReschedules() {
     );
     if (lessonStudents.length > 0) {
       const { error: lsErr } = await supabase.from('lesson_students').insert(lessonStudents);
-      if (lsErr) throw lsErr;
+      if (lsErr) {
+        // One insert = one transaction, so nothing was linked: remove the empty makeups.
+        await supabase.from('lessons').delete().in('id', (insertedLessons || []).map(l => l.id));
+        throw lsErr;
+      }
     }
 
     // pending_reschedule cleared by the resolve_pending_on_makeup DB trigger
     // on the lesson_students inserts above.
 
-    const breakId = toSchedule[0].original.source_break_id;
-    const { data: brk } = await supabase
-      .from('scheduled_breaks')
-      .select('total_rescheduled')
-      .eq('id', breakId)
-      .single();
-    if (brk) {
-      await supabase
-        .from('scheduled_breaks')
-        .update({ total_rescheduled: brk.total_rescheduled + toSchedule.length })
-        .eq('id', breakId);
+    try {
+      await addRescheduled(toSchedule[0].original.source_break_id, toSchedule.length);
+    } finally {
+      afterReschedule();
+      await refresh();
     }
+  }, [refresh]);
 
-    await fetchLessons();
-  }, [fetchLessons]);
-
-  return { lessons, loading, error, refresh: fetchLessons, reschedule, autoRescheduleBreak, confirmAutoReschedule };
+  return { lessons, loading, error, refresh, reschedule, autoRescheduleBreak, confirmAutoReschedule };
 }

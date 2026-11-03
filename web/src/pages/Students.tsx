@@ -24,7 +24,8 @@ export function StudentsPage() {
       .from('profiles')
       .select('id, full_name, email')
       .eq('role', 'student')
-      .is('approved', null), []) as PendingProfile[]);
+      .is('approved', null)
+      .neq('full_name', ''), []) as PendingProfile[]); // blank name = hasn't finished sign-up yet
   const pendingProfiles = pendingQ.data ?? [];
 
   const [wizardOpen, setWizardOpen] = useState(false);

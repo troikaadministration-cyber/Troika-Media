@@ -1,9 +1,25 @@
 // web/src/components/SlotPicker.tsx
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, unwrap } from '../lib/queryCache';
 import type { Instrument, TeacherScheduleTemplate } from '../types';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+export type ScheduleTemplateRow = Omit<TeacherScheduleTemplate, 'created_at' | 'updated_at'>;
+const TEMPLATE_COLUMNS = 'id, teacher_id, day_of_week, start_time, end_time, location_id, instrument_id, title, student_ids, is_active';
+
+/** A teacher's active weekly slots (cached; shared with the Teacher Schedules page). */
+export function useTeacherTemplates(teacherId: string | null) {
+  return useQuery<ScheduleTemplateRow[]>(teacherId ? `teacher-schedule:${teacherId}` : null, async () =>
+    unwrap(await supabase
+      .from('teacher_schedule_templates')
+      .select(TEMPLATE_COLUMNS)
+      .eq('teacher_id', teacherId!)
+      .eq('is_active', true)
+      .order('day_of_week')
+      .order('start_time'), []) as ScheduleTemplateRow[]);
+}
 
 export type SelectedSlot = {
   mode: 'existing';
@@ -22,6 +38,17 @@ export type SelectedSlot = {
   title: string;
 };
 
+/** Why a slot can't be saved (mirrors enrol_student's checks), or null if it's fine. */
+export function slotError(slot: SelectedSlot | null): string | null {
+  if (!slot) return 'Please select or create a schedule slot';
+  if (slot.mode === 'new') {
+    if (!slot.startTime) return 'Choose a start time for the new slot';
+    if (slot.endTime && slot.endTime <= slot.startTime) return 'End time must be after the start time';
+    if (!slot.instrumentId) return 'Choose an instrument for the new slot';
+  }
+  return null;
+}
+
 interface SlotPickerProps {
   teacherId: string;
   instruments: Instrument[];
@@ -30,9 +57,8 @@ interface SlotPickerProps {
 }
 
 export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPickerProps) {
-  const [templates, setTemplates] = useState<TeacherScheduleTemplate[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const { data, loading, error: fetchError } = useTeacherTemplates(teacherId || null);
+  const templates = data ?? [];
   const [newSlot, setNewSlot] = useState({
     dayOfWeek: 1,
     startTime: '09:00',
@@ -40,32 +66,6 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
     instrumentId: '',
     title: '',
   });
-
-  // Fix 1 & 2 — Race condition guard + always run setLoading(false), destructure error
-  useEffect(() => {
-    if (!teacherId) { setTemplates([]); return; }
-    let ignore = false;
-    setLoading(true);
-    supabase
-      .from('teacher_schedule_templates')
-      .select('*')
-      .eq('teacher_id', teacherId)
-      .eq('is_active', true)
-      .order('day_of_week')
-      .order('start_time')
-      .then(({ data, error }) => {
-        if (ignore) return;
-        if (error) {
-          setFetchError(error.message);
-          setTemplates([]);
-        } else {
-          setFetchError(null);
-          setTemplates((data as TeacherScheduleTemplate[]) ?? []);
-        }
-        setLoading(false);
-      });
-    return () => { ignore = true; };
-  }, [teacherId]);
 
   // Fix 3 — Reset newSlot to defaults when value becomes null externally
   useEffect(() => {
@@ -75,8 +75,9 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
   }, [value]);
 
   const isNewSelected = value?.mode === 'new';
+  const newSlotError = isNewSelected ? slotError(value) : null;
 
-  function selectExisting(tpl: TeacherScheduleTemplate) {
+  function selectExisting(tpl: ScheduleTemplateRow) {
     onChange({
       mode: 'existing',
       templateId: tpl.id,
@@ -102,9 +103,9 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
   }
 
   if (loading) return <p className="text-sm text-gray-400">Loading slots...</p>;
-  if (fetchError) return <p className="text-xs text-red-500">Failed to load slots: {fetchError}</p>;
+  if (fetchError && !data) return <p className="text-xs text-red-500">Failed to load slots: {fetchError}</p>;
 
-  const byDay: Record<number, TeacherScheduleTemplate[]> = {};
+  const byDay: Record<number, ScheduleTemplateRow[]> = {};
   for (const t of templates) {
     if (!byDay[t.day_of_week]) byDay[t.day_of_week] = [];
     byDay[t.day_of_week].push(t);
@@ -216,7 +217,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
                     onChange={(e) => updateNewSlot({ instrumentId: e.target.value })}
                     className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
                   >
-                    <option value="">None</option>
+                    <option value="">Select…</option>
                     {instruments.map(i => (
                       <option key={i.id} value={i.id}>{i.icon} {i.name}</option>
                     ))}
@@ -232,6 +233,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
                   />
                 </div>
               </div>
+              {newSlotError && <p className="text-xs text-coral">{newSlotError}</p>}
             </div>
           )}
         </div>

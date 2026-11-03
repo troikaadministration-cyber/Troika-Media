@@ -1,18 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { CalendarOff, Plus, X, AlertTriangle, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 import { SkeletonList } from '../components/Skeleton';
 import { useBreaks } from '../hooks/useBreaks';
 import { usePendingReschedules } from '../hooks/usePendingReschedules';
 import { useAuth } from '../hooks/useAuth';
-import { supabase } from '../lib/supabase';
+import { useActiveStudentsList } from '../hooks/useReference';
+import { useToast } from '../contexts/ToastContext';
+import { ErrorBanner } from '../components/ErrorBanner';
 import { PendingRescheduleList } from '../components/PendingRescheduleList';
 import { ReschedulerCalendar } from '../components/ReschedulerCalendar';
 import { RescheduleModal } from '../components/RescheduleModal';
-import type { Student, PendingLesson, AutoReschedulePreviewItem } from '../types';
+import type { PendingLesson, AutoReschedulePreviewItem } from '../types';
 
 export function BreaksPage() {
   const { profile } = useAuth();
-  const { breaks, pendingRescheduleCount, loading, createBreak, previewBreak, fetchBreaks } = useBreaks();
+  const { showToast } = useToast();
+  const { breaks, pendingRescheduleCount, loading, error: breaksError, createBreak, previewBreak, fetchBreaks } = useBreaks();
   const {
     lessons: pendingLessons,
     loading: pendingLoading,
@@ -23,9 +26,11 @@ export function BreaksPage() {
   } = usePendingReschedules();
 
   const [showForm, setShowForm] = useState(false);
-  const [students, setStudents] = useState<Student[]>([]);
+  const { students } = useActiveStudentsList();
   const [allStudents, setAllStudents] = useState(true);
   const [preview, setPreview] = useState<number | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showPendingSection, setShowPendingSection] = useState(true);
 
@@ -41,37 +46,56 @@ export function BreaksPage() {
   const [autoError, setAutoError] = useState<string | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
-  useEffect(() => {
-    supabase.from('students').select('*').eq('is_active', true).order('full_name')
-      .then(({ data }) => setStudents((data as Student[]) || []));
-  }, []);
+  // Empty student_ids means "everyone", so an individual break needs at least one student.
+  function validateForm(): string | null {
+    if (!form.title.trim() || !form.start_date || !form.end_date) return 'Enter a title and both dates';
+    if (form.end_date < form.start_date) return 'End date must be on or after the start date';
+    if (!allStudents && form.student_ids.length === 0) return 'Select at least one student (or tick "All students")';
+    return null;
+  }
+
+  function closeForm() {
+    setShowForm(false);
+    setPreview(null);
+    setFormError(null);
+  }
 
   const handlePreview = async () => {
-    const ids = allStudents ? [] : form.student_ids;
-    const count = await previewBreak(form.start_date, form.end_date, ids);
-    setPreview(count);
+    const problem = validateForm();
+    if (problem) { setFormError(problem); return; }
+    setFormError(null);
+    setPreviewing(true);
+    try {
+      setPreview(await previewBreak(form.start_date, form.end_date, allStudents ? [] : form.student_ids));
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : 'Could not preview the break');
+    } finally {
+      setPreviewing(false);
+    }
   };
 
   const handleCreate = async () => {
-    if (!profile?.id) return;
+    if (!profile?.id || creating) return;
+    const problem = validateForm();
+    if (problem) { setFormError(problem); return; }
     setCreating(true);
+    setFormError(null);
     try {
-      const ids = allStudents ? [] : form.student_ids;
       const result = await createBreak({
-        title: form.title,
+        title: form.title.trim(),
         start_date: form.start_date,
         end_date: form.end_date,
-        student_ids: ids,
+        student_ids: allStudents ? [] : form.student_ids,
         created_by: profile.id,
       });
-      alert(`Break created. ${result.cancelled} lessons cancelled and marked for reschedule.`);
-      setShowForm(false);
+      showToast('success', `Break created. ${result.cancelled} lesson${result.cancelled !== 1 ? 's' : ''} cancelled and marked for reschedule.`);
+      closeForm();
       setForm({ title: '', start_date: '', end_date: '', student_ids: [] });
-      setPreview(null);
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to create break');
+      setFormError(err instanceof Error ? err.message : 'Failed to create break');
+    } finally {
+      setCreating(false);
     }
-    setCreating(false);
   };
 
   async function handleAutoReschedule(breakId: string) {
@@ -93,8 +117,8 @@ export function BreaksPage() {
     setAutoError(null);
     try {
       await confirmAutoReschedule(autoPreview);
-      await fetchBreaks();
       setAutoPreview(null);
+      showToast('success', 'Makeup lessons created.');
     } catch (e: unknown) {
       setAutoError(e instanceof Error ? e.message : 'Failed to create makeup lessons');
     } finally {
@@ -103,8 +127,8 @@ export function BreaksPage() {
   }
 
   async function handleManualReschedule(lessonId: string, newDate: string, newTime: string) {
-    await reschedule(lessonId, newDate, newTime);
-    await fetchBreaks();
+    await reschedule(lessonId, newDate, newTime); // refreshes breaks + pending list
+    showToast('success', 'Makeup lesson created.');
   }
 
   const scheduledCount = autoPreview ? autoPreview.filter(p => p.found).length : 0;
@@ -131,6 +155,8 @@ export function BreaksPage() {
           </div>
         </div>
       )}
+
+      {breaksError && <ErrorBanner message={breaksError} onRetry={fetchBreaks} />}
 
       {loading ? (
         <SkeletonList rows={4} />
@@ -298,7 +324,7 @@ export function BreaksPage() {
           <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-navy text-lg">Schedule Break</h3>
-              <button onClick={() => { setShowForm(false); setPreview(null); }} className="text-gray-400 hover:text-navy"><X size={20} /></button>
+              <button onClick={closeForm} className="text-gray-400 hover:text-navy"><X size={20} /></button>
             </div>
             <div className="space-y-4">
               <div>
@@ -320,7 +346,7 @@ export function BreaksPage() {
               </div>
               <div>
                 <label className="flex items-center gap-2 text-sm mb-2">
-                  <input type="checkbox" checked={allStudents} onChange={(e) => setAllStudents(e.target.checked)} className="accent-teal" />
+                  <input type="checkbox" checked={allStudents} onChange={(e) => { setAllStudents(e.target.checked); setPreview(null); }} className="accent-teal" />
                   <span className="font-medium text-navy">All students</span>
                 </label>
                 {!allStudents && (
@@ -328,10 +354,13 @@ export function BreaksPage() {
                     {students.map((s) => (
                       <label key={s.id} className="flex items-center gap-2 text-sm px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
                         <input type="checkbox" checked={form.student_ids.includes(s.id)}
-                          onChange={(e) => setForm({
-                            ...form,
-                            student_ids: e.target.checked ? [...form.student_ids, s.id] : form.student_ids.filter((id) => id !== s.id)
-                          })} className="accent-teal" />
+                          onChange={(e) => {
+                            setForm({
+                              ...form,
+                              student_ids: e.target.checked ? [...form.student_ids, s.id] : form.student_ids.filter((id) => id !== s.id)
+                            });
+                            setPreview(null);
+                          }} className="accent-teal" />
                         {s.full_name}
                       </label>
                     ))}
@@ -346,11 +375,13 @@ export function BreaksPage() {
                 </div>
               )}
 
+              {formError && <p className="text-xs text-coral">{formError}</p>}
+
               <div className="flex gap-3 pt-2">
                 {preview === null ? (
-                  <button onClick={handlePreview} disabled={!form.title || !form.start_date || !form.end_date}
+                  <button onClick={handlePreview} disabled={previewing || !form.title || !form.start_date || !form.end_date}
                     className="flex-1 flex items-center justify-center gap-2 bg-amber-500 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-amber-500/90 disabled:opacity-50">
-                    <Eye size={16} /> Preview
+                    <Eye size={16} /> {previewing ? 'Checking…' : 'Preview'}
                   </button>
                 ) : (
                   <button onClick={handleCreate} disabled={creating}
@@ -358,7 +389,7 @@ export function BreaksPage() {
                     {creating ? 'Creating...' : 'Cancel & Mark for Reschedule'}
                   </button>
                 )}
-                <button onClick={() => { setShowForm(false); setPreview(null); }}
+                <button onClick={closeForm} disabled={creating}
                   className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200">Cancel</button>
               </div>
             </div>

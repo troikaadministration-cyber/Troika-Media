@@ -1,25 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { setQueryData, invalidateQueries } from '../lib/queryCache';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useToast } from '../contexts/ToastContext';
+import { useTeachersList, useInstruments, useLocationsList, useActiveStudentsList } from '../hooks/useReference';
+import { useTeacherTemplates, type ScheduleTemplateRow } from '../components/SlotPicker';
 import {
-  Plus, X, Trash2, Calendar, MapPin, Users as UsersIcon, RefreshCw,
+  Plus, X, Trash2, Calendar, MapPin, Users as UsersIcon,
 } from 'lucide-react';
 import { SkeletonList } from '../components/Skeleton';
-import type { Profile, Instrument, Location, Student } from '../types';
+import { ErrorBanner } from '../components/ErrorBanner';
 
-interface ScheduleTemplate {
-  id: string;
-  teacher_id: string;
-  day_of_week: number;
-  start_time: string;
-  end_time: string | null;
-  location_id: string | null;
-  instrument_id: string | null;
-  title: string;
-  student_ids: string[];
-  is_active: boolean;
-}
+type ScheduleTemplate = ScheduleTemplateRow;
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -42,14 +34,19 @@ function fmtHour(h: number): string {
 
 export function TeacherScheduleAdminPage() {
   const { showToast } = useToast();
-  const [teachers, setTeachers] = useState<Profile[]>([]);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
+  // Cached reference lists + the selected teacher's slots (instant on revisit).
+  const { teachers } = useTeachersList();
+  const { instruments } = useInstruments();
+  const { locations } = useLocationsList();
+  const { students } = useActiveStudentsList();
   const [selectedTeacher, setSelectedTeacher] = useState('');
-  const [templates, setTemplates] = useState<ScheduleTemplate[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const templatesQ = useTeacherTemplates(selectedTeacher || null);
+  const templates = templatesQ.data ?? [];
+  const loading = templatesQ.loading;
+  const [error, setError] = useState<string | null>(null); // create-form validation/save error
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const studentName = useMemo(() => new Map(students.map(s => [s.id, s.full_name])), [students]);
 
   const [showCreate, setShowCreate] = useState(false);
   const createRef = useFocusTrap(showCreate);
@@ -64,52 +61,22 @@ export function TeacherScheduleAdminPage() {
     student_ids: [] as string[],
   });
 
-  useEffect(() => {
-    Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'teacher').order('full_name'),
-      supabase.from('instruments').select('*').order('name'),
-      supabase.from('locations').select('*').order('name'),
-      supabase.from('students').select('*').eq('is_active', true).order('full_name'),
-    ]).then(([t, i, l, s]) => {
-      setTeachers((t.data as Profile[]) || []);
-      setInstruments((i.data as Instrument[]) || []);
-      setLocations((l.data as Location[]) || []);
-      setStudents((s.data as Student[]) || []);
-    });
-  }, []);
-
-  const fetchTemplates = useCallback(async () => {
-    if (!selectedTeacher) { setTemplates([]); return; }
-    setLoading(true);
-    setError(null);
-    const { data, error: err } = await supabase
-      .from('teacher_schedule_templates')
-      .select('*')
-      .eq('teacher_id', selectedTeacher)
-      .eq('is_active', true)
-      .order('day_of_week')
-      .order('start_time');
-    if (err) setError(err.message);
-    setTemplates((data as ScheduleTemplate[]) || []);
-    setLoading(false);
-  }, [selectedTeacher]);
-
-  useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
-
   const openCreateForDay = (day: number) => {
     setForm({ day_of_week: day, start_time: '09:00', end_time: '', location_id: '', instrument_id: '', title: '', student_ids: [] });
+    setError(null);
     setShowCreate(true);
   };
 
   const handleCreateSlot = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTeacher) return;
+    if (!selectedTeacher || saving) return;
     if (!form.title.trim()) { setError('Title is required'); return; }
     if (form.end_time && form.end_time <= form.start_time) {
       setError('End time must be after start time');
       return;
     }
     setError(null);
+    setSaving(true);
     const { error: err } = await supabase.from('teacher_schedule_templates').insert({
       teacher_id: selectedTeacher,
       day_of_week: form.day_of_week,
@@ -120,20 +87,26 @@ export function TeacherScheduleAdminPage() {
       title: form.title.trim(),
       student_ids: form.student_ids,
     });
+    setSaving(false);
     if (err) { setError(err.message); showToast('error', `Failed to add slot: ${err.message}`); return; }
     setShowCreate(false);
     showToast('success', 'Slot added');
-    fetchTemplates();
+    invalidateQueries(`teacher-schedule:${selectedTeacher}`);
   };
 
   const handleDeleteSlot = async (id: string) => {
+    if (removing) return;
+    setRemoving(id);
     const { error: err } = await supabase
       .from('teacher_schedule_templates')
       .update({ is_active: false })
       .eq('id', id);
+    setRemoving(null);
     if (err) { showToast('error', `Failed to remove slot: ${err.message}`); return; }
+    // Drop it from the cached list right away; the refetch confirms.
+    setQueryData<ScheduleTemplate[]>(`teacher-schedule:${selectedTeacher}`, prev => (prev ?? []).filter(t => t.id !== id));
     showToast('success', 'Slot removed');
-    fetchTemplates();
+    invalidateQueries(`teacher-schedule:${selectedTeacher}`);
   };
 
   const templatesByDay: Record<number, ScheduleTemplate[]> = {};
@@ -175,14 +148,7 @@ export function TeacherScheduleAdminPage() {
         </select>
       </div>
 
-      {error && (
-        <div className="bg-coral/10 border border-coral/20 rounded-xl p-4 flex items-center justify-between">
-          <p className="text-coral text-sm">{error}</p>
-          <button onClick={fetchTemplates} className="flex items-center gap-1 text-coral text-sm font-medium hover:underline">
-            <RefreshCw size={14} /> Retry
-          </button>
-        </div>
-      )}
+      {templatesQ.error && <ErrorBanner message={templatesQ.error} onRetry={templatesQ.refresh} />}
 
       {!selectedTeacher && (
         <div className="text-center py-16 text-gray-400 text-sm">
@@ -277,7 +243,7 @@ export function TeacherScheduleAdminPage() {
                         const height = Math.max(((endMins - startMins) / 60) * CELL_HEIGHT - 2, 28);
                         const loc = locations.find(l => l.id === slot.location_id);
                         const inst = instruments.find(i => i.id === slot.instrument_id);
-                        const slotStudents = students.filter(s => slot.student_ids.includes(s.id));
+                        const slotStudents = (slot.student_ids ?? []).map(id => studentName.get(id)).filter(Boolean);
 
                         return (
                           <div
@@ -302,13 +268,14 @@ export function TeacherScheduleAdminPage() {
                                 )}
                                 {height >= 68 && slotStudents.length > 0 && (
                                   <p className="text-xs text-gray-400 leading-tight truncate flex items-center gap-0.5">
-                                    <UsersIcon size={9} />{slotStudents.map(s => s.full_name).join(', ')}
+                                    <UsersIcon size={9} />{slotStudents.join(', ')}
                                   </p>
                                 )}
                               </div>
                               <button
                                 onClick={() => handleDeleteSlot(slot.id)}
-                                className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-red-400 hover:text-red-600"
+                                disabled={removing === slot.id}
+                                className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-red-400 hover:text-red-600 disabled:opacity-50"
                                 title="Remove slot"
                               >
                                 <Trash2 size={11} />
@@ -440,9 +407,10 @@ export function TeacherScheduleAdminPage() {
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2.5 rounded-lg bg-coral text-white text-sm font-medium hover:bg-coral/90"
+                  disabled={saving}
+                  className="flex-1 px-4 py-2.5 rounded-lg bg-coral text-white text-sm font-medium hover:bg-coral/90 disabled:opacity-50"
                 >
-                  Add Slot
+                  {saving ? 'Adding…' : 'Add Slot'}
                 </button>
               </div>
             </form>

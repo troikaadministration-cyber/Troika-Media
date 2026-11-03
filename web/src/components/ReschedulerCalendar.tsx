@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useQuery, unwrap } from '../lib/queryCache';
+import { toDateStr } from '../lib/dates';
 import type { PendingLesson } from '../types';
 
 interface Props {
@@ -9,10 +11,6 @@ interface Props {
 }
 
 const DAY_HEADERS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
-
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 function buildCalendarGrid(year: number, month: number): (Date | null)[][] {
   const firstDay = new Date(year, month, 1);
@@ -32,25 +30,21 @@ function buildCalendarGrid(year: number, month: number): (Date | null)[][] {
 export function ReschedulerCalendar({ lesson, onDateSelect }: Props) {
   const today = new Date();
   const [month, setMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
-  const [lessonDates, setLessonDates] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (!lesson) { setLessonDates(new Set()); return; }
-    const monthStart = toDateStr(month);
-    const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-    const monthEnd = toDateStr(lastDay);
-
-    supabase
+  const monthStart = toDateStr(month);
+  const monthEnd = toDateStr(new Date(month.getFullYear(), month.getMonth() + 1, 0));
+  // Teacher's busy days this month (cached under lessons: so lesson changes refresh it).
+  const teacherId = lesson?.teacher_id ?? null;
+  const { data: busyDates, error } = useQuery<string[]>(
+    teacherId ? `lessons:teacher-busy:${teacherId}:${monthStart}` : null,
+    async () => (unwrap(await supabase
       .from('lessons')
       .select('date')
-      .eq('teacher_id', lesson.teacher_id)
+      .eq('teacher_id', teacherId!)
       .gte('date', monthStart)
       .lte('date', monthEnd)
-      .neq('status', 'cancelled')
-      .then(({ data }) => {
-        setLessonDates(new Set((data ?? []).map((l: { date: string }) => l.date)));
-      });
-  }, [lesson?.teacher_id, month]);
+      .neq('status', 'cancelled'), []) as { date: string }[]).map(l => l.date),
+  );
+  const lessonDates = useMemo(() => new Set(busyDates ?? []), [busyDates]);
 
   const todayStr = toDateStr(today);
   const rows = buildCalendarGrid(month.getFullYear(), month.getMonth());
@@ -116,6 +110,8 @@ export function ReschedulerCalendar({ lesson, onDateSelect }: Props) {
           </div>
         ))}
       </div>
+
+      {error && <p className="text-xs text-coral mt-2">Couldn&rsquo;t load the teacher&rsquo;s lessons: {error}</p>}
 
       <div className="flex items-center gap-4 mt-3 pt-2 border-t border-black/5">
         <div className="flex items-center gap-1.5 text-xs text-gray-400">
