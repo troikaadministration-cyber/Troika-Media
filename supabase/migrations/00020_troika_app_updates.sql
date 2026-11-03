@@ -1833,3 +1833,142 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.reset_calendar_token() FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.reset_calendar_token() TO authenticated;
+
+
+-- ── 29. Undo a payment; payment method/reference; payment event log ──────
+-- ── Payments: undo a payment, payment method/reference, payment event log ──
+-- Idempotent: safe to run more than once.
+--
+-- * payment_records.payment_method / payment_reference — how the money came
+--   in (recorded in the Mark Paid dialog, shown on Paid rows + receipt).
+-- * payment_events — who marked/undid which payment, for accountability.
+--   Coordinators can read it; only the SECURITY DEFINER functions below write.
+-- * undo_payment(p_payment_id) — puts a wrongly-marked payment back to unpaid
+--   and removes its invoice row (invoices.payment_id is UNIQUE, so the row has
+--   to go for the payment to be re-invoiced). The cancelled invoice number is
+--   never reused: next_invoice_number() keeps counting in invoice_counters,
+--   and the number is kept in payment_events. Returns the invoice file path
+--   so the app deletes the file through the Storage API.
+
+-- 1. How the payment was made ------------------------------------------------
+ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payment_method TEXT;
+ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payment_reference TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = 'payment_records_payment_method_check'
+                    AND conrelid = 'public.payment_records'::regclass) THEN
+    ALTER TABLE payment_records ADD CONSTRAINT payment_records_payment_method_check
+      CHECK (payment_method IS NULL OR payment_method IN ('cash', 'upi', 'bank_transfer', 'cheque', 'other'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = 'payment_records_payment_reference_length'
+                    AND conrelid = 'public.payment_records'::regclass) THEN
+    ALTER TABLE payment_records ADD CONSTRAINT payment_records_payment_reference_length
+      CHECK (payment_reference IS NULL OR char_length(payment_reference) <= 100);
+  END IF;
+END $$;
+
+-- 2. Event log ------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS payment_events (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- SET NULL (not CASCADE): the log outlives a deleted payment record.
+  payment_id     UUID REFERENCES payment_records(id) ON DELETE SET NULL,
+  event          TEXT NOT NULL CHECK (event IN ('marked_paid', 'undo_paid')),
+  amount         NUMERIC(10,2),
+  invoice_number TEXT,
+  paid_date      DATE,
+  actor          UUID,          -- auth.uid() of whoever did it (NULL = system / service role)
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_payment_events_payment ON payment_events(payment_id, created_at);
+
+ALTER TABLE payment_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Coordinators read payment events" ON payment_events;
+CREATE POLICY "Coordinators read payment events" ON payment_events
+  FOR SELECT USING ((SELECT jwt_role()) = 'coordinator');
+REVOKE ALL ON payment_events FROM public, anon, authenticated;
+GRANT SELECT ON payment_events TO authenticated;
+GRANT ALL ON payment_events TO service_role;
+
+-- 3. Log 'marked_paid' whenever a payment goes unpaid → paid ------------------
+CREATE OR REPLACE FUNCTION public.log_payment_marked_paid()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO payment_events (payment_id, event, amount, paid_date, actor)
+  VALUES (NEW.id, 'marked_paid', NEW.amount, NEW.paid_date, auth.uid());
+  RETURN NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.log_payment_marked_paid() FROM public, anon, authenticated;
+
+DROP TRIGGER IF EXISTS trg_payment_marked_paid ON payment_records;
+CREATE TRIGGER trg_payment_marked_paid
+  AFTER UPDATE OF paid_date ON payment_records
+  FOR EACH ROW
+  WHEN (OLD.paid_date IS NULL AND NEW.paid_date IS NOT NULL)
+  EXECUTE FUNCTION public.log_payment_marked_paid();
+
+-- 4. undo_payment ---------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.undo_payment(p_payment_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_pay payment_records%ROWTYPE;
+  v_invoice_number TEXT;
+  v_pdf_path TEXT;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can undo a payment' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT * INTO v_pay FROM payment_records WHERE id = p_payment_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Payment not found';
+  END IF;
+  IF v_pay.paid_date IS NULL THEN
+    RAISE EXCEPTION 'This payment is not marked as paid — nothing to undo';
+  END IF;
+
+  DELETE FROM invoices WHERE payment_id = p_payment_id
+    RETURNING invoice_number, pdf_path INTO v_invoice_number, v_pdf_path;
+
+  UPDATE payment_records
+     SET paid_date = NULL,
+         verified_at = NULL,
+         verified_by = NULL,
+         reminder_sent = false,
+         payment_method = NULL,
+         payment_reference = NULL
+   WHERE id = p_payment_id;
+
+  INSERT INTO payment_events (payment_id, event, amount, invoice_number, paid_date, actor)
+  VALUES (p_payment_id, 'undo_paid', v_pay.amount, v_invoice_number, v_pay.paid_date, auth.uid());
+
+  RETURN jsonb_build_object('invoice_number', v_invoice_number, 'pdf_path', v_pdf_path);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.undo_payment(UUID) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.undo_payment(UUID) TO authenticated;
+
+-- 5. Coordinators must be able to delete the invoice file via the Storage API.
+--    (Already created by an earlier migration; re-assert it idempotently.)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies
+                  WHERE schemaname = 'storage' AND tablename = 'objects'
+                    AND policyname = 'Coordinators delete invoice files') THEN
+    CREATE POLICY "Coordinators delete invoice files" ON storage.objects
+      FOR DELETE USING (bucket_id = 'invoices' AND get_user_role() = 'coordinator');
+  END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';

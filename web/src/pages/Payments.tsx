@@ -1,13 +1,13 @@
 import { toDateStr, parseDateStr } from '../lib/dates';
 import { useState, useMemo, useDeferredValue } from 'react';
-import { usePayments } from '../hooks/usePayments';
-import type { PaymentWithStudent } from '../hooks/usePayments';
+import { usePayments, PAYMENT_METHOD_LABELS } from '../hooks/usePayments';
+import type { PaymentWithStudent, PaymentMethod } from '../hooks/usePayments';
 import { supabase } from '../lib/supabase';
 import { openInvoiceHtml } from '../lib/invoice';
 import { useActiveStudentsList } from '../hooks/useReference';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorBanner } from '../components/ErrorBanner';
-import { AlertTriangle, Clock, CheckCircle, RefreshCw, Download, FileText, MessageCircle, Plus, X } from 'lucide-react';
+import { AlertTriangle, Clock, CheckCircle, RefreshCw, Download, FileText, MessageCircle, Plus, X, Undo2 } from 'lucide-react';
 import { SkeletonCards, SkeletonList } from '../components/Skeleton';
 
 /** Indian WhatsApp number: digits only, no leading zeros, 10-digit mobiles get the 91 prefix. */
@@ -35,12 +35,70 @@ function buildWhatsAppUrl(p: PaymentWithStudent, phone: string, invoiceUrl?: str
   return `https://wa.me/${normalizeWhatsAppPhone(phone)}?text=${encodeURIComponent(msg)}`;
 }
 
+function longDate(d: string): string {
+  return parseDateStr(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/** "UPI (Ref: 4521…)" — or null when no method was recorded. */
+function paidVia(p: PaymentWithStudent): string | null {
+  const method = p.payment_method ? PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method : null;
+  if (!method) return p.payment_reference ? `Ref: ${p.payment_reference}` : null;
+  return p.payment_reference ? `${method} (Ref: ${p.payment_reference})` : method;
+}
+
+/** How many instalments the payment's plan has (same rule as the invoice). */
+function instalmentCount(p: PaymentWithStudent, all: PaymentWithStudent[]): number {
+  if (p.label) return 1;
+  const siblings = all.filter((o) => !o.label && (p.enrolment_id
+    ? o.enrolment_id === p.enrolment_id
+    : !o.enrolment_id && o.student_id === p.student_id && o.plan === p.plan));
+  return Math.max(siblings.length, p.instalment_number);
+}
+
+/** What the money was for: the charge label, or "lesson fee — instalment 2 of 3". */
+function paymentPurpose(p: PaymentWithStudent, total: number): string {
+  if (p.label) return p.label;
+  if (p.plan === 'trial') return 'trial lessons';
+  return total > 1 ? `lesson fee — instalment ${p.instalment_number} of ${total}` : 'lesson fee';
+}
+
+function buildReceiptUrl(p: PaymentWithStudent, phone: string, total: number, invoiceUrl: string | null): string {
+  const studentName = p.student?.full_name || 'your child';
+  const recipient = p.student?.parent_name || studentName;
+  const via = paidVia(p);
+  const lines = [
+    `Hi ${recipient}, thank you — we have received ${studentName}'s payment.`,
+    '',
+    '*Payment receipt — Troika Music*',
+    `Student: ${studentName}`,
+    `Amount: ₹${Number(p.amount).toLocaleString('en-IN')}`,
+    `For: ${paymentPurpose(p, total)}`,
+    `Paid on: ${p.paid_date ? longDate(p.paid_date) : longDate(toDateStr(new Date()))}`,
+    ...(via ? [`Paid by: ${via}`] : []),
+    ...(p.invoice?.invoice_number ? [`Invoice: ${p.invoice.invoice_number}`] : []),
+    ...(invoiceUrl ? ['', `View your invoice here: ${invoiceUrl}`] : []),
+    '',
+    'Thank you — Troika Music',
+  ];
+  return `https://wa.me/${normalizeWhatsAppPhone(phone)}?text=${encodeURIComponent(lines.join('\n'))}`;
+}
+
+type Toast = { message: string; url?: string; error?: boolean; receiptFor?: string };
+
+const METHOD_OPTIONS = Object.entries(PAYMENT_METHOD_LABELS) as [PaymentMethod, string][];
+
 export function PaymentsPage() {
-  const { payments, loading, error, verifyPayment, generateInvoice, downloadInvoice, refresh } = usePayments();
+  const { payments, loading, error, verifyPayment, undoPayment, generateInvoice, downloadInvoice, invoiceShareUrl, refresh } = usePayments();
   const [verifying, setVerifying] = useState<string | null>(null);
   const [waLoading, setWaLoading] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ message: string; url?: string; error?: boolean } | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
   const [confirmPaid, setConfirmPaid] = useState<PaymentWithStudent | null>(null);
+  const [paidForm, setPaidForm] = useState<{ date: string; method: PaymentMethod | ''; reference: string }>({
+    date: toDateStr(new Date()), method: '', reference: '',
+  });
+  const [paidFormError, setPaidFormError] = useState<string | null>(null);
+  const [confirmUndo, setConfirmUndo] = useState<PaymentWithStudent | null>(null);
+  const [undoing, setUndoing] = useState<string | null>(null);
 
   // Misc charge (add-on) creation
   const { students } = useActiveStudentsList();
@@ -83,9 +141,9 @@ export function PaymentsPage() {
     await refresh();
   }
 
-  function showToastFor(t: { message: string; url?: string; error?: boolean }) {
+  function showToastFor(t: Toast) {
     setToast(t);
-    setTimeout(() => setToast(cur => (cur === t ? null : cur)), t.url ? 15000 : 6000);
+    setTimeout(() => setToast(cur => (cur === t ? null : cur)), t.receiptFor ? 30000 : t.url ? 15000 : 6000);
   }
 
   const today = toDateStr(new Date());
@@ -111,22 +169,40 @@ export function PaymentsPage() {
   }, [payments, statusFilter, deferredSearch]); // eslint-disable-line react-hooks/exhaustive-deps
   const visible = filtered.slice(0, shown);
 
-  // Marking paid is irreversible (it generates and emails an invoice), so it's confirmed first.
+  function openMarkPaid(p: PaymentWithStudent) {
+    setPaidForm({ date: toDateStr(new Date()), method: '', reference: '' });
+    setPaidFormError(null);
+    setConfirmPaid(p);
+  }
+
+  // Marking paid generates an invoice, so it's confirmed first (with the date
+  // and how it was paid). A mistake can be undone from the Paid row.
   async function handleVerify(id: string) {
     if (verifying) return;
+    const todayStr = toDateStr(new Date());
+    const problem = !/^\d{4}-\d{2}-\d{2}$/.test(paidForm.date) ? 'Choose the date the payment was received.'
+      : paidForm.date > todayStr ? 'The payment date can\'t be in the future.'
+      : null;
+    if (problem) { setPaidFormError(problem); return; }
     setConfirmPaid(null);
     setVerifying(id);
     try {
-      const result = await verifyPayment(id);
+      const result = await verifyPayment(id, {
+        paidDate: paidForm.date,
+        method: paidForm.method || null,
+        reference: paidForm.reference,
+      });
       if (result.invoiceError) {
         showToastFor({
           message: `Payment marked paid, but the invoice failed to generate (${result.invoiceError}). Use "Generate invoice" to retry.`,
           error: true,
+          receiptFor: id,
         });
       } else {
         showToastFor({
           message: `Payment marked paid. Invoice ${result.invoice?.invoice_number || ''} generated.`,
           url: result.invoice?.pdf_url,
+          receiptFor: id,
         });
       }
     } catch (err: any) {
@@ -156,6 +232,50 @@ export function PaymentsPage() {
       showToastFor({ message: e.message || 'Invoice generation failed', error: true });
     } finally {
       setVerifying(null);
+    }
+  }
+
+  async function handleUndo(p: PaymentWithStudent) {
+    if (undoing) return;
+    setConfirmUndo(null);
+    setUndoing(p.id);
+    try {
+      const { invoiceNumber, fileError } = await undoPayment(p.id);
+      const who = p.student?.full_name || 'the student';
+      showToastFor({
+        message: `Payment from ${who} is back to unpaid.`
+          + (invoiceNumber ? ` Invoice ${invoiceNumber} was cancelled.` : '')
+          + (fileError ? ` (The old invoice file couldn't be deleted: ${fileError})` : ''),
+      });
+    } catch (e: any) {
+      showToastFor({ message: e.message || 'Could not undo the payment', error: true });
+    } finally {
+      setUndoing(null);
+    }
+  }
+
+  // WhatsApp receipt for a paid payment. The tab is opened inside the click
+  // (so phone browsers don't block it) and pointed at wa.me once the 7-day
+  // invoice link is ready.
+  async function handleReceipt(p: PaymentWithStudent) {
+    const phone = p.student?.parent_phone || p.student?.phone;
+    if (!phone) {
+      showToastFor({ message: `No phone number on file for ${p.student?.full_name || 'this student'} — add one to send a receipt.`, error: true });
+      return;
+    }
+    const win = window.open('', '_blank');
+    setWaLoading(p.id);
+    let invoiceUrl: string | null = null;
+    try {
+      invoiceUrl = await invoiceShareUrl(p.invoice?.pdf_path); // best effort: the receipt still goes without a link
+    } catch { /* send without the link */ }
+    setWaLoading(null);
+    const url = buildReceiptUrl(p, phone, instalmentCount(p, payments), invoiceUrl);
+    if (win) {
+      try { win.opener = null; } catch { /* cross-origin */ }
+      win.location.href = url;
+    } else {
+      window.open(url, '_blank');
     }
   }
 
@@ -213,12 +333,24 @@ export function PaymentsPage() {
             <CheckCircle size={16} className={toast.error ? 'text-coral' : 'text-teal'} />
             <span className="text-sm text-navy font-medium">{toast.message}</span>
           </div>
-          {toast.url && (
-            <button onClick={() => openInvoiceHtml(toast.url!)}
-              className="text-xs font-semibold text-teal hover:underline flex items-center gap-1">
-              <Download size={12} /> Download
-            </button>
-          )}
+          <div className="flex items-center gap-3 shrink-0">
+            {toast.receiptFor && (() => {
+              const rp = payments.find((x) => x.id === toast.receiptFor && x.paid_date);
+              if (!rp) return null;
+              return (
+                <button onClick={() => handleReceipt(rp)} disabled={waLoading === rp.id}
+                  className="text-xs font-semibold text-green-600 hover:underline flex items-center gap-1 disabled:opacity-50">
+                  <MessageCircle size={12} /> {waLoading === rp.id ? '...' : 'Send receipt'}
+                </button>
+              );
+            })()}
+            {toast.url && (
+              <button onClick={() => openInvoiceHtml(toast.url!)}
+                className="text-xs font-semibold text-teal hover:underline flex items-center gap-1">
+                <Download size={12} /> Download
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -312,8 +444,8 @@ export function PaymentsPage() {
                     {!isPaid && (
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => setConfirmPaid(p)}
-                          disabled={!!verifying}
+                          onClick={() => openMarkPaid(p)}
+                          disabled={!!verifying || !!undoing}
                           className="text-xs text-teal hover:underline disabled:opacity-50"
                         >
                           {verifying === p.id ? 'Verifying...' : 'Mark Paid'}
@@ -339,7 +471,31 @@ export function PaymentsPage() {
                         })()}
                       </div>
                     )}
-                    {isPaid && !invoice && <span className="text-xs text-gray-400">{p.paid_date}</span>}
+                    {isPaid && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-gray-400" title={p.payment_reference ? `Ref: ${p.payment_reference}` : undefined}>
+                          Paid {parseDateStr(p.paid_date!).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                          {paidVia(p) ? ` · ${paidVia(p)}` : ''}
+                        </p>
+                        <div className="flex items-center gap-3">
+                          <button
+                            disabled={waLoading === p.id}
+                            onClick={() => handleReceipt(p)}
+                            className="text-green-600 hover:underline flex items-center gap-0.5 text-xs disabled:opacity-50"
+                            title={(p.student?.parent_phone || p.student?.phone) ? 'Send receipt via WhatsApp' : 'No phone number on file'}
+                          >
+                            <MessageCircle size={10} /> {waLoading === p.id ? '...' : 'Send receipt'}
+                          </button>
+                          <button
+                            onClick={() => setConfirmUndo(p)}
+                            disabled={!!undoing || !!verifying}
+                            className="text-gray-500 hover:text-coral hover:underline flex items-center gap-0.5 text-xs disabled:opacity-50"
+                          >
+                            <Undo2 size={10} /> {undoing === p.id ? 'Undoing...' : 'Undo paid'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
@@ -381,8 +537,8 @@ export function PaymentsPage() {
                   {!isPaid && (
                     <>
                       <button
-                        onClick={() => setConfirmPaid(p)}
-                        disabled={!!verifying}
+                        onClick={() => openMarkPaid(p)}
+                        disabled={!!verifying || !!undoing}
                         className="text-teal font-medium disabled:opacity-50"
                       >
                         {verifying === p.id ? '...' : 'Mark Paid'}
@@ -405,6 +561,30 @@ export function PaymentsPage() {
                   )}
                 </div>
               </div>
+              {isPaid && (
+                <div className="flex items-center justify-between gap-2 text-xs pt-1 border-t border-black/5">
+                  <span className="text-gray-400 truncate">
+                    Paid {parseDateStr(p.paid_date!).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                    {paidVia(p) ? ` · ${paidVia(p)}` : ''}
+                  </span>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      disabled={waLoading === p.id}
+                      onClick={() => handleReceipt(p)}
+                      className="text-green-600 font-medium flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <MessageCircle size={10} /> {waLoading === p.id ? '...' : 'Receipt'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmUndo(p)}
+                      disabled={!!undoing || !!verifying}
+                      className="text-gray-500 font-medium flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <Undo2 size={10} /> {undoing === p.id ? '...' : 'Undo paid'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -419,17 +599,72 @@ export function PaymentsPage() {
         </div>
       )}
 
+      {/* Mark paid confirmation (with date + how it was paid) */}
+      {confirmPaid && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="mark-paid-title"
+            className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-sm p-6 space-y-4">
+            <h3 id="mark-paid-title" className="font-semibold text-navy text-lg">Mark as paid?</h3>
+            <p className="text-sm text-gray-500">
+              Record ₹{Number(confirmPaid.amount).toLocaleString('en-IN')} from {confirmPaid.student?.full_name || 'this student'}
+              {' '}({confirmPaid.label || `instalment #${confirmPaid.instalment_number}`}) as paid?
+              An invoice will be generated. If you picked the wrong payment you can undo it afterwards.
+            </p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="paid-date" className="block text-xs font-semibold text-gray-500 mb-1">Paid on</label>
+                  <input id="paid-date" type="date" value={paidForm.date} max={toDateStr(new Date())}
+                    onChange={e => { setPaidForm(f => ({ ...f, date: e.target.value })); setPaidFormError(null); }}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
+                </div>
+                <div>
+                  <label htmlFor="paid-method" className="block text-xs font-semibold text-gray-500 mb-1">Method</label>
+                  <select id="paid-method" value={paidForm.method}
+                    onChange={e => setPaidForm(f => ({ ...f, method: e.target.value as PaymentMethod | '' }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
+                    <option value="">Not recorded</option>
+                    {METHOD_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label htmlFor="paid-ref" className="block text-xs font-semibold text-gray-500 mb-1">Reference (optional)</label>
+                <input id="paid-ref" value={paidForm.reference} maxLength={100}
+                  onChange={e => setPaidForm(f => ({ ...f, reference: e.target.value }))}
+                  placeholder="UPI transaction ID, cheque no…"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
+              </div>
+              {paidFormError && <p className="text-xs text-coral">{paidFormError}</p>}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmPaid(null)}
+                className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                Cancel
+              </button>
+              <button onClick={() => handleVerify(confirmPaid.id)} disabled={!!verifying}
+                className="flex-1 py-2.5 rounded-lg bg-teal text-white text-sm font-medium hover:bg-teal/90 disabled:opacity-50">
+                Mark Paid
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
-        open={!!confirmPaid}
-        title="Mark as paid?"
-        message={confirmPaid
-          ? `Record ₹${Number(confirmPaid.amount).toLocaleString('en-IN')} from ${confirmPaid.student?.full_name || 'this student'}`
-            + ` (${confirmPaid.label || `instalment #${confirmPaid.instalment_number}`}) as paid today? `
-            + 'An invoice will be generated and emailed. This can\'t be undone.'
+        open={!!confirmUndo}
+        title="Undo this payment?"
+        message={confirmUndo
+          ? `₹${Number(confirmUndo.amount).toLocaleString('en-IN')} from ${confirmUndo.student?.full_name || 'this student'}`
+            + ` (${confirmUndo.label || `instalment #${confirmUndo.instalment_number}`}) will go back to unpaid. `
+            + (confirmUndo.invoice
+              ? `Its invoice ${confirmUndo.invoice.invoice_number} will be cancelled and that number won't be reused — `
+                + 'if you mark it paid again, a new invoice number is issued.'
+              : 'If you mark it paid again, a new invoice is issued.')
           : ''}
-        confirmLabel="Mark Paid"
-        onConfirm={() => confirmPaid && handleVerify(confirmPaid.id)}
-        onCancel={() => setConfirmPaid(null)}
+        confirmLabel="Undo paid"
+        onConfirm={() => confirmUndo && handleUndo(confirmUndo)}
+        onCancel={() => setConfirmUndo(null)}
       />
 
       {/* Add misc charge modal */}

@@ -197,6 +197,12 @@ serve(async (req) => {
     if (numErr || !invoiceNumber) throw new Error(numErr?.message || "Could not allocate an invoice number");
 
     // 5. Build invoice HTML
+    const methodNames: Record<string, string> = { cash: "Cash", upi: "UPI", bank_transfer: "Bank transfer", cheque: "Cheque", other: "Other" };
+    const paidOn = new Date(`${payment.paid_date || todayIST()}T00:00:00Z`)
+      .toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+    const paidVia = payment.payment_method ? methodNames[payment.payment_method] || payment.payment_method : "";
+    const paidOnHtml = `<br/>Paid on: ${esc(paidOn)}${paidVia ? ` · ${esc(paidVia)}` : ""}` +
+      (payment.payment_reference ? `<br/>Reference: ${esc(payment.payment_reference)}` : "");
     const studentName = esc(payment.student?.full_name || "Student");
     const instrumentName = esc(enrolment?.instrument?.name || payment.student?.instrument?.name || "");
     const locationName = esc(payment.student?.location?.name || "");
@@ -278,6 +284,7 @@ serve(async (req) => {
         : `<span style="font-size:15px;font-weight:600;color:#1a1a2e;">Plan: ${planLabel}</span><br/>
       Instalment: ${payment.instalment_number} of ${totalInstalments || payment.instalment_number}<br/>`}
       Academic Year: ${esc(enrolment?.academic_year || enrolmentYear)}
+      ${paidOnHtml}
       ${lessonsCompleted !== "" ? "<br/>Lessons Completed: <strong>" + lessonsCompleted + "</strong>" : ""}
       ${lessonsRemaining !== "" ? "<br/>Lessons Remaining: <strong>" + lessonsRemaining + "</strong> / " + (enrolment?.total_lessons || 39) : ""}
     </div>

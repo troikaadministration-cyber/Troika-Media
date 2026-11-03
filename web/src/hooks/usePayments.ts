@@ -1,6 +1,6 @@
 import { toDateStr } from '../lib/dates';
 import { supabase } from '../lib/supabase';
-import { useQuery, invalidateQueries } from '../lib/queryCache';
+import { useQuery, invalidateQueries, errorMessage } from '../lib/queryCache';
 import { fetchAll } from '../lib/fetchAll';
 import type { PaymentRecord } from '../types';
 
@@ -10,7 +10,27 @@ interface Invoice {
   pdf_path: string | null;
 }
 
+export type PaymentMethod = 'cash' | 'upi' | 'bank_transfer' | 'cheque' | 'other';
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: 'Cash',
+  upi: 'UPI',
+  bank_transfer: 'Bank transfer',
+  cheque: 'Cheque',
+  other: 'Other',
+};
+
+export interface MarkPaidDetails {
+  /** YYYY-MM-DD; defaults to today. */
+  paidDate?: string;
+  method?: PaymentMethod | null;
+  reference?: string | null;
+}
+
 export type PaymentWithStudent = PaymentRecord & {
+  enrolment_id?: string | null;
+  payment_method?: PaymentMethod | null;
+  payment_reference?: string | null;
   student?: {
     full_name: string;
     phone: string | null;
@@ -46,6 +66,7 @@ export function usePayments() {
   async function afterChange() {
     invalidateQueries('dashboard:');
     invalidateQueries('reports:');
+    invalidateQueries('student-portal:');
     await refresh();
   }
 
@@ -53,15 +74,24 @@ export function usePayments() {
   // payment is still recorded as paid and the caller gets an `invoiceError` to
   // surface (with a retry via generateInvoice), rather than the whole action
   // throwing and hiding that the money was recorded.
-  async function verifyPayment(id: string) {
+  async function verifyPayment(id: string, details: MarkPaidDetails = {}) {
     const { data: { user } } = await supabase.auth.getUser();
+
+    const today = toDateStr(new Date());
+    const paidDate = details.paidDate || today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paidDate)) throw new Error('Choose the date the payment was received.');
+    if (paidDate > today) throw new Error('The payment date can\'t be in the future.');
+    const reference = details.reference?.trim() || null;
+    if (reference && reference.length > 100) throw new Error('The payment reference is too long (100 characters max).');
 
     const { data: updated, error: err } = await supabase
       .from('payment_records')
       .update({
-        paid_date: toDateStr(new Date()),
+        paid_date: paidDate,
         verified_at: new Date().toISOString(),
         verified_by: user?.id || null,
+        payment_method: details.method || null,
+        payment_reference: reference,
       })
       .eq('id', id)
       .is('paid_date', null) // never re-stamp an already-paid record (double click / two tabs)
@@ -111,6 +141,33 @@ export function usePayments() {
     return signed?.signedUrl || null;
   }
 
+  // Puts a wrongly-marked payment back to unpaid. The RPC removes the invoice
+  // row (its number is cancelled, never reused) and logs the undo; the invoice
+  // file is then removed through the Storage API. A file that can't be removed
+  // is only an orphan in storage — the undo itself already succeeded.
+  async function undoPayment(id: string) {
+    const { data, error: err } = await supabase.rpc('undo_payment', { p_payment_id: id });
+    if (err) {
+      await afterChange();
+      throw new Error(errorMessage(err, 'Could not undo the payment'));
+    }
+    const result = (data ?? {}) as { invoice_number?: string | null; pdf_path?: string | null };
+    let fileError: string | null = null;
+    if (result.pdf_path) {
+      const { error: rmErr } = await supabase.storage.from('invoices').remove([result.pdf_path]);
+      if (rmErr) fileError = rmErr.message;
+    }
+    await afterChange();
+    return { invoiceNumber: result.invoice_number ?? null, fileError };
+  }
+
+  /** A link to the invoice file that stays valid for 7 days (for WhatsApp messages). */
+  async function invoiceShareUrl(pdfPath: string | null | undefined): Promise<string | null> {
+    if (!pdfPath) return null;
+    const { data: signed } = await supabase.storage.from('invoices').createSignedUrl(pdfPath, 7 * 24 * 3600);
+    return signed?.signedUrl ?? null;
+  }
+
   async function sendReminder(id: string) {
     const { error: fnErr } = await supabase.functions.invoke('send-payment-reminder', {
       body: { payment_id: id },
@@ -119,5 +176,9 @@ export function usePayments() {
     await refresh();
   }
 
-  return { payments: data ?? [], loading, error, verifyPayment, generateInvoice, downloadInvoice, sendReminder, refresh: afterChange };
+  return {
+    payments: data ?? [], loading, error,
+    verifyPayment, undoPayment, generateInvoice, downloadInvoice, invoiceShareUrl, sendReminder,
+    refresh: afterChange,
+  };
 }
