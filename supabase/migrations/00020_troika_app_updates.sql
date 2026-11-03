@@ -181,7 +181,9 @@ BEGIN
     'total_students',  (SELECT count(*) FROM students),
     'collected_month', (SELECT COALESCE(sum(amount), 0) FROM payment_records
                          WHERE paid_date IS NOT NULL AND paid_date >= v_month_start AND paid_date <= p_today),
-    'outstanding',     (SELECT COALESCE(sum(amount), 0) FROM payment_records WHERE paid_date IS NULL),
+    -- Due now (today or earlier); future instalments are reported separately.
+    'outstanding',     (SELECT COALESCE(sum(amount), 0) FROM payment_records WHERE paid_date IS NULL AND due_date <= p_today),
+    'upcoming',        (SELECT COALESCE(sum(amount), 0) FROM payment_records WHERE paid_date IS NULL AND due_date > p_today),
     'overdue_count',   (SELECT count(*) FROM payment_records WHERE paid_date IS NULL AND due_date < p_today),
     'week_series',     (SELECT jsonb_agg(COALESCE(c.n, 0) ORDER BY d.day)
                           FROM generate_series(p_today - 6, p_today, interval '1 day') AS d(day)
@@ -195,7 +197,7 @@ BEGIN
                                  jsonb_build_object('id', s.id, 'full_name', s.full_name) AS student
                           FROM payment_records pr
                           LEFT JOIN students s ON s.id = pr.student_id
-                          WHERE pr.paid_date IS NULL
+                          WHERE pr.paid_date IS NULL AND pr.due_date <= p_today + 7
                           ORDER BY pr.due_date
                           LIMIT 4
                         ) t)

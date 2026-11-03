@@ -51,6 +51,7 @@ interface DashboardSummary {
   total_students: number;
   collected_month: number;
   outstanding: number;
+  upcoming: number;
   overdue_count: number;
   week_series: number[];
   top_dues: DuePayment[];
@@ -96,6 +97,7 @@ export function DashboardPage() {
     totalToday: todayLessons.filter(l => l.status !== 'cancelled').length,
     collected: Number(data?.summary.collected_month ?? 0),
     outstanding: Number(data?.summary.outstanding ?? 0),
+    upcoming: Number(data?.summary.upcoming ?? 0),
     overdue: Number(data?.summary.overdue_count ?? 0),
   };
 
@@ -105,7 +107,7 @@ export function DashboardPage() {
     { label: 'Active students', value: loading ? '—' : String(k.active), sub: `of ${k.totalStudents} total`, icon: Users, tint: 'bg-teal/10 text-teal', spark: null },
     { label: 'Lessons today', value: loading ? '—' : String(k.totalToday), sub: `${k.doneToday} completed`, icon: GraduationCap, tint: 'bg-teal/10 text-teal', spark: { data: weekSeries, color: 'var(--teal)' } },
     { label: `Collected · ${now.toLocaleDateString('en-IN', { month: 'short' })}`, value: loading ? '—' : inr(k.collected), sub: `${collectPct}% of billed`, icon: IndianRupee, tint: 'bg-teal/10 text-teal', spark: null },
-    { label: 'Outstanding dues', value: loading ? '—' : inr(k.outstanding), sub: k.overdue > 0 ? `${k.overdue} overdue` : 'all on track', icon: AlertCircle, tint: 'bg-coral/10 text-coral', spark: null, onClick: () => navigate('/payments') },
+    { label: 'Outstanding dues', value: loading ? '—' : inr(k.outstanding), sub: [k.overdue > 0 ? `${k.overdue} overdue` : 'nothing overdue', k.upcoming > 0 ? `${inr(k.upcoming)} upcoming` : ''].filter(Boolean).join(' · '), icon: AlertCircle, tint: 'bg-coral/10 text-coral', spark: null, onClick: () => navigate('/payments') },
   ];
 
   return (
