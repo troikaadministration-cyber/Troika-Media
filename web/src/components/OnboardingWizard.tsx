@@ -301,7 +301,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
           if (r.lessons_scheduled < r.lessons_expected || r.conflicts > 0) {
             const dates = (r.conflict_dates ?? []).slice(0, 4).join(', ');
             warnings.push(`${instrName || 'Class'}: ${r.lessons_scheduled} of ${r.lessons_expected} lessons scheduled` +
-              (r.conflicts ? ` — ${r.conflicts} week(s) clashed with the teacher's other lessons and were skipped (${dates}${(r.conflict_dates?.length ?? 0) > 4 ? '…' : ''}). Check the schedule.` : ''));
+              (r.conflicts ? ` — ${r.conflicts} date(s) clashed with the teacher's other lessons and were skipped (${dates}${(r.conflict_dates?.length ?? 0) > 4 ? '…' : ''}). Check the schedule.` : ''));
           }
         }
       }

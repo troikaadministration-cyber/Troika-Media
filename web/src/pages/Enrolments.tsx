@@ -264,7 +264,7 @@ export function EnrolmentsPage() {
             ? `Only ${r.lessons_scheduled} of ${r.lessons_expected} lessons fit before the end date.`
             : `All ${r.lessons_scheduled} lessons scheduled, but some weeks were skipped.`) +
           (r.conflicts > 0
-            ? ` ${r.conflicts} week${r.conflicts !== 1 ? 's' : ''} clashed with ${teacherName || 'the teacher'}'s other lessons: ${shown}.`
+            ? ` ${r.conflicts} date${r.conflicts !== 1 ? 's' : ''} clashed with ${teacherName || 'the teacher'}'s other lessons: ${shown}.`
             : '') +
           ' Add the missing lessons from the Schedule page or extend the end date.';
       }
