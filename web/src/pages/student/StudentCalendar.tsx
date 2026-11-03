@@ -5,6 +5,7 @@ import { useStudentPortal } from './StudentPortalContext';
 import { useStudentLessonsMonth } from '../../hooks/useStudentLessons';
 import { Skeleton } from '../../components/Skeleton';
 import { ErrorBanner } from '../../components/ErrorBanner';
+import { CalendarSyncButton } from '../../components/CalendarSyncButton';
 
 export function StudentCalendar() {
   const { studentId } = useStudentPortal();
@@ -40,9 +41,12 @@ export function StudentCalendar() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-navy">Calendar</h1>
-        <p className="text-gray-500 text-sm mt-1">All your lessons, month by month.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-navy">Calendar</h1>
+          <p className="text-gray-500 text-sm mt-1">All your lessons, month by month.</p>
+        </div>
+        <CalendarSyncButton />
       </div>
 
       {error && <ErrorBanner message={error} onRetry={() => { void refresh(); }} />}

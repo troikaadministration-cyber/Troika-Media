@@ -5,6 +5,7 @@ import { useTeacherLessonsRange } from '../hooks/useTeacherLessonsRange';
 import { ChevronLeft, ChevronRight, CheckCircle, Clock, Ban, MapPin, ArrowRight } from 'lucide-react';
 import { Skeleton } from '../components/Skeleton';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { CalendarSyncButton } from '../components/CalendarSyncButton';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -89,6 +90,9 @@ export function TeacherCalendarPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
+      <div className="flex justify-end">
+        <CalendarSyncButton />
+      </div>
 
       {/* Monthly summary bar */}
       <div className="bg-white rounded-xl border-l-4 border-coral p-4 flex flex-col sm:flex-row sm:items-center gap-3">

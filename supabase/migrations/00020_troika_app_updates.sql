@@ -1716,3 +1716,120 @@ BEGIN
     EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
   END LOOP;
 END $$;
+
+
+-- ── 28. Calendar sync (private subscribe links) ───────────────────────────
+-- ── Calendar sync: private per-user iCalendar feed tokens ────────────────
+-- Calendar apps (Google / Apple / Outlook) subscribe to a URL and cannot send
+-- login headers, so each user gets a secret, unguessable token that the
+-- `calendar-feed` edge function (service role, verify_jwt = false) resolves to
+-- a user. Tokens are only ever created / rotated through the RPCs below;
+-- users may read their own row, nobody may write it directly.
+-- Idempotent: safe to run more than once.
+
+CREATE TABLE IF NOT EXISTS public.calendar_tokens (
+  user_id    uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  token      text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.calendar_tokens ENABLE ROW LEVEL SECURITY;
+
+-- Read-only for the owner; no INSERT/UPDATE/DELETE policies → writes only via
+-- the SECURITY DEFINER RPCs (or the service role).
+REVOKE ALL ON TABLE public.calendar_tokens FROM public, anon, authenticated;
+GRANT SELECT ON TABLE public.calendar_tokens TO authenticated;
+
+DROP POLICY IF EXISTS "Users read own calendar token" ON public.calendar_tokens;
+CREATE POLICY "Users read own calendar token" ON public.calendar_tokens
+  FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()));
+
+-- Internal helper: 32 random bytes → 43-char url-safe base64 (no padding).
+CREATE OR REPLACE FUNCTION public.new_calendar_token()
+RETURNS text
+LANGUAGE sql
+VOLATILE
+SET search_path = public
+AS $$
+  SELECT translate(rtrim(encode(extensions.gen_random_bytes(32), 'base64'), '='), '+/', '-_');
+$$;
+REVOKE ALL ON FUNCTION public.new_calendar_token() FROM public, anon, authenticated;
+
+-- Internal helper: who may have a calendar feed? Approved teachers/students,
+-- and coordinators. Raises a human-readable error otherwise.
+CREATE OR REPLACE FUNCTION public.assert_calendar_feed_allowed()
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_role user_role;
+  v_approved boolean;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+  END IF;
+  SELECT role, approved INTO v_role, v_approved FROM profiles WHERE id = v_uid;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Your account is not set up yet' USING ERRCODE = '42501';
+  END IF;
+  IF v_role <> 'coordinator' AND v_approved IS NOT TRUE THEN
+    RAISE EXCEPTION 'Your account is awaiting approval — calendar sync is available once a coordinator approves it'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN v_uid;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.assert_calendar_feed_allowed() FROM public, anon, authenticated;
+
+-- Returns the caller's feed token, creating one on first use.
+CREATE OR REPLACE FUNCTION public.get_calendar_token()
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := public.assert_calendar_feed_allowed();
+  v_token text;
+BEGIN
+  SELECT token INTO v_token FROM calendar_tokens WHERE user_id = v_uid;
+  IF v_token IS NOT NULL THEN
+    RETURN v_token;
+  END IF;
+
+  INSERT INTO calendar_tokens (user_id, token)
+  VALUES (v_uid, public.new_calendar_token())
+  ON CONFLICT (user_id) DO NOTHING;
+
+  SELECT token INTO v_token FROM calendar_tokens WHERE user_id = v_uid;
+  RETURN v_token;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.get_calendar_token() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.get_calendar_token() TO authenticated;
+
+-- Rotates the caller's token: the old feed URL stops working immediately.
+CREATE OR REPLACE FUNCTION public.reset_calendar_token()
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := public.assert_calendar_feed_allowed();
+  v_token text := public.new_calendar_token();
+BEGIN
+  INSERT INTO calendar_tokens (user_id, token, created_at)
+  VALUES (v_uid, v_token, now())
+  ON CONFLICT (user_id) DO UPDATE
+    SET token = EXCLUDED.token, created_at = EXCLUDED.created_at;
+  RETURN v_token;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.reset_calendar_token() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.reset_calendar_token() TO authenticated;
