@@ -434,7 +434,7 @@ export function EnrolmentsPage() {
               <div>
                 <h3 className="font-semibold text-navy text-lg">Enrol Student</h3>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  Step {step} of 2 — {step === 1 ? 'Enrolment Details' : 'Assign Schedule Slot'}
+                  Step {step} of 2 — {step === 1 ? 'Enrolment Details' : 'Choose Day and Time'}
                 </p>
               </div>
               <button onClick={closeModal} disabled={saving} className="text-gray-400 hover:text-navy disabled:opacity-50"><X size={20} /></button>
@@ -673,7 +673,7 @@ export function EnrolmentsPage() {
                       <option key={t.id} value={t.id}>{t.full_name}</option>
                     ))}
                   </select>
-                  {!teacherId && <p className="text-xs text-gray-500 mt-1">Choose the teacher — their weekly slots appear below.</p>}
+                  {!teacherId && <p className="text-xs text-gray-500 mt-1">Choose the teacher — their weekly class times appear below.</p>}
                 </div>
 
                 {/* One slot picker per weekly lesson — only once the teacher is known */}
@@ -683,7 +683,7 @@ export function EnrolmentsPage() {
                   return (
                     <div key={i} data-testid="weekly-slot">
                       <label className="block text-xs font-medium text-gray-500 mb-2">
-                        {timesPerWeek > 1 ? `Weekly lesson ${i + 1} of ${timesPerWeek} — schedule slot` : 'Schedule Slot'}
+                        {timesPerWeek > 1 ? `Weekly lesson ${i + 1} of ${timesPerWeek} — day and time` : 'Day and time'}
                         {i > 0 && <span className="text-gray-400 font-normal"> (same teacher and instrument)</span>}
                       </label>
                       <SlotPicker

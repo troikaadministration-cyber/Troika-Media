@@ -2,6 +2,7 @@ import { toDateStr } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/fetchAll';
 import { lessonsForClass, lessonsBreakdown, normaliseTimesPerWeek, TIMES_PER_WEEK_OPTIONS } from '../lib/lessonCount';
 import { weeklySlotsError, type SelectedSlot } from './SlotPicker';
 import { computeDiscount, type DiscountPrimary } from '../lib/fees';
@@ -21,6 +22,8 @@ export interface OnboardingWizardProps {
 interface Instrument { id: string; name: string; }
 interface Location { id: string; name: string; }
 interface Teacher { id: string; full_name: string; }
+interface ExistingSlot { id: string; teacher_id: string; day_of_week: number; start_time: string; end_time: string | null; instrument_id: string | null; title: string; student_ids: string[] | null; }
+interface SlotStudent { id: string; full_name: string; user_id: string | null; email: string | null; }
 
 /** A 2nd/3rd weekly lesson of the same class (same teacher, instrument, location). */
 interface ExtraTime { day_of_week: string; start_time: string; end_time: string; }
@@ -104,6 +107,10 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  // Teachers' existing weekly classes: a new class at the same teacher + day + start
+  // time JOINS that class (e.g. two siblings sharing a lesson; each pays separately).
+  const [slots, setSlots] = useState<ExistingSlot[]>([]);
+  const [slotStudents, setSlotStudents] = useState<Record<string, SlotStudent>>({});
 
   // Step 1 state
   const [s1, setS1] = useState({
@@ -157,7 +164,20 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setLocations(lRes.data ?? []);
       setTeachers(tRes.data ?? []);
     });
+    void loadSlots();
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadSlots() {
+    const { data } = await supabase.from('teacher_schedule_templates')
+      .select('id, teacher_id, day_of_week, start_time, end_time, instrument_id, title, student_ids')
+      .eq('is_active', true);
+    setSlots((data ?? []) as ExistingSlot[]);
+    try {
+      const rows = await fetchAll<SlotStudent>((from, to) =>
+        supabase.from('students').select('id, full_name, user_id, email').order('id').range(from, to));
+      setSlotStudents(Object.fromEntries(rows.map(r => [r.id, r])));
+    } catch { /* names are only for messages */ }
+  }
 
   if (!open) return null;
 
@@ -173,6 +193,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     setSavedClasses([]);
     setError(null);
     setStep(0);
+    void loadSlots(); // the first child's new class can now be shared
   }
 
   // Step 1 → validate only, no DB writes
@@ -193,6 +214,49 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       ? { ...c, extra: c.extra.map((x, j) => (j === k ? { ...x, ...patch } : x)) } : c)));
   }
 
+  // Is this student in the same family as the child being added (same login or same email)?
+  function isFamily(id: string): boolean {
+    if (studentId && id === studentId) return true;
+    const st = slotStudents[id];
+    if (!st) return false;
+    const login = familyLoginId ?? pendingProfile?.id ?? null;
+    if (login && st.user_id === login) return true;
+    const email = s1.email.trim().toLowerCase();
+    return !!email && (st.email ?? '').trim().toLowerCase() === email;
+  }
+  const toMin = (s: string) => { const [h, m] = s.slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
+
+  /**
+   * The teacher's existing weekly classes at this day/time.
+   *  - join: same start time, same instrument, and a brother/sister is in it → share that class.
+   *  - clash: any other overlap with a class that has students → must pick another time.
+   */
+  function slotCheck(c: ClassRow, day: string, start: string, end: string): { join: ExistingSlot | null; clash: string | null } {
+    if (!c.teacher_id || !start) return { join: null, clash: null };
+    const s = toMin(start), e = end ? toMin(end) : s + 45;
+    for (const sl of slots) {
+      if (sl.teacher_id !== c.teacher_id || String(sl.day_of_week) !== day || !(sl.student_ids?.length)) continue;
+      const ss = toMin(sl.start_time), se = sl.end_time ? toMin(sl.end_time) : ss + 45;
+      if (!(s < se && ss < e)) continue;
+      const names = (sl.student_ids ?? []).map(id => slotStudents[id]?.full_name).filter(Boolean) as string[];
+      const sameFamily = (sl.student_ids ?? []).some(isFamily);
+      const sameInstrument = !c.instrument_id || !sl.instrument_id || sl.instrument_id === c.instrument_id;
+      if (sameFamily && ss === s && sameInstrument) return { join: sl, clash: null };
+      const who = names.length ? names.join(', ') : sl.title || 'another student';
+      const teacher = teachers.find(t => t.id === c.teacher_id)?.full_name ?? 'This teacher';
+      return {
+        join: null,
+        clash: `Clash: ${teacher} already teaches ${who} on ${DAYS[Number(day)]} ${sl.start_time.slice(0, 5)}–${(sl.end_time ?? '').slice(0, 5) || '?'}. Choose a different day or time.`,
+      };
+    }
+    return { join: null, clash: null };
+  }
+  const occurrences = (c: ClassRow) => [{ day_of_week: c.day_of_week, start_time: c.start_time, end_time: c.end_time }, ...c.extra];
+  function sharedSlot(c: ClassRow, day: string, start: string): ExistingSlot | null {
+    const o = occurrences(c).find(x => x.day_of_week === day && x.start_time === start);
+    return slotCheck(c, day, start, o?.end_time ?? '').join;
+  }
+
   const enrolStartDate = toDateStr(new Date());
   const isTrial = s2.payment_plan === 'trial';
   const rateOf = (c: ClassRow) => parseFloat(c.rate) || 0;
@@ -203,7 +267,13 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     if (!c.teacher_id) return 'Choose a teacher';
     if (!(rateOf(c) >= 0)) return 'Rate cannot be negative';
     if (!isTrial && !(rateOf(c) > 0)) return 'Enter the rate per lesson';
-    return weeklySlotsError(classSlots(c));
+    const overlap = weeklySlotsError(classSlots(c));
+    if (overlap) return overlap;
+    for (const o of occurrences(c)) {
+      const { clash } = slotCheck(c, o.day_of_week, o.start_time, o.end_time);
+      if (clash) return clash;
+    }
+    return null;
   });
   const regFee = parseFloat(s2.registration_fee) || 0;
   const tuition = classes.reduce((sum, c) => sum + classTuition(c), 0);
@@ -309,6 +379,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
             p_discount_primary: s2.discount_primary,
             p_discount_multilesson: s2.discount_multilesson,
             p_discount_value: n === 0 && s2.discount_primary === 'special' ? (parseFloat(s2.discount_special) || 0) : 0,
+            // Same teacher + day + time as an existing class → join it (shared class).
+            p_template_id: sharedSlot(cls, cls.day_of_week, cls.start_time)?.id ?? null,
             p_day_of_week: Number(cls.day_of_week),
             p_start_time: cls.start_time,
             p_end_time: cls.end_time || null,
@@ -316,9 +388,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
             p_title: `${s1.full_name.trim()}${instrName ? ` – ${instrName}` : ''}`,
             p_location_id: cls.location_id || s1.location_id || null,
             // 2× / 3× per week: the class's other weekly lessons (one enrolment, one instalment schedule).
-            p_extra_slots: cls.extra.map(x => ({
-              day_of_week: Number(x.day_of_week), start_time: x.start_time, end_time: x.end_time || null,
-            })),
+            p_extra_slots: cls.extra.map(x => {
+              const shared = sharedSlot(cls, x.day_of_week, x.start_time);
+              return shared ? { template_id: shared.id }
+                : { day_of_week: Number(x.day_of_week), start_time: x.start_time, end_time: x.end_time || null };
+            }),
           });
           if (enrolErr) throw new Error(`${instrName || 'Class'}: ${enrolErr.message}`);
           setSavedClasses(prev => [...prev, idx]);
@@ -539,59 +613,61 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">{cls.times_per_week > 1 ? 'Lesson 1 — Day' : 'Day'}</label>
-                        <select value={cls.day_of_week} onChange={e => updateClass(idx, { day_of_week: e.target.value })}
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
+                        <select value={cls.location_id} onChange={e => updateClass(idx, { location_id: e.target.value })}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
-                          {DAYS.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}
+                          <option value="">— Select location —</option>
+                          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                         </select>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-xs font-semibold text-gray-500 mb-1">Start</label>
-                          <input type="time" value={cls.start_time} onChange={e => updateClass(idx, { start_time: e.target.value })}
-                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-gray-500 mb-1">End</label>
-                          <input type="time" value={cls.end_time} onChange={e => updateClass(idx, { end_time: e.target.value })}
-                            className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
-                        </div>
-                      </div>
-                      {/* 2× / 3× per week: each extra weekly lesson has its own day and time. */}
-                      {cls.extra.map((x, k) => (
-                        <React.Fragment key={k}>
-                          <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Lesson {k + 2} — Day</label>
-                            <select value={x.day_of_week} onChange={e => updateExtra(idx, k, { day_of_week: e.target.value })}
-                              aria-label={`Lesson ${k + 2} day`}
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:border-teal focus:outline-none">
-                              {DAYS.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}
-                            </select>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">Start</label>
-                              <input type="time" value={x.start_time} onChange={e => updateExtra(idx, k, { start_time: e.target.value })}
-                                aria-label={`Lesson ${k + 2} start`}
-                                className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">End</label>
-                              <input type="time" value={x.end_time} onChange={e => updateExtra(idx, k, { end_time: e.target.value })}
-                                aria-label={`Lesson ${k + 2} end`}
-                                className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none" />
-                            </div>
-                          </div>
-                        </React.Fragment>
-                      ))}
                     </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
-                      <select value={cls.location_id} onChange={e => updateClass(idx, { location_id: e.target.value })}
-                        className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none">
-                        <option value="">— Select location —</option>
-                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                      </select>
+                    {/* One line per weekly lesson: Day · Start · End. */}
+                    <div className="space-y-2">
+                      <div className="hidden sm:grid grid-cols-[4.5rem_1fr_1fr_1fr] gap-2 text-xs font-semibold text-gray-500">
+                        <span />
+                        <span>Day</span>
+                        <span>Start</span>
+                        <span>End</span>
+                      </div>
+                      {[{ day_of_week: cls.day_of_week, start_time: cls.start_time, end_time: cls.end_time }, ...cls.extra].map((x, k) => {
+                        const set = (patch: { day_of_week?: string; start_time?: string; end_time?: string }) =>
+                          (k === 0 ? updateClass(idx, patch) : updateExtra(idx, k - 1, patch));
+                        const field = 'w-full min-w-0 border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white focus:border-teal focus:outline-none';
+                        const mini = 'block sm:hidden text-[11px] font-semibold text-gray-500 mb-0.5';
+                        return (
+                          <div key={k} className="grid grid-cols-2 sm:grid-cols-[4.5rem_1fr_1fr_1fr] gap-2 sm:items-center">
+                            <span className="col-span-2 sm:col-span-1 text-xs font-semibold text-navy">{cls.times_per_week > 1 ? `Lesson ${k + 1}` : 'Weekly'}</span>
+                            <label className="col-span-2 sm:col-span-1">
+                              <span className={mini}>Day</span>
+                              <select value={x.day_of_week} onChange={e => set({ day_of_week: e.target.value })}
+                                aria-label={`Lesson ${k + 1} day`} className={field}>
+                                {DAYS.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}
+                              </select>
+                            </label>
+                            <label>
+                              <span className={mini}>Start</span>
+                              <input type="time" value={x.start_time} onChange={e => set({ start_time: e.target.value })}
+                                aria-label={`Lesson ${k + 1} start`} className={field} />
+                            </label>
+                            <label>
+                              <span className={mini}>End</span>
+                              <input type="time" value={x.end_time} onChange={e => set({ end_time: e.target.value })}
+                                aria-label={`Lesson ${k + 1} end`} className={field} />
+                            </label>
+                          </div>
+                        );
+                      })}
+                      {[{ day_of_week: cls.day_of_week, start_time: cls.start_time }, ...cls.extra].map((x, k) => {
+                        const shared = sharedSlot(cls, x.day_of_week, x.start_time);
+                        if (!shared) return null;
+                        return (
+                          <p key={`shared-${k}`} className="text-xs text-teal bg-teal/5 rounded-lg px-3 py-2" data-testid="shared-class">
+                            {cls.times_per_week > 1 ? `Lesson ${k + 1}: ` : ''}shared with{' '}
+                            {(shared.student_ids ?? []).filter(isFamily).map(id => slotStudents[id]?.full_name).filter(Boolean).join(', ') || 'a family member'}
+                            {' '}(same family) — they sit in the same class. Each child pays for their own place.
+                          </p>
+                        );
+                      })}
                     </div>
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-3 flex-wrap">

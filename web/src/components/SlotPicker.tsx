@@ -36,6 +36,8 @@ export type SelectedSlot = {
   endTime: string;
   instrumentId: string | null;
   title: string;
+  /** Set when this new time overlaps one of the teacher's classes that has students. */
+  clash?: string | null;
 };
 
 /**
@@ -43,11 +45,12 @@ export type SelectedSlot = {
  * `timeOnly`: a class's 2nd/3rd weekly lesson — its instrument/title come from the first slot.
  */
 export function slotError(slot: SelectedSlot | null, opts: { timeOnly?: boolean } = {}): string | null {
-  if (!slot) return 'Please select or create a schedule slot';
+  if (!slot) return 'Pick an existing class time, or choose a new day and time';
   if (slot.mode === 'new') {
-    if (!slot.startTime) return 'Choose a start time for the new slot';
+    if (!slot.startTime) return 'Choose a start time';
     if (slot.endTime && slot.endTime <= slot.startTime) return 'End time must be after the start time';
-    if (!opts.timeOnly && !slot.instrumentId) return 'Choose an instrument for the new slot';
+    if (!opts.timeOnly && !slot.instrumentId) return 'Choose an instrument';
+    if (slot.clash) return slot.clash;
   }
   return null;
 }
@@ -69,7 +72,7 @@ export function weeklySlotsError(slots: (SelectedSlot | null)[]): string | null 
     for (let j = i + 1; j < s.length; j++) {
       const a = s[i], b = s[j];
       if (a.mode === 'existing' && b.mode === 'existing' && a.templateId === b.templateId) {
-        return `Weekly lessons ${i + 1} and ${j + 1} use the same slot — pick a different day or time`;
+        return `Weekly lessons ${i + 1} and ${j + 1} are at the same time — pick a different day or time`;
       }
       if (a.dayOfWeek !== b.dayOfWeek) continue;
       const aS = toMin(a.startTime), bS = toMin(b.startTime);
@@ -105,6 +108,25 @@ interface SlotPickerProps {
 export function SlotPicker({ teacherId, instruments, value, onChange, excludeTemplateIds = [], timeOnly = false, inherit }: SlotPickerProps) {
   const { data, loading, error: fetchError } = useTeacherTemplates(teacherId || null);
   const templates = data ?? [];
+  // Names of the students already in this teacher's classes (shown on each class time and in clash warnings).
+  const studentIds = Array.from(new Set(templates.flatMap(t => t.student_ids ?? []))).sort();
+  const { data: names } = useQuery<Record<string, string>>(
+    studentIds.length ? `slot-student-names:${studentIds.join(',')}` : null,
+    async () => Object.fromEntries((unwrap(await supabase.from('students').select('id, full_name').in('id', studentIds), []) as { id: string; full_name: string }[])
+      .map(s => [s.id, s.full_name])));
+  const whoIn = (tpl: ScheduleTemplateRow) => (tpl.student_ids ?? []).map(id => names?.[id]).filter(Boolean).join(', ');
+  function clashFor(day: number, start: string, end: string): string | null {
+    if (!start) return null;
+    const s = toMin(start.slice(0, 5)), e = end ? toMin(end.slice(0, 5)) : s + 45;
+    const hit = templates.find(tpl => tpl.day_of_week === day && (tpl.student_ids?.length ?? 0) > 0 && (() => {
+      const ts = toMin(tpl.start_time.slice(0, 5)), te = tpl.end_time ? toMin(tpl.end_time.slice(0, 5)) : ts + 45;
+      return s < te && ts < e;
+    })());
+    if (!hit) return null;
+    return `Clash: this teacher already teaches ${whoIn(hit) || hit.title || 'another class'} on ${DAY_NAMES[day]} `
+      + `${hit.start_time.slice(0, 5)}–${(hit.end_time ?? '').slice(0, 5) || '?'}. Choose a different day or time `
+      + `(or pick that class above to put the student in the same class).`;
+  }
   // Several pickers can be open for the same teacher (2×/week): keep their radio groups apart.
   const radioName = `slot-${teacherId}-${useId()}`;
   const [newSlot, setNewSlot] = useState({
@@ -147,11 +169,12 @@ export function SlotPicker({ teacherId, instruments, value, onChange, excludeTem
       endTime: updated.endTime,
       instrumentId: timeOnly ? (inherit?.instrumentId ?? null) : (updated.instrumentId || null),
       title: timeOnly ? (inherit?.title ?? '') : updated.title,
+      clash: clashFor(updated.dayOfWeek, updated.startTime, updated.endTime),
     });
   }
 
-  if (loading) return <p className="text-sm text-gray-400">Loading slots...</p>;
-  if (fetchError && !data) return <p className="text-xs text-red-500">Failed to load slots: {fetchError}</p>;
+  if (loading) return <p className="text-sm text-gray-400">Loading class times...</p>;
+  if (fetchError && !data) return <p className="text-xs text-red-500">Couldn't load class times: {fetchError}</p>;
 
   const byDay: Record<number, ScheduleTemplateRow[]> = {};
   for (const t of templates) {
@@ -162,7 +185,10 @@ export function SlotPicker({ teacherId, instruments, value, onChange, excludeTem
   return (
     <div className="space-y-2">
       {templates.length === 0 && (
-        <p className="text-xs text-gray-400 mb-2">No existing slots for this teacher — create one below.</p>
+        <p className="text-xs text-gray-400 mb-2">This teacher has no weekly classes yet. Choose a new day and time below.</p>
+      )}
+      {templates.length > 0 && (
+        <p className="text-xs text-gray-400 mb-2">These are this teacher's classes. Pick one only to put the student <b>in that same class</b> (for example a brother or sister, or a group) — each student still pays for their own place. Otherwise choose a new day and time at the bottom.</p>
       )}
 
       {[1, 2, 3, 4, 5, 6, 0].map((day) => {
@@ -202,6 +228,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange, excludeTem
                       {tpl.end_time ? ` – ${tpl.end_time.slice(0, 5)}` : ''}
                     </span>
                     <span className="text-sm text-gray-500 ml-2">{tpl.title || 'Lesson'}</span>
+                    {whoIn(tpl) && <span className="block text-xs text-gray-400">Students: {whoIn(tpl)}</span>}
                     {inst && <span className="text-sm ml-1">{inst.icon}</span>}
                     {usedElsewhere && <span className="text-xs text-gray-400 ml-2">(already chosen for another weekly lesson)</span>}
                     {!usedElsewhere && otherInstrument && <span className="text-xs text-gray-400 ml-2">(different instrument)</span>}
@@ -231,7 +258,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange, excludeTem
           <p
             className="text-sm font-medium text-navy mb-2 cursor-pointer"
             onClick={() => !isNewSelected && updateNewSlot({})}
-          >+ Create new slot</p>
+          >+ New day and time</p>
           {isNewSelected && (
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2">

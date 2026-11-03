@@ -109,7 +109,7 @@ On a phone, the menu is hidden: tap the **☰** button at the top left to open i
 2. Fill in **Full Name** (required), **Phone**, **Email**, **Location** (where they usually learn) and **Address**. Click **Next: Payment & Classes**.
 3. Choose the **Payment Plan** (1, 3 or 10 instalments, or **Trial (no payment)**). Type a **Registration Fee (₹)** if there is one. Choose a **Discount (optional)** if they get one.
 4. Under **Class Schedule**, choose the **Teacher**, **Instrument**, **Location** for this class, and **Times per week** (1×, 2× or 3×).
-5. Choose the **Day**, **Start** and **End** time. For 2× or 3× a week, fill in a day and time for **Lesson 2** (and **Lesson 3**) too. Each lesson must be on a different day or time.
+5. Choose the **Day**, **Start** and **End** time. For 2× or 3× a week, fill in a day and time for **Lesson 2** (and **Lesson 3**) too. Each lesson must be on a different day or time. If the teacher already has another student at that time, a red **Clash** message names that student. Pick another time; you can't save until you do.
 6. Type the **Rate per lesson (₹)**, the price of **one** lesson for this student (for example 1200). The box starts empty; you always type the price yourself. **Confirm & Finish** stays grey until every class has a teacher and a rate.
 7. Learning a second instrument? Click **+ Add another class** and fill in the second class the same way. Each class can be at a different place (for example guitar at home, piano at Edvin).
 8. Check the **Fee Summary** at the bottom, then click **Confirm & Finish**. The app creates the lessons and the payment instalments.
@@ -152,6 +152,8 @@ A parent with two or three children at Troika signs up **once**, with one email.
 3. The form opens again with the parent's email, phone and location already filled in. Type the **second child's name** and add their classes. Click **Confirm & Finish**.
 4. Repeat for a third child, then click **Done**.
 
+**Brothers and sisters in the same class:** give the second child the **same teacher, day and start time** as the first. Instead of a clash you'll see a green message: **shared with [first child] (same family)**. They sit in the same lesson, and **each child pays for their own place**. This only works for children in the same family (same login or same email). Any other student at that time shows a **Clash**.
+
 **Adding a brother or sister later:** click **+ Add Student** and type the **same parent email**. The child joins the family login by itself.
 
 **What the parent sees:** a button for each child (and **All**) at the top of the app. Each lesson and payment shows the child's name. In "can't attend" requests the parent picks which child.
@@ -189,8 +191,8 @@ Use this for a student who is **already in the app**. (For a brand-new student, 
 2. Choose the **Student**, the **Times per week** (1×, 2× or 3×), and type the **Rate per lesson (₹)**, the price of one lesson for this student. The box starts empty.
 3. Choose the **Payment Plan**, **Start Date**, **End Date**, **Registration Fee (₹)** and **Discount (optional)**. Check the **Fee Summary**, then click **Next**.
 4. Choose the **Teacher**. Then, under **Schedule Slot**, choose one for each weekly lesson (one for 1×, two for 2×, three for 3×):
-   - an **existing time** for that teacher (the student joins that class, so this is how you join a group), or
-   - **+ Create new slot**: choose the **Day**, **Start**, **End**, **Instrument** and a **Title**.
+   - one of the teacher's **existing classes** (the list shows who is in each). Pick one only to put the student **in that same class**, for example a brother or sister, or a group. Each student pays for their own place. Or:
+   - **+ New day and time**: choose the **Day**, **Start**, **End**, **Instrument** and a **Title**. If that time overlaps another class of this teacher, a **Clash** message names the student already there.
 5. Click **Save & Generate Lessons**.
 6. For another instrument, click **+ Add another class for [name]** and repeat. Click **Done** when finished.
 
