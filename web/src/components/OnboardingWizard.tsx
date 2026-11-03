@@ -20,7 +20,7 @@ export interface OnboardingWizardProps {
 interface Instrument { id: string; name: string; }
 interface Location { id: string; name: string; }
 interface Teacher { id: string; full_name: string; }
-interface LessonRate { id: string; teacher_id: string | null; location_id: string | null; category: string; rate_per_lesson: number; is_online: boolean; }
+interface LessonRate { id: string; teacher_id: string | null; location_id: string | null; category: string; rate_per_lesson: number; is_online: boolean; academic_year: string | null; }
 interface LessonCategory { id: string; name: string; sort_order: number; }
 
 interface ClassRow {
@@ -128,7 +128,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       supabase.from('instruments').select('id, name').order('name'),
       supabase.from('locations').select('id, name').order('name'),
       supabase.from('profiles').select('id, full_name').eq('role', 'teacher').eq('approved', true).order('full_name'),
-      supabase.from('lesson_rates').select('id, teacher_id, location_id, category, rate_per_lesson, is_online'),
+      supabase.from('lesson_rates').select('id, teacher_id, location_id, category, rate_per_lesson, is_online, academic_year').order('academic_year', { ascending: false }),
       supabase.from('lesson_categories').select('*').order('sort_order'),
     ]).then(([iRes, lRes, tRes, rRes, cRes]) => {
       setInstruments(iRes.data ?? []);
@@ -156,11 +156,15 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   // teacher's general (no-location) rate for the category.
   const isOnlineLocation = (locId: string) => /^online$/i.test(locations.find(l => l.id === locId)?.name ?? '');
   function autoRate(teacherId: string, category: string, locationId: string): string {
-    const mine = allRates.filter(r => r.teacher_id === teacherId && r.category === category);
-    const pick = isOnlineLocation(locationId)
-      ? mine.find(r => r.is_online)
-      : mine.find(r => !r.is_online && locationId && r.location_id === locationId)
-        ?? mine.find(r => !r.is_online && !r.location_id);
+    const online = isOnlineLocation(locationId);
+    const pickFrom = (rows: LessonRate[]) => online
+      ? rows.find(r => r.is_online)
+      : rows.find(r => !r.is_online && !!locationId && r.location_id === locationId)
+        ?? rows.find(r => !r.is_online && !r.location_id);
+    const forCategory = allRates.filter(r => r.category === category); // newest year first
+    // The teacher's own price, else the school-wide default for the category.
+    const pick = pickFrom(forCategory.filter(r => r.teacher_id === teacherId))
+      ?? pickFrom(forCategory.filter(r => !r.teacher_id));
     return pick ? String(pick.rate_per_lesson) : '';
   }
 
