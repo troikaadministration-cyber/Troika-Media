@@ -36,27 +36,45 @@ const loaders = {
 
 type PageName = keyof typeof loaders;
 
-const DashboardPage = lazy(loaders.Dashboard);
-const SchedulePage = lazy(loaders.Schedule);
-const StudentsPage = lazy(loaders.Students);
-const StudentDetailPage = lazy(loaders.StudentDetail);
-const PaymentsPage = lazy(loaders.Payments);
-const CurriculumAdminPage = lazy(loaders.CurriculumAdmin);
-const TeachersPage = lazy(loaders.Teachers);
-const LessonRatesPage = lazy(loaders.LessonRates);
-const EnrolmentsPage = lazy(loaders.Enrolments);
-const TeacherScheduleAdminPage = lazy(loaders.TeacherScheduleAdmin);
-const BreaksPage = lazy(loaders.Breaks);
-const LocationsPage = lazy(loaders.Locations);
-const ReportsPage = lazy(loaders.Reports);
-const TeacherSchedulePage = lazy(loaders.TeacherSchedule);
-const TeacherCalendarPage = lazy(loaders.TeacherCalendar);
-const TeacherCurriculumPage = lazy(loaders.TeacherCurriculum);
-const StudentShell = lazy(loaders.StudentShell);
-const StudentHomePage = lazy(loaders.StudentHome);
-const StudentLessonsListPage = lazy(loaders.StudentLessonsList);
-const StudentCalendarPage = lazy(loaders.StudentCalendar);
-const StudentPaymentsPage = lazy(loaders.StudentPayments);
+/**
+ * A lazily-loaded page that renders directly (no Suspense pause) once its code
+ * has been fetched. React holds back a freshly-resolved lazy page for ~300ms to
+ * avoid flicker; since we prefetch every page right after sign-in, skipping that
+ * makes first visits as fast as revisits.
+ */
+const loadedPages: Partial<Record<PageName, ComponentType<any>>> = {};
+function loadPage(name: PageName) {
+  return loaders[name]().then((m) => { loadedPages[name] = m.default; return m; });
+}
+function page(name: PageName) {
+  const Lazy = lazy(() => loadPage(name));
+  return function Page(props: Record<string, unknown>) {
+    const Loaded = loadedPages[name];
+    return Loaded ? <Loaded {...props} /> : <Lazy {...props} />;
+  };
+}
+
+const DashboardPage = page('Dashboard');
+const SchedulePage = page('Schedule');
+const StudentsPage = page('Students');
+const StudentDetailPage = page('StudentDetail');
+const PaymentsPage = page('Payments');
+const CurriculumAdminPage = page('CurriculumAdmin');
+const TeachersPage = page('Teachers');
+const LessonRatesPage = page('LessonRates');
+const EnrolmentsPage = page('Enrolments');
+const TeacherScheduleAdminPage = page('TeacherScheduleAdmin');
+const BreaksPage = page('Breaks');
+const LocationsPage = page('Locations');
+const ReportsPage = page('Reports');
+const TeacherSchedulePage = page('TeacherSchedule');
+const TeacherCalendarPage = page('TeacherCalendar');
+const TeacherCurriculumPage = page('TeacherCurriculum');
+const StudentShell = page('StudentShell');
+const StudentHomePage = page('StudentHome');
+const StudentLessonsListPage = page('StudentLessonsList');
+const StudentCalendarPage = page('StudentCalendar');
+const StudentPaymentsPage = page('StudentPayments');
 
 const PREFETCH: Record<string, PageName[]> = {
   coordinator: ['Dashboard', 'Schedule', 'Students', 'Enrolments', 'Payments', 'StudentDetail', 'Teachers',
@@ -72,7 +90,7 @@ function usePrefetchPages(role: string | undefined) {
     const names = PREFETCH[role] || [];
     const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
     if (conn?.saveData) return;
-    const run = () => { names.forEach((n) => { loaders[n]().catch(() => { /* retried on navigation */ }); }); };
+    const run = () => { names.forEach((n) => { loadPage(n).catch(() => { /* retried on navigation */ }); }); };
     const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
     const handle = ric ? ric(run, { timeout: 3000 }) : window.setTimeout(run, 1500);
     return () => {

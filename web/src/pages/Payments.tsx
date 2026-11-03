@@ -1,5 +1,5 @@
 import { toDateStr, parseDateStr } from '../lib/dates';
-import { useState } from 'react';
+import { useState, useMemo, useDeferredValue } from 'react';
 import { usePayments } from '../hooks/usePayments';
 import type { PaymentWithStudent } from '../hooks/usePayments';
 import { supabase } from '../lib/supabase';
@@ -92,6 +92,24 @@ export function PaymentsPage() {
   const overdue = payments.filter((p) => !p.paid_date && p.due_date < today);
   const upcoming = payments.filter((p) => !p.paid_date && p.due_date >= today);
   const paid = payments.filter((p) => p.paid_date);
+
+  // Filter + search, and render a page at a time (hundreds of rows at once
+  // made this page slow, especially on phones).
+  const PAGE_SIZE = 50;
+  const [statusFilter, setStatusFilter] = useState<'all' | 'Overdue' | 'Upcoming' | 'Paid'>('all');
+  const [search, setSearch] = useState('');
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const deferredSearch = useDeferredValue(search);
+  const filtered = useMemo(() => {
+    // "All": what needs action first — overdue (oldest first), upcoming, then paid (newest first).
+    const paidNewestFirst = [...paid].reverse();
+    const base = statusFilter === 'Overdue' ? overdue : statusFilter === 'Upcoming' ? upcoming
+      : statusFilter === 'Paid' ? paidNewestFirst : [...overdue, ...upcoming, ...paidNewestFirst];
+    const q = deferredSearch.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((p) => (p.student?.full_name || '').toLowerCase().includes(q) || (p.label || '').toLowerCase().includes(q));
+  }, [payments, statusFilter, deferredSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+  const visible = filtered.slice(0, shown);
 
   // Marking paid is irreversible (it generates and emails an invoice), so it's confirmed first.
   async function handleVerify(id: string) {
@@ -206,15 +224,30 @@ export function PaymentsPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {summaryCards.map((c) => (
-          <div key={c.label} className="bg-white rounded-xl border border-black/5 p-4">
+          <button key={c.label} type="button"
+            onClick={() => { setStatusFilter(f => f === c.label ? 'all' : c.label as 'Overdue' | 'Upcoming' | 'Paid'); setShown(PAGE_SIZE); }}
+            aria-pressed={statusFilter === c.label}
+            className={`text-left bg-white rounded-xl border p-4 transition-shadow hover:shadow-sm ${statusFilter === c.label ? 'border-teal ring-2 ring-teal/20' : 'border-black/5'}`}>
             <div className={`w-9 h-9 rounded-lg ${c.bg} flex items-center justify-center mb-2`}>
               <c.icon size={18} className={c.color} />
             </div>
             <p className="text-2xl font-bold text-navy">{c.value}</p>
-            <p className="text-xs text-gray-500">{c.label}</p>
-          </div>
+            <p className="text-xs text-gray-500">{c.label}{statusFilter === c.label ? ' · showing' : ''}</p>
+          </button>
         ))}
       </div>
+
+      <input
+        type="search"
+        value={search}
+        onChange={(e) => { setSearch(e.target.value); setShown(PAGE_SIZE); }}
+        placeholder="Search by student or charge…"
+        aria-label="Search payments"
+        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-teal/20 focus:border-teal"
+      />
+      {filtered.length === 0 && (
+        <p className="text-center text-gray-400 text-sm py-8">No payments match.</p>
+      )}
 
       {/* Table - Desktop */}
       <div className="hidden md:block bg-white rounded-xl border border-black/5 overflow-hidden">
@@ -232,7 +265,7 @@ export function PaymentsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-black/5">
-            {payments.map((p: PaymentWithStudent) => {
+            {visible.map((p: PaymentWithStudent) => {
               const isOverdue = !p.paid_date && p.due_date < today;
               const isPaid = !!p.paid_date;
               const invoice = p.invoice;
@@ -317,7 +350,7 @@ export function PaymentsPage() {
 
       {/* Mobile cards */}
       <div className="md:hidden space-y-2">
-        {payments.map((p: PaymentWithStudent) => {
+        {visible.map((p: PaymentWithStudent) => {
           const isOverdue = !p.paid_date && p.due_date < today;
           const isPaid = !!p.paid_date;
           const invoice = p.invoice;
@@ -376,6 +409,15 @@ export function PaymentsPage() {
           );
         })}
       </div>
+
+      {filtered.length > shown && (
+        <div className="flex justify-center">
+          <button type="button" onClick={() => setShown(n => n + PAGE_SIZE * 2)}
+            className="px-5 py-2.5 rounded-xl bg-white border border-black/10 text-sm font-medium text-navy hover:bg-gray-50">
+            Show more ({filtered.length - shown} more)
+          </button>
+        </div>
+      )}
 
       <ConfirmDialog
         open={!!confirmPaid}

@@ -13,6 +13,8 @@ interface PendingProfile { id: string; full_name: string; email: string; }
 
 export function StudentsPage() {
   const [search, setSearch] = useState('');
+  const PAGE_SIZE = 100;
+  const [shown, setShown] = useState(PAGE_SIZE); // render in pages: hundreds of rows at once is slow on phones
   const [instrumentFilter, setInstrumentFilter] = useState('');
   const [activeFilter, setActiveFilter] = useState<boolean | undefined>(undefined);
   const navigate = useNavigate();
@@ -157,7 +159,7 @@ export function StudentsPage() {
             ) : filtered.length === 0 ? (
               <tr><td colSpan={4} className="text-center text-gray-400 py-12">No students found</td></tr>
             ) : (
-              filtered.map((student: any) => (
+              filtered.slice(0, shown).map((student: any) => (
                 <tr
                   key={student.id}
                   className="hover:bg-gray-50 cursor-pointer transition-colors"
@@ -188,6 +190,14 @@ export function StudentsPage() {
           </tbody>
         </table>
       </div>
+      {filtered.length > shown && (
+        <div className="flex justify-center">
+          <button type="button" onClick={() => setShown(n => n + PAGE_SIZE * 2)}
+            className="px-5 py-2.5 rounded-xl bg-white border border-black/10 text-sm font-medium text-navy hover:bg-gray-50">
+            Show more ({filtered.length - shown} more)
+          </button>
+        </div>
+      )}
 
       <OnboardingWizard
         open={wizardOpen}
