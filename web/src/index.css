@@ -174,39 +174,6 @@ button, a, [role="button"], select, summary {
 .dark ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); background-clip: padding-box; }
 .dark ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.28); background-clip: padding-box; }
 
-/* ── Splash: a calm fade + gentle scale (not comic) ── */
-@keyframes splash-rise {
-  from { opacity: 0; transform: scale(0.96); }
-  to   { opacity: 1; transform: scale(1); }
-}
-@keyframes splash-ring {
-  0%   { opacity: 0; transform: scale(0.9); }
-  40%  { opacity: 0.5; }
-  100% { opacity: 0; transform: scale(1.25); }
-}
-@keyframes splash-fade {
-  from { opacity: 0; }
-  to   { opacity: 0.5; }
-}
-
-.splash-logo {
-  animation: splash-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
-  opacity: 0;
-}
-.splash-burst {
-  animation: splash-ring 1.6s ease-out 0.1s infinite;
-  opacity: 0;
-}
-.splash-star {
-  position: absolute;
-  animation: splash-fade 0.9s ease-out forwards;
-  opacity: 0;
-}
-.splash-star:nth-child(1) { top: 18%; left: 24%; animation-delay: 0.35s; }
-.splash-star:nth-child(2) { top: 14%; right: 26%; animation-delay: 0.5s; }
-.splash-star:nth-child(3) { bottom: 26%; left: 22%; animation-delay: 0.6s; }
-.splash-star:nth-child(4) { bottom: 22%; right: 22%; animation-delay: 0.45s; }
-
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }

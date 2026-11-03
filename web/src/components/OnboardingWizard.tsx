@@ -4,6 +4,9 @@ import { X, ChevronRight, ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { lessonsForPlan } from '../lib/lessonCount';
 import { computeDiscount, type DiscountPrimary } from '../lib/fees';
+import { useToast } from '../contexts/ToastContext';
+import { invalidateQueries } from '../lib/queryCache';
+import { invalidateLessonViews } from '../hooks/useLessons';
 
 interface PendingProfile { id: string; full_name: string; email: string; }
 
@@ -104,6 +107,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
     discount_multilesson: false,
   });
   const [classes, setClasses] = useState<ClassRow[]>([emptyClass()]);
+  const [savedClasses, setSavedClasses] = useState<number[]>([]);
+  const { showToast } = useToast();
 
   useEffect(() => {
     if (open) {
@@ -113,6 +118,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', location_id: '', address: '' });
       setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0', discount_primary: 'none', discount_special: '0', discount_multilesson: false });
       setClasses([emptyClass()]);
+      setSavedClasses([]);
     }
   }, [open, pendingProfile]);
 
@@ -182,45 +188,45 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   const tuitionDiscount = discount.discountAmount;
   const totalFee = discountedTuition + regFee;
   // Gate: a lesson rate must be entered before the enrolment can be confirmed.
-  const canConfirm = totalRatePerLesson > 0;
+  const canConfirm = totalRatePerLesson > 0 && classes.some(c => c.teacher_id && (parseFloat(c.rate) || 0) > 0);
 
+  // Saves the student, then enrols each class with ONE database call per class
+  // (enrol_student: enrolment + weekly slot + lessons + instalments, all or
+  // nothing). Classes already saved are remembered, so retrying after an
+  // error never duplicates them.
   async function handleConfirm(skip = false) {
     setSaving(true);
     setError(null);
     try {
-      // Create or update student record (deferred from Step 1)
+      // 1. Create or update the student record (deferred from Step 1)
       let resolvedStudentId = studentId;
       if (!resolvedStudentId) {
         let existingId: string | null = null;
         if (pendingProfile) {
-          const { data: existing } = await supabase.from('students').select('id').eq('user_id', pendingProfile.id).maybeSingle();
+          // A self-registered student was already linked to a students row at sign-up.
+          const { data: existing, error: findErr } = await supabase
+            .from('students').select('id').eq('user_id', pendingProfile.id).maybeSingle();
+          if (findErr) throw findErr;
           if (existing) existingId = existing.id;
         }
-        if (!existingId && s1.email.trim()) {
-          const { data: existing } = await supabase.from('students').select('id').eq('email', s1.email.trim()).maybeSingle();
-          if (existing) existingId = existing.id;
-        }
+        // Only send fields that were filled in, so existing details aren't wiped.
+        const fields: Record<string, unknown> = { full_name: s1.full_name.trim() };
+        if (s1.phone.trim()) fields.phone = s1.phone.trim();
+        if (s1.email.trim()) fields.email = s1.email.trim();
+        if (s1.location_id) fields.location_id = s1.location_id;
+        if (s1.address.trim()) fields.address = s1.address.trim();
+
         if (existingId) {
-          const { data, error: updateErr } = await supabase.from('students').update({
-            full_name: s1.full_name.trim(),
-            phone: s1.phone.trim() || null,
-            email: s1.email.trim() || null,
-            location_id: s1.location_id || null,
-            address: s1.address.trim() || null,
-            user_id: pendingProfile?.id ?? null,
-          }).eq('id', existingId).select('id').single();
+          const { data, error: updateErr } = await supabase.from('students')
+            .update(fields).eq('id', existingId).select('id').single();
           if (updateErr) throw updateErr;
           resolvedStudentId = data.id;
         } else {
           const { data, error: studentErr } = await supabase.from('students').insert({
+            ...fields,
             user_id: pendingProfile?.id ?? null,
-            full_name: s1.full_name.trim(),
-            phone: s1.phone.trim() || null,
-            email: s1.email.trim() || null,
-            location_id: s1.location_id || null,
-            address: s1.address.trim() || null,
             is_active: true,
-            payment_plan: '3_instalments',
+            payment_plan: s2.payment_plan,
           }).select('id').single();
           if (studentErr) throw studentErr;
           resolvedStudentId = data.id;
@@ -228,97 +234,74 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         setStudentId(resolvedStudentId);
       }
 
-      const ratePerLesson = skip ? 0 : totalRatePerLesson;
-      // total_fee holds discounted tuition only; registration_fee is separate.
-      const fee = skip ? 0 : discountedTuition;
+      // 2. Enrol each class ("Skip for now" saves the student only — no ₹0 bills).
+      const warnings: string[] = [];
+      if (!skip) {
+        const validClasses = classes
+          .map((cls, idx) => ({ cls, idx }))
+          .filter(({ cls }) => cls.teacher_id && (parseFloat(cls.rate) || 0) > 0);
+        if (validClasses.length === 0) throw new Error('Add at least one class with a teacher and a lesson rate.');
 
-      const { data: enrolment, error: enrolErr } = await supabase.from('student_enrolments').insert({
-        student_id: resolvedStudentId,
-        academic_year: s2.academic_year,
-        lesson_rate_id: null,
-        total_lessons: totalLessons,
-        lessons_used: 0,
-        start_date: enrolStartDate,
-        payment_plan: s2.payment_plan,
-        rate_per_lesson: ratePerLesson,
-        total_fee: fee,
-        registration_fee: regFee,
-        discount_primary: skip ? 'none' : s2.discount_primary,
-        discount_multilesson: skip ? false : s2.discount_multilesson,
-        discount_value: skip ? 0 : (s2.discount_primary === 'special' ? (parseFloat(s2.discount_special) || 0) : 0),
-      }).select('id').single();
-      if (enrolErr) throw enrolErr;
+        const endDate = (() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return toDateStr(d); })();
+        const classTuition = (rate: string) => (parseFloat(rate) || 0) * totalLessons;
+        let feeAllocated = 0;
 
-      if (s2.payment_plan !== 'trial') {
-        const { error: genErr } = await supabase.rpc('generate_instalments', { p_enrolment_id: enrolment.id });
-        if (genErr) throw genErr;
-      }
+        for (let n = 0; n < validClasses.length; n++) {
+          const { cls, idx } = validClasses[n];
+          if (savedClasses.includes(idx)) continue;
+          const isLast = n === validClasses.length - 1;
+          // Split the discounted tuition across classes in proportion to each class's tuition.
+          const share = isLast
+            ? Math.round((discountedTuition - feeAllocated) * 100) / 100
+            : Math.round((tuition > 0 ? discountedTuition * classTuition(cls.rate) / tuition : 0) * 100) / 100;
+          feeAllocated += share;
+          const instrName = instruments.find(i => i.id === cls.instrument_id)?.name ?? '';
 
-      if (!skip && classes.length > 0) {
-        const validClasses = classes.filter(cls => cls.teacher_id);
-        if (validClasses.length > 0) {
-          const templateRows = validClasses.map(cls => {
-            const clsInstrName = instruments.find(i => i.id === cls.instrument_id)?.name ?? '';
-            return {
-              teacher_id: cls.teacher_id,
-              day_of_week: Number(cls.day_of_week),
-              start_time: cls.start_time,
-              end_time: cls.end_time || null,
-              location_id: s1.location_id || null,
-              instrument_id: cls.instrument_id || null,
-              title: `${s1.full_name}${clsInstrName ? ` – ${clsInstrName}` : ''}`,
-              student_ids: [resolvedStudentId],
-              is_active: true,
-            };
+          const { data: result, error: enrolErr } = await supabase.rpc('enrol_student', {
+            p_student_id: resolvedStudentId,
+            p_teacher_id: cls.teacher_id,
+            p_payment_plan: s2.payment_plan,
+            p_start_date: enrolStartDate,
+            p_end_date: endDate,
+            p_total_lessons: totalLessons,
+            p_rate_per_lesson: parseFloat(cls.rate) || 0,
+            p_total_fee: share,
+            // Registration fee and a flat special discount are recorded once, on the first class.
+            p_registration_fee: n === 0 ? regFee : 0,
+            p_academic_year: enrolStartDate.slice(0, 4),
+            p_discount_primary: s2.discount_primary,
+            p_discount_multilesson: s2.discount_multilesson,
+            p_discount_value: n === 0 && s2.discount_primary === 'special' ? (parseFloat(s2.discount_special) || 0) : 0,
+            p_day_of_week: Number(cls.day_of_week),
+            p_start_time: cls.start_time,
+            p_end_time: cls.end_time || null,
+            p_instrument_id: cls.instrument_id || null,
+            p_title: `${s1.full_name.trim()}${instrName ? ` – ${instrName}` : ''}`,
+            p_location_id: s1.location_id || null,
           });
-          const { error: schedErr } = await supabase.from('teacher_schedule_templates').insert(templateRows);
-          if (schedErr) throw schedErr;
-
-          // Auto-generate up to `totalLessons` lessons per class, rolling forward
-          // from today (not a fixed May-31 window, which was a no-op after May).
-          const perTemplateCreated = new Array(templateRows.length).fill(0);
-          const current = new Date();
-          current.setHours(0, 0, 0, 0);
-          const safetyEnd = new Date(current);
-          safetyEnd.setDate(safetyEnd.getDate() + 400); // ~13-month hard stop
-          while (current <= safetyEnd && perTemplateCreated.some((n) => n < totalLessons)) {
-            const dayOfWeek = current.getDay();
-            const dateStr = toDateStr(current);
-            for (let ti = 0; ti < templateRows.length; ti++) {
-              if (perTemplateCreated[ti] >= totalLessons) continue;
-              const tpl = templateRows[ti];
-              if (tpl.day_of_week !== dayOfWeek) continue;
-              const { data: existing } = await supabase
-                .from('lessons').select('id')
-                .eq('teacher_id', tpl.teacher_id).eq('date', dateStr).eq('start_time', tpl.start_time)
-                .limit(1);
-              if (existing && existing.length > 0) { perTemplateCreated[ti]++; continue; }
-              const { data: lesson } = await supabase.from('lessons').insert({
-                teacher_id: tpl.teacher_id,
-                location_id: tpl.location_id,
-                instrument_id: tpl.instrument_id,
-                lesson_type: 'regular',
-                date: dateStr,
-                start_time: tpl.start_time,
-                end_time: tpl.end_time,
-                title: tpl.title,
-              }).select('id').single();
-              if (lesson) {
-                await supabase.from('lesson_students').insert({ lesson_id: lesson.id, student_id: resolvedStudentId });
-                perTemplateCreated[ti]++;
-              }
-            }
-            current.setDate(current.getDate() + 1);
+          if (enrolErr) throw new Error(`${instrName || 'Class'}: ${enrolErr.message}`);
+          setSavedClasses(prev => [...prev, idx]);
+          const r = result as { lessons_scheduled: number; lessons_expected: number; conflicts: number };
+          if (r.lessons_scheduled < r.lessons_expected) {
+            warnings.push(`${instrName || 'Class'}: ${r.lessons_scheduled} of ${r.lessons_expected} lessons scheduled` +
+              (r.conflicts ? ` (${r.conflicts} clashed with the teacher's other lessons)` : ''));
           }
         }
       }
 
-      // Approve the student's profile only after the full wizard is completed
+      // 3. Approve the student's profile only after everything above succeeded
       if (pendingProfile) {
         const { error: approveErr } = await supabase.from('profiles').update({ approved: true }).eq('id', pendingProfile.id);
         if (approveErr) throw approveErr;
       }
 
+      invalidateQueries('students:');
+      invalidateQueries('ref:students');
+      invalidateQueries('enrolments');
+      invalidateQueries('payments');
+      invalidateLessonViews();
+      if (warnings.length) showToast('error', warnings.join(' · '));
+      else showToast('success', skip ? 'Student saved.' : 'Student enrolled.');
       onComplete();
     } catch (err: any) {
       setError(err.message);
@@ -346,8 +329,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         {/* ── STEP 1: Student Info ── */}
         {step === 0 && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Full Name <span className="text-coral">*</span></label>
                 <input type="text" value={s1.full_name} onChange={e => setS1(p => ({ ...p, full_name: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
@@ -364,6 +347,14 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
                 <input type="email" value={s1.email} onChange={e => setS1(p => ({ ...p, email: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
                   placeholder="student@email.com" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Location</label>
+                <select value={s1.location_id} onChange={e => setS1(p => ({ ...p, location_id: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none bg-white">
+                  <option value="">— Select location —</option>
+                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Address</label>
@@ -395,8 +386,9 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Academic Year</label>
-                <input type="text" value={s2.academic_year} onChange={e => setS2(p => ({ ...p, academic_year: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none" />
+                {/* The session year follows the start date (lesson counts are per calendar year). */}
+                <input type="text" value={enrolStartDate.slice(0, 4)} readOnly
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Registration Fee (₹)</label>

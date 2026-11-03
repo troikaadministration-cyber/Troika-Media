@@ -1,6 +1,7 @@
 import { toDateStr } from '../lib/dates';
-import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, invalidateQueries } from '../lib/queryCache';
+import { fetchAll } from '../lib/fetchAll';
 import type { PaymentRecord } from '../types';
 
 interface Invoice {
@@ -19,30 +20,34 @@ export type PaymentWithStudent = PaymentRecord & {
   invoice?: Invoice | null;
 };
 
-export function usePayments() {
-  const [payments, setPayments] = useState<PaymentWithStudent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchPayments = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+/** Edge-function errors hide the server's message in `context`; pull it out for the UI. */
+async function functionErrorMessage(err: unknown, fallback: string): Promise<string> {
+  const ctx = (err as { context?: Response })?.context;
+  if (ctx && typeof ctx.json === 'function') {
     try {
-      const { data, error: err } = await supabase
+      const body = await ctx.clone().json();
+      if (body?.error) return String(body.error);
+    } catch { /* not JSON */ }
+  }
+  return (err as Error)?.message || fallback;
+}
+
+export function usePayments() {
+  const { data, loading, error, refresh } = useQuery<PaymentWithStudent[]>('payments', () =>
+    fetchAll<PaymentWithStudent>((from, to) =>
+      supabase
         .from('payment_records')
         .select('*, student:students(full_name, phone, parent_name, parent_phone), invoice:invoices(id, invoice_number, pdf_path)')
         .order('due_date', { ascending: true })
-        .limit(500);
-      if (err) throw err;
-      setPayments((data || []) as any);
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch payments');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+        .order('id')
+        .range(from, to)),
+  );
 
-  useEffect(() => { fetchPayments(); }, [fetchPayments]);
+  async function afterChange() {
+    invalidateQueries('dashboard:');
+    invalidateQueries('reports:');
+    await refresh();
+  }
 
   // Marks the payment paid. Invoice generation is best-effort: if it fails the
   // payment is still recorded as paid and the caller gets an `invoiceError` to
@@ -51,60 +56,68 @@ export function usePayments() {
   async function verifyPayment(id: string) {
     const { data: { user } } = await supabase.auth.getUser();
 
-    const { error } = await supabase
+    const { data: updated, error: err } = await supabase
       .from('payment_records')
       .update({
         paid_date: toDateStr(new Date()),
         verified_at: new Date().toISOString(),
         verified_by: user?.id || null,
       })
-      .eq('id', id);
-    if (error) throw error; // marking paid genuinely failed — surface it
+      .eq('id', id)
+      .is('paid_date', null) // never re-stamp an already-paid record (double click / two tabs)
+      .select('id');
+    if (err) throw err; // marking paid genuinely failed — surface it
+    if (!updated || updated.length === 0) {
+      await afterChange();
+      throw new Error('This payment was already marked as paid.');
+    }
 
     const { data: invoiceData, error: fnErr } = await supabase.functions.invoke(
       'generate-invoice',
       { body: { payment_id: id } }
     );
 
-    await fetchPayments();
+    await afterChange();
     if (fnErr) {
-      return { paid: true, invoice: null, invoiceError: fnErr.message || 'Invoice generation failed' };
+      return { paid: true, invoice: null, invoiceError: await functionErrorMessage(fnErr, 'Invoice generation failed') };
     }
     return { paid: true, invoice: invoiceData, invoiceError: null };
   }
 
   // Retry invoice generation for a payment already marked paid.
   async function generateInvoice(id: string) {
-    const { data, error: fnErr } = await supabase.functions.invoke(
+    const { data: invoiceData, error: fnErr } = await supabase.functions.invoke(
       'generate-invoice',
       { body: { payment_id: id } }
     );
-    if (fnErr) throw fnErr;
-    await fetchPayments();
-    return data;
+    if (fnErr) throw new Error(await functionErrorMessage(fnErr, 'Invoice generation failed'));
+    await refresh();
+    return invoiceData;
   }
 
   async function downloadInvoice(invoiceId: string) {
-    const { data: invoice } = await supabase
+    const { data: invoice, error: err } = await supabase
       .from('invoices')
       .select('pdf_path')
       .eq('id', invoiceId)
       .single();
+    if (err) throw err;
     if (!invoice?.pdf_path) return null;
 
-    const { data } = await supabase.storage
+    const { data: signed, error: signErr } = await supabase.storage
       .from('invoices')
       .createSignedUrl(invoice.pdf_path, 3600);
-    return data?.signedUrl || null;
+    if (signErr) throw signErr;
+    return signed?.signedUrl || null;
   }
 
   async function sendReminder(id: string) {
-    const { error } = await supabase.functions.invoke('send-payment-reminder', {
+    const { error: fnErr } = await supabase.functions.invoke('send-payment-reminder', {
       body: { payment_id: id },
     });
-    if (error) throw error;
-    await fetchPayments();
+    if (fnErr) throw new Error(await functionErrorMessage(fnErr, 'Could not send reminder'));
+    await refresh();
   }
 
-  return { payments, loading, error, verifyPayment, generateInvoice, downloadInvoice, sendReminder, refresh: fetchPayments };
+  return { payments: data ?? [], loading, error, verifyPayment, generateInvoice, downloadInvoice, sendReminder, refresh: afterChange };
 }

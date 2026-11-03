@@ -1,10 +1,12 @@
-import { toDateStr } from '../lib/dates';
-import React, { useState, useEffect } from 'react';
+import { toDateStr, parseDateStr } from '../lib/dates';
+import React, { useState } from 'react';
 import { Plus, ChevronLeft, ChevronRight, Filter, X, UserSearch, Calendar as CalIcon, Ban } from 'lucide-react';
 import { useLessons } from '../hooks/useLessons';
 import { SkeletonList } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
-import type { Profile, Instrument, LessonType, Student } from '../types';
+import { useQuery, unwrap } from '../lib/queryCache';
+import { useTeachersList, useInstruments, useActiveStudentsList } from '../hooks/useReference';
+import type { LessonType } from '../types';
 
 interface MakeupMatch {
   id: string;
@@ -64,19 +66,47 @@ function computeOverlapLayout(lessons: any[]) {
 }
 // ─────────────────────────────────────────────────────────────
 
+// Week view helpers — Sunday-anchored weeks (Sun–Sat, matching JS getDay() convention)
+function getWeekStart(date: string) {
+  const d = parseDateStr(date);
+  const day = d.getDay(); // 0 = Sunday
+  d.setDate(d.getDate() - day); // subtract to reach Sunday
+  return toDateStr(d);
+}
+function getWeekEnd(date: string) {
+  const d = parseDateStr(date);
+  const day = d.getDay(); // 0 = Sunday
+  d.setDate(d.getDate() + (6 - day)); // add to reach Saturday
+  return toDateStr(d);
+}
+function getWeekDays(date: string) {
+  const start = parseDateStr(getWeekStart(date));
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    return toDateStr(d);
+  });
+}
+
+
 export function SchedulePage() {
   const [selectedDate, setSelectedDate] = useState(toDateStr(new Date()));
   const [teacherFilter, setTeacherFilter] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('');
-  const [teachers, setTeachers] = useState<Profile[]>([]);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const { teachers } = useTeachersList();
+  const { instruments } = useInstruments();
+  const { students: allStudents } = useActiveStudentsList();
   const [showForm, setShowForm] = useState(false);
   const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
 
   // Scheduled breaks — used to grey out the on-break student's lesson slots
   // (visual reminder that the slot is only temporarily free; not blocked).
-  const [breaks, setBreaks] = useState<{ student_ids: string[]; start_date: string; end_date: string }[]>([]);
+  const { data: breaksData } = useQuery<{ student_ids: string[]; start_date: string; end_date: string }[]>(
+    'breaks:ranges',
+    async () => unwrap(await supabase.from('scheduled_breaks').select('student_ids, start_date, end_date'), []) as any,
+    { staleTime: 60_000 },
+  );
+  const breaks = breaksData ?? [];
 
   // Makeup finder
   const [makeupModal, setMakeupModal] = useState<{ lessonId: string; studentId: string } | null>(null);
@@ -85,36 +115,32 @@ export function SchedulePage() {
 
   const [cancelModal, setCancelModal] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
-  const { lessons, loading, createLesson, updateLesson, cancelLesson } = useLessons({
-    date: viewMode === 'day' ? selectedDate : undefined,
-    teacherId: teacherFilter || undefined,
-    instrumentId: instrumentFilter || undefined,
-  });
+  // Day view: one day's lessons. Week view: only that week (never the whole history).
+  const { lessons, loading: dayLoading, createLesson, updateLesson, cancelLesson } = useLessons(
+    viewMode === 'day'
+      ? { date: selectedDate, teacherId: teacherFilter || undefined, instrumentId: instrumentFilter || undefined }
+      : null,
+  );
 
-  // For week view, fetch the whole week
-  const [weekLessons, setWeekLessons] = useState<any[]>([]);
-  useEffect(() => {
-    if (viewMode !== 'week') return;
-    const start = getWeekStart(selectedDate);
-    const end = getWeekEnd(selectedDate);
-    let query = supabase
-      .from('lessons')
-      .select('*, teacher:profiles!lessons_teacher_id_fkey(id, full_name), instrument:instruments(name), students:lesson_students(student_id, student:students(full_name))')
-      .gte('date', start)
-      .lte('date', end)
-      .order('date')
-      .order('start_time');
-    if (teacherFilter) query = query.eq('teacher_id', teacherFilter);
-    if (instrumentFilter) query = query.eq('instrument_id', instrumentFilter);
-    query.then(({ data }) => setWeekLessons(data || []));
-  }, [viewMode, selectedDate, teacherFilter, instrumentFilter]);
-
-  useEffect(() => {
-    supabase.from('profiles').select('*').eq('role', 'teacher').then(({ data }) => setTeachers(data || []));
-    supabase.from('instruments').select('*').then(({ data }) => setInstruments(data || []));
-    supabase.from('students').select('*').eq('is_active', true).order('full_name').then(({ data }) => setAllStudents(data || []));
-    supabase.from('scheduled_breaks').select('student_ids, start_date, end_date').then(({ data }) => setBreaks(data || []));
-  }, []);
+  const weekStart = getWeekStart(selectedDate);
+  const weekEnd = getWeekEnd(selectedDate);
+  const { data: weekData, loading: weekLoading } = useQuery<any[]>(
+    viewMode === 'week' ? `lessons:week:${weekStart}:${teacherFilter}:${instrumentFilter}` : null,
+    async () => {
+      let query = supabase
+        .from('lessons')
+        .select('*, teacher:profiles!lessons_teacher_id_fkey(id, full_name), instrument:instruments(name), students:lesson_students(student_id, student:students(full_name))')
+        .gte('date', weekStart)
+        .lte('date', weekEnd)
+        .order('date')
+        .order('start_time');
+      if (teacherFilter) query = query.eq('teacher_id', teacherFilter);
+      if (instrumentFilter) query = query.eq('instrument_id', instrumentFilter);
+      return unwrap(await query, []);
+    },
+  );
+  const weekLessons = weekData ?? [];
+  const loading = viewMode === 'day' ? dayLoading : weekLoading;
 
   // Names of a lesson's students who are on a scheduled break covering the lesson date.
   function breakStudentsFor(lesson: any): string[] {
@@ -130,7 +156,7 @@ export function SchedulePage() {
   }
 
   const changeDate = (days: number) => {
-    const d = new Date(selectedDate);
+    const d = parseDateStr(selectedDate);
     d.setDate(d.getDate() + days);
     setSelectedDate(toDateStr(d));
   };
@@ -204,7 +230,8 @@ export function SchedulePage() {
     // When marking completed, default any un-marked students to attended so the
     // lesson actually counts toward lessons_used (absences are marked separately).
     if (status === 'completed') {
-      await supabase.from('lesson_students').update({ attended: true }).eq('lesson_id', lessonId).is('attended', null);
+      const { error } = await supabase.from('lesson_students').update({ attended: true }).eq('lesson_id', lessonId).is('attended', null);
+      if (error) throw error;
     }
     await updateLesson(lessonId, { status } as any);
   }
@@ -221,28 +248,6 @@ export function SchedulePage() {
       setMakeupMatches([]);
     }
     setMakeupLoading(false);
-  }
-
-  // Week view helpers — Sunday-anchored weeks (Sun–Sat, matching JS getDay() convention)
-  function getWeekStart(date: string) {
-    const d = new Date(date);
-    const day = d.getDay(); // 0 = Sunday
-    d.setDate(d.getDate() - day); // subtract to reach Sunday
-    return toDateStr(d);
-  }
-  function getWeekEnd(date: string) {
-    const d = new Date(date);
-    const day = d.getDay(); // 0 = Sunday
-    d.setDate(d.getDate() + (6 - day)); // add to reach Saturday
-    return toDateStr(d);
-  }
-  function getWeekDays(date: string) {
-    const start = new Date(getWeekStart(date));
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
-      return toDateStr(d);
-    });
   }
 
   const displayLessons = viewMode === 'day' ? lessons : weekLessons;

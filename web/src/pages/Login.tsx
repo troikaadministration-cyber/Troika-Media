@@ -1,3 +1,4 @@
+import { Logo } from '../components/Logo';
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { isConfigured, supabase } from '../lib/supabase';
@@ -18,7 +19,7 @@ export function LoginPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="w-full max-w-md text-center">
-          <img src="/logo.png" alt="Troika Music Lessons" className="h-16 w-auto mx-auto mb-2" />
+          <Logo className="h-16 w-auto mx-auto mb-2" />
           <div className="mt-8 bg-yellow-light border border-yellow/30 rounded-xl p-6 text-left">
             <p className="font-semibold text-navy text-sm mb-2">Setup Required</p>
             <p className="text-sm text-gray-600">
@@ -73,7 +74,7 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         {/* Branding */}
         <div className="text-center mb-8">
-          <img src="/logo.png" alt="Troika Music Lessons" className="h-20 w-auto mx-auto" />
+          <Logo className="h-20 w-auto mx-auto" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-black/5 p-6 sm:p-8">

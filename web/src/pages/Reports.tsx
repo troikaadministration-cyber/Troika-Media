@@ -1,25 +1,22 @@
 import { toDateStr } from '../lib/dates';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { BarChart3, IndianRupee, AlertCircle, GraduationCap, Download, RefreshCw, CheckCircle } from 'lucide-react';
 import { SkeletonCards, SkeletonList } from '../components/Skeleton';
+import { useQuery, unwrap } from '../lib/queryCache';
+import { ErrorBanner } from '../components/ErrorBanner';
 
-interface PaymentRow {
-  amount: number;
-  paid_date: string | null;
-  due_date: string;
-  student: { id: string; full_name: string } | null;
-}
-interface EnrolmentRow {
-  lessons_used: number;
-  total_lessons: number;
-  student: { id: string; full_name: string } | null;
-}
-interface AttendanceRow {
-  attended: boolean | null;
-  absence_category: string | null;
-  student: { id: string; full_name: string } | null;
-  lesson: { status: string } | null;
+interface SummaryRow {
+  student_id: string;
+  full_name: string;
+  collected: number | string;
+  outstanding: number | string;
+  overdue: number | string;
+  lessons_used: number | string;
+  lessons_total: number | string;
+  attended: number | string;
+  absent: number | string;
+  charged_absent: number | string;
 }
 
 interface StudentReport {
@@ -27,6 +24,7 @@ interface StudentReport {
   name: string;
   collected: number;
   outstanding: number;
+  overdue: number;
   lessonsUsed: number;
   lessonsTotal: number;
   attended: number;
@@ -37,85 +35,44 @@ interface StudentReport {
 const inr = (n: number) => '₹' + Math.round(n).toLocaleString('en-IN');
 
 export function ReportsPage() {
-  const [payments, setPayments] = useState<PaymentRow[]>([]);
-  const [enrolments, setEnrolments] = useState<EnrolmentRow[]>([]);
-  const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const [payRes, enrRes, attRes] = await Promise.all([
-      supabase.from('payment_records').select('amount, paid_date, due_date, student:students(id, full_name)'),
-      supabase.from('student_enrolments').select('lessons_used, total_lessons, student:students(id, full_name)'),
-      supabase.from('lesson_students').select('attended, absence_category, student:students(id, full_name), lesson:lessons(status)'),
-    ]);
-    if (payRes.error) setError(payRes.error.message);
-    else if (enrRes.error) setError(enrRes.error.message);
-    else if (attRes.error) setError(attRes.error.message);
-    else {
-      setPayments((payRes.data || []) as any);
-      setEnrolments((enrRes.data || []) as any);
-      setAttendance((attRes.data || []) as any);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
   const today = toDateStr(new Date());
 
-  const totals = useMemo(() => {
-    let collected = 0, outstanding = 0, overdue = 0;
-    for (const p of payments) {
-      const amt = Number(p.amount) || 0;
-      if (p.paid_date) collected += amt;
-      else { outstanding += amt; if (p.due_date < today) overdue += amt; }
-    }
-    let delivered = 0, total = 0;
-    for (const e of enrolments) {
-      delivered += Number(e.lessons_used) || 0;
-      total += Number(e.total_lessons) || 0;
-    }
-    let attended = 0, absent = 0;
-    for (const a of attendance) {
-      if (a.attended === true) attended++;
-      else if (a.attended === false) absent++;
-    }
-    return { collected, outstanding, overdue, delivered, remaining: Math.max(0, total - delivered), total, attended, absent };
-  }, [payments, enrolments, attendance, today]);
+  // All aggregation happens in the database (reports_summary): one row per student.
+  const { data: rows, loading, error, fetching, refresh } = useQuery<SummaryRow[]>(`reports:${today}`, async () => {
+    const res = await supabase.rpc('reports_summary', { p_today: today });
+    return unwrap(res, []) as SummaryRow[];
+  });
 
   const perStudent = useMemo<StudentReport[]>(() => {
-    const map = new Map<string, StudentReport>();
-    const get = (id: string, name: string) => {
-      if (!map.has(id)) map.set(id, { id, name, collected: 0, outstanding: 0, lessonsUsed: 0, lessonsTotal: 0, attended: 0, absent: 0, chargedAbsent: 0 });
-      return map.get(id)!;
-    };
-    for (const p of payments) {
-      if (!p.student) continue;
-      const r = get(p.student.id, p.student.full_name);
-      const amt = Number(p.amount) || 0;
-      if (p.paid_date) r.collected += amt; else r.outstanding += amt;
-    }
-    for (const e of enrolments) {
-      if (!e.student) continue;
-      const r = get(e.student.id, e.student.full_name);
-      r.lessonsUsed += Number(e.lessons_used) || 0;
-      r.lessonsTotal += Number(e.total_lessons) || 0;
-    }
-    for (const a of attendance) {
-      if (!a.student) continue;
-      const r = get(a.student.id, a.student.full_name);
-      if (a.attended === true) r.attended++;
-      else if (a.attended === false) {
-        r.absent++;
-        if (a.absence_category === 'charged') r.chargedAbsent++;
-      }
-    }
+    const list = (rows || []).map((r) => ({
+      id: r.student_id,
+      name: r.full_name,
+      collected: Number(r.collected) || 0,
+      outstanding: Number(r.outstanding) || 0,
+      overdue: Number(r.overdue) || 0,
+      lessonsUsed: Number(r.lessons_used) || 0,
+      lessonsTotal: Number(r.lessons_total) || 0,
+      attended: Number(r.attended) || 0,
+      absent: Number(r.absent) || 0,
+      chargedAbsent: Number(r.charged_absent) || 0,
+    }));
     // Sorted by most lessons attended, so the top of the list is "where most lessons are".
-    return [...map.values()].sort((a, b) => b.attended - a.attended || b.outstanding - a.outstanding || a.name.localeCompare(b.name));
-  }, [payments, enrolments, attendance]);
+    return list.sort((a, b) => b.attended - a.attended || b.outstanding - a.outstanding || a.name.localeCompare(b.name));
+  }, [rows]);
+
+  const totals = useMemo(() => {
+    const t = { collected: 0, outstanding: 0, overdue: 0, delivered: 0, total: 0, attended: 0, absent: 0 };
+    for (const r of perStudent) {
+      t.collected += r.collected;
+      t.outstanding += r.outstanding;
+      t.overdue += r.overdue;
+      t.delivered += r.lessonsUsed;
+      t.total += r.lessonsTotal;
+      t.attended += r.attended;
+      t.absent += r.absent;
+    }
+    return { ...t, remaining: Math.max(0, t.total - t.delivered) };
+  }, [perStudent]);
 
   function exportCsv() {
     const header = [
@@ -178,7 +135,7 @@ export function ReportsPage() {
           <p className="text-gray-500 text-sm mt-1">Dues, lessons delivered vs remaining, and revenue collected</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} className="p-2 text-gray-400 hover:text-navy" aria-label="Refresh"><RefreshCw size={18} /></button>
+          <button onClick={() => refresh()} className="p-2 text-gray-400 hover:text-navy" aria-label="Refresh"><RefreshCw size={18} className={fetching ? 'animate-spin' : ''} /></button>
           <button onClick={exportCsv} disabled={perStudent.length === 0}
             className="flex items-center gap-1.5 bg-navy text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-navy/90 disabled:opacity-50">
             <Download size={16} /> Export CSV
@@ -186,9 +143,7 @@ export function ReportsPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="bg-coral/10 text-coral rounded-xl p-4 text-sm mb-4">{error}</div>
-      )}
+      {error && <div className="mb-4"><ErrorBanner message={error} onRetry={refresh} /></div>}
 
       {loading ? (
         <>

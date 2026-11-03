@@ -19,8 +19,10 @@ window.addEventListener('vite:preloadError', () => {
   }
 });
 
-// Clear the stale-chunk counter once JS actually executes successfully.
-sessionStorage.removeItem('chunk_reload');
+// Clear the stale-chunk reload counter once the app has been running for a
+// while (clearing it immediately would allow an endless reload loop).
+setTimeout(() => sessionStorage.removeItem('chunk_reload'), 10_000);
+sessionStorage.removeItem('troika_splash'); // legacy key from the old splash screen
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
