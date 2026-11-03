@@ -6,6 +6,7 @@ import { Users, GraduationCap, IndianRupee, AlertCircle, CheckCircle } from 'luc
 import { Skeleton } from '../components/Skeleton';
 import { useQuery, unwrap } from '../lib/queryCache';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { AbsenceRequestsPanel } from '../components/AbsenceRequestsPanel';
 
 interface TodayLesson {
   id: string; title: string; start_time: string; end_time: string | null; status: string;
@@ -139,6 +140,9 @@ export function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Students' "can't attend" requests (approve / decline) */}
+      <AbsenceRequestsPanel />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Today's schedule */}

@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { Outlet } from 'react-router-dom';
 import { UserX } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { useStudentLessons } from '../../hooks/useStudentLessons';
+import { useStudentLessons, useStudentAbsenceRequests } from '../../hooks/useStudentLessons';
 import { supabase } from '../../lib/supabase';
 import { useQuery, unwrap } from '../../lib/queryCache';
 import { CenterSpinner } from '../../components/student/shared';
@@ -41,9 +41,13 @@ export function StudentShell() {
   }, { staleTime: 60_000 });
 
   const lessons = useStudentLessons(userId);
+  const absence = useStudentAbsenceRequests(userId);
   const { refresh: refreshPortal } = portal;
   const { refresh: refreshLessons } = lessons;
-  const refresh = useCallback(async () => { await Promise.all([refreshPortal(), refreshLessons()]); }, [refreshPortal, refreshLessons]);
+  const { refresh: refreshAbsences } = absence;
+  const refresh = useCallback(async () => {
+    await Promise.all([refreshPortal(), refreshLessons(), refreshAbsences()]);
+  }, [refreshPortal, refreshLessons, refreshAbsences]);
 
   if (portal.loading || (!userId && !portal.error)) return <CenterSpinner />;
 
@@ -84,6 +88,9 @@ export function StudentShell() {
         loadingLessons: lessons.loading,
         loadingPast: lessons.loadingPast,
         lessonsError: lessons.error,
+        absences: absence.absences,
+        requestAbsence: absence.requestAbsence,
+        withdrawAbsence: absence.withdrawAbsence,
         refresh,
       }}
     >

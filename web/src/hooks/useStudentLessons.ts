@@ -3,6 +3,19 @@ import { useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useQuery, unwrap } from '../lib/queryCache';
 
+export type AbsenceStatus = 'pending' | 'approved' | 'declined' | 'withdrawn';
+
+/** A student's request not to attend one lesson (see request_absence RPC). */
+export interface AbsenceRequest {
+  id: string;
+  lesson_id: string;
+  status: AbsenceStatus;
+  late_notice: boolean;
+  charged: boolean | null;
+  decision_note: string | null;
+  created_at: string;
+}
+
 export interface StudentLesson {
   id: string;
   attended: boolean | null;
@@ -89,6 +102,41 @@ export function useStudentLessons(userId: string | undefined) {
     error: up.error || past.error || stats.error,
     refresh,
   };
+}
+
+/**
+ * The signed-in student's absence requests, latest per lesson (keyed by
+ * lesson id). A withdrawn latest request means "no request" for that lesson.
+ * Failures are swallowed: lessons must still render if this can't load.
+ */
+export function useStudentAbsenceRequests(userId: string | undefined) {
+  const q = useQuery<Record<string, AbsenceRequest>>(userId ? `student-lessons:${userId}:absences` : null, async () => {
+    const rows = unwrap(await supabase
+      .from('absence_requests')
+      .select('id, lesson_id, status, late_notice, charged, decision_note, created_at, student:students!inner(user_id)')
+      .eq('student.user_id', userId!)
+      .order('created_at', { ascending: false })
+      .limit(200), []) as unknown as AbsenceRequest[];
+    const byLesson: Record<string, AbsenceRequest> = {};
+    for (const r of rows) if (!byLesson[r.lesson_id]) byLesson[r.lesson_id] = r;
+    for (const k of Object.keys(byLesson)) if (byLesson[k].status === 'withdrawn') delete byLesson[k];
+    return byLesson;
+  }, { staleTime: STALE_MS });
+
+  const { refresh } = q;
+  const requestAbsence = useCallback(async (lessonId: string, reason: string) => {
+    const { data, error } = await supabase.rpc('request_absence', { p_lesson_id: lessonId, p_reason: reason });
+    if (error) throw new Error(error.message);
+    await refresh();
+    return data as { id: string; late_notice: boolean };
+  }, [refresh]);
+  const withdrawAbsence = useCallback(async (requestId: string) => {
+    const { error } = await supabase.rpc('withdraw_absence_request', { p_request_id: requestId });
+    if (error) throw new Error(error.message);
+    await refresh();
+  }, [refresh]);
+
+  return { absences: q.data ?? {}, requestAbsence, withdrawAbsence, refresh };
 }
 
 /** One calendar month of a student's lessons (YYYY-MM). */

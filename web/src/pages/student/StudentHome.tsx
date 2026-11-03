@@ -7,6 +7,7 @@ import {
 import { useStudentPortal } from './StudentPortalContext';
 import { Skeleton } from '../../components/Skeleton';
 import { ErrorBanner } from '../../components/ErrorBanner';
+import { AbsenceControls } from '../../components/student/shared';
 import { greeting, firstName, fmtDate, fmtTime, fmtMoney } from './format';
 
 export function StudentHome() {
@@ -72,6 +73,7 @@ export function StudentHome() {
               </div>
             </div>
           </div>
+          <AbsenceControls item={next} onAccent className="mt-4" />
         </div>
       ) : (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 p-8 text-center">

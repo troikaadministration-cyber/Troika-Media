@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Music } from 'lucide-react';
 import { useStudentPortal } from './StudentPortalContext';
-import { LessonRow } from '../../components/student/shared';
+import { LessonRow, NOTICE_RULE } from '../../components/student/shared';
 import { SkeletonList } from '../../components/Skeleton';
 import { ErrorBanner } from '../../components/ErrorBanner';
 
@@ -17,6 +17,11 @@ export function StudentLessonsList() {
       <div>
         <h1 className="text-2xl font-bold text-navy">My Lessons</h1>
         <p className="text-gray-500 text-sm mt-1">Your scheduled and completed lessons.</p>
+        {tab === 'upcoming' && (
+          <p className="text-gray-400 text-xs mt-1">
+            Can&rsquo;t make it? Tap &ldquo;Can&rsquo;t attend&rdquo; on the lesson. {NOTICE_RULE}
+          </p>
+        )}
       </div>
 
       {/* Segmented control */}

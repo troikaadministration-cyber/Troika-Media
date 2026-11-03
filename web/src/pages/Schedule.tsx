@@ -1,6 +1,6 @@
 import { toDateStr, parseDateStr } from '../lib/dates';
 import React, { useState } from 'react';
-import { Plus, ChevronLeft, ChevronRight, Filter, X, UserSearch, Calendar as CalIcon, Ban } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Filter, X, UserSearch, Calendar as CalIcon, Ban, UserCog, Users } from 'lucide-react';
 import { useLessons } from '../hooks/useLessons';
 import { SkeletonList } from '../components/Skeleton';
 import { supabase } from '../lib/supabase';
@@ -8,6 +8,8 @@ import { useQuery, unwrap, errorMessage } from '../lib/queryCache';
 import { useToast } from '../contexts/ToastContext';
 import { useTeachersList, useInstruments, useActiveStudentsList } from '../hooks/useReference';
 import type { LessonType } from '../types';
+import { ChangeTeacherModal } from '../components/ChangeTeacherModal';
+import { CoverTeacherModal } from '../components/CoverTeacherModal';
 
 interface MakeupMatch {
   id: string;
@@ -96,6 +98,12 @@ export function SchedulePage() {
   const [teacherFilter, setTeacherFilter] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('');
   const { teachers } = useTeachersList();
+  // All teachers (incl. no-longer-approved) — for "Covering for <name>" labels.
+  const { teachers: allTeachers } = useTeachersList({ includeUnapproved: true });
+  const teacherName = (id?: string | null) => (id ? allTeachers.find((t) => t.id === id)?.full_name ?? 'another teacher' : '');
+  // Substitute teacher: one lesson, or a whole day for an absent teacher.
+  const [changeTeacherLesson, setChangeTeacherLesson] = useState<any | null>(null);
+  const [showCover, setShowCover] = useState(false);
   const { instruments } = useInstruments();
   const { students: allStudents } = useActiveStudentsList();
   const [showForm, setShowForm] = useState(false);
@@ -258,18 +266,27 @@ export function SchedulePage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-navy">Schedule</h1>
           <p className="text-gray-500 text-sm mt-1">Manage lesson schedule across all teachers</p>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 bg-coral text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-coral/90 transition-colors"
-        >
-          <Plus size={18} />
-          New Lesson
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCover(true)}
+            className="flex items-center gap-2 bg-white border border-gray-200 text-navy px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors"
+          >
+            <Users size={18} />
+            Cover a teacher
+          </button>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="flex items-center gap-2 bg-coral text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-coral/90 transition-colors"
+          >
+            <Plus size={18} />
+            New Lesson
+          </button>
+        </div>
       </div>
 
       {/* Date navigation + filters */}
@@ -535,6 +552,8 @@ export function SchedulePage() {
                   key={lesson.id}
                   lesson={lesson}
                   breakNames={breakStudentsFor(lesson)}
+                  coveringFor={lesson.substitute_for_teacher_id ? teacherName(lesson.substitute_for_teacher_id) : ''}
+                  onChangeTeacher={() => setChangeTeacherLesson(lesson)}
                   onCancel={() => setCancelModal(lesson.id)}
                   onFindMakeup={(studentId: string) => findMakeupMatches(lesson.id, studentId)}
                   onSetStatus={(status) => handleSetStatus(lesson.id, status)}
@@ -639,6 +658,7 @@ export function SchedulePage() {
                           `${lesson.start_time?.slice(0, 5)}${lesson.end_time ? ' – ' + lesson.end_time.slice(0, 5) : ''}`,
                           lesson.title || lesson.instrument?.name,
                           lesson.teacher?.full_name,
+                          lesson.substitute_for_teacher_id ? `Covering for ${teacherName(lesson.substitute_for_teacher_id)}` : '',
                           onBreak ? `On break: ${breakStudentsFor(lesson).join(', ')} — slot temporarily free` : '',
                         ].filter(Boolean).join(' · ')}
                       >
@@ -668,6 +688,13 @@ export function SchedulePage() {
             })}
           </div>
         </div>
+      )}
+
+      {changeTeacherLesson && (
+        <ChangeTeacherModal lesson={changeTeacherLesson} teachers={teachers} onClose={() => setChangeTeacherLesson(null)} />
+      )}
+      {showCover && (
+        <CoverTeacherModal teachers={teachers} defaultDate={selectedDate} defaultTeacherId={teacherFilter} onClose={() => setShowCover(false)} />
       )}
 
       {/* Cancel lesson modal */}
@@ -769,9 +796,11 @@ export function SchedulePage() {
   );
 }
 
-function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup, onSetStatus }: {
+function LessonRow({ lesson, breakNames = [], coveringFor = '', onChangeTeacher, onCancel, onFindMakeup, onSetStatus }: {
   lesson: any;
   breakNames?: string[];
+  coveringFor?: string;
+  onChangeTeacher: () => void;
   onCancel: () => void;
   onFindMakeup: (studentId: string) => void;
   onSetStatus: (status: 'completed' | 'scheduled') => void;
@@ -794,6 +823,12 @@ function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup, onSetStatu
         <div className="flex-1">
           <p className="font-semibold text-navy">{lesson.title || 'Lesson'}</p>
           <p className="text-sm text-gray-500">{lesson.teacher?.full_name} · {lesson.instrument?.name || ''}</p>
+          {coveringFor && (
+            <span className="inline-block mt-0.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600"
+              title={lesson.reassign_reason ? `Reason: ${lesson.reassign_reason}` : undefined}>
+              Covering for {coveringFor}
+            </span>
+          )}
           <p className="text-xs text-gray-400">{students.length} student(s)</p>
         </div>
         <div className="flex items-center gap-2">
@@ -823,7 +858,7 @@ function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup, onSetStatu
         </div>
       </div>
 
-      {expanded && students.length > 0 && (
+      {expanded && (
         <div className="ml-24 mt-3 space-y-1.5">
           {students.map((ls: any) => (
             <div key={ls.id} className="flex items-center justify-between text-sm py-1.5 px-3 rounded-lg bg-gray-50">
@@ -854,6 +889,14 @@ function LessonRow({ lesson, breakNames = [], onCancel, onFindMakeup, onSetStatu
                 className="text-xs font-semibold text-teal hover:underline"
               >
                 Mark completed
+              </button>
+            )}
+            {lesson.status === 'scheduled' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onChangeTeacher(); }}
+                className="text-xs font-semibold text-navy hover:text-coral flex items-center gap-1"
+              >
+                <UserCog size={12} /> Change teacher
               </button>
             )}
             {lesson.status === 'scheduled' && (

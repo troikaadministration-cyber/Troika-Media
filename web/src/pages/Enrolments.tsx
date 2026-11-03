@@ -10,7 +10,8 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { SlotPicker, slotError } from '../components/SlotPicker';
 import type { SelectedSlot } from '../components/SlotPicker';
-import { Plus, X, BookOpen, ChevronRight } from 'lucide-react';
+import { Plus, X, BookOpen, ChevronRight, CalendarPlus } from 'lucide-react';
+import { RenewalWizard } from '../components/RenewalWizard';
 import { useNavigate } from 'react-router-dom';
 import { lessonsForPlan } from '../lib/lessonCount';
 import { SkeletonList } from '../components/Skeleton';
@@ -134,6 +135,7 @@ export function EnrolmentsPage() {
   const enrolments = enrolmentsQ.data ?? [];
 
   const [modal, setModal] = useState(false);
+  const [renewOpen, setRenewOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -345,13 +347,23 @@ export function EnrolmentsPage() {
           <h1 className="text-2xl font-bold text-navy">Enrolments</h1>
           <p className="text-gray-500 text-sm mt-1">Annual lesson plans & payment instalments</p>
         </div>
-        <button
-          onClick={() => setModal(true)}
-          className="flex items-center gap-2 bg-teal text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal/80"
-        >
-          <Plus size={16} /> Enrol Student
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setRenewOpen(true)}
+            className="flex items-center gap-2 border border-teal text-teal px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal/5"
+          >
+            <CalendarPlus size={16} /> <span className="hidden sm:inline">Renew for next year</span><span className="sm:hidden">Renew</span>
+          </button>
+          <button
+            onClick={() => setModal(true)}
+            className="flex items-center gap-2 bg-teal text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal/80"
+          >
+            <Plus size={16} /> Enrol Student
+          </button>
+        </div>
       </div>
+
+      <RenewalWizard open={renewOpen} onClose={() => setRenewOpen(false)} />
 
       {enrolmentsQ.error && <ErrorBanner message={enrolmentsQ.error} onRetry={enrolmentsQ.refresh} />}
 
