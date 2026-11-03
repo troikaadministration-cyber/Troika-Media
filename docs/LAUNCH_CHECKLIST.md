@@ -44,24 +44,33 @@ update profiles set approved = true where email in ('…', '…');
 
 ## 3. Edge functions
 
-Deploy the changed functions (Supabase CLI, from the repo root):
+**From the browser (Supabase dashboard → Edge Functions):** for each function
+below, open it → **Code** → replace `index.ts` with the file from GitHub
+(branch `claude/eloquent-volta-5ba47h`, `supabase/functions/<name>/index.ts`,
+click **Raw** and copy) → **Deploy**.
 
-```bash
-supabase functions deploy generate-invoice
-supabase functions deploy send-payment-reminder
-supabase functions deploy find-makeup-matches
-supabase functions deploy payment-reminders
-supabase functions deploy sync-to-drive
-supabase functions deploy parse-curriculum-excel
-```
+- `generate-invoice`
+- `send-payment-reminder`
+- `find-makeup-matches`
+- `payment-reminders`
+- `sync-to-drive`
+- `parse-curriculum-excel`
+- **New:** `calendar-feed` — **Deploy a new function** named exactly
+  `calendar-feed`, paste the code, deploy, then in the function's settings turn
+  **Enforce JWT verification OFF** (calendar apps can't log in; the private
+  token in the link is the password).
+
+Or with the CLI from the repo root: `supabase functions deploy <name>` for each
+(the `supabase/config.toml` in the repo already turns JWT verification off for
+`calendar-feed`).
 
 Without this, **Mark Paid cannot generate invoices** (the deployed versions
-fail on every call), and three functions lack permission checks.
+fail on every call), three functions lack permission checks, and calendar sync
+links won't work.
 
-- [ ] If the daily `payment-reminders` job is scheduled, set a secret and send
-      it from the scheduler as header `x-cron-secret`:
-      `supabase secrets set CRON_SECRET=<long random string>`.
-      Coordinators can also trigger it manually while signed in.
+- [ ] If the daily `payment-reminders` job is scheduled, add the secret
+      **Edge Functions → Secrets → `CRON_SECRET`** (any long random string) and
+      send it from the scheduler as header `x-cron-secret`.
 
 ## 4. Auth settings (Supabase → Authentication)
 
