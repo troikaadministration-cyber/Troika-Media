@@ -8,7 +8,7 @@ import { setTheme } from '../../lib/theme';
 import {
   LayoutDashboard, Calendar, Users, CreditCard, BookOpen,
   LogOut, Menu, X, Bell, GraduationCap, CheckCheck, Music, IndianRupee, CalendarClock,
-  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList, Search, Sun, Moon
+  CalendarDays, CalendarOff, Home, MapPin, BarChart3, ClipboardList, Search, Sun, Moon, UsersRound
 } from 'lucide-react';
 
 const coordinatorNav = [
@@ -20,6 +20,7 @@ const coordinatorNav = [
   ]},
   { group: 'Teaching', items: [
     { to: '/teachers', label: 'Teachers', icon: GraduationCap },
+    { to: '/groups', label: 'Groups', icon: UsersRound },
     { to: '/teacher-schedules', label: 'Teacher Schedules', icon: CalendarClock },
     { to: '/curriculum', label: 'Curriculum', icon: BookOpen },
   ]},

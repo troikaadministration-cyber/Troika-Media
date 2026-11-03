@@ -23,6 +23,7 @@ const loaders = {
   TeacherScheduleAdmin: () => import('./pages/TeacherScheduleAdmin').then(m => ({ default: m.TeacherScheduleAdminPage })),
   Breaks: () => import('./pages/Breaks').then(m => ({ default: m.BreaksPage })),
   Locations: () => import('./pages/Locations').then(m => ({ default: m.LocationsPage })),
+  Groups: () => import('./pages/Groups').then(m => ({ default: m.GroupsPage })),
   Reports: () => import('./pages/Reports').then(m => ({ default: m.ReportsPage })),
   TeacherSchedule: () => import('./pages/TeacherSchedule').then(m => ({ default: m.TeacherSchedulePage })),
   TeacherCalendar: () => import('./pages/TeacherCalendar').then(m => ({ default: m.TeacherCalendarPage })),
@@ -66,6 +67,7 @@ const EnrolmentsPage = page('Enrolments');
 const TeacherScheduleAdminPage = page('TeacherScheduleAdmin');
 const BreaksPage = page('Breaks');
 const LocationsPage = page('Locations');
+const GroupsPage = page('Groups');
 const ReportsPage = page('Reports');
 const TeacherSchedulePage = page('TeacherSchedule');
 const TeacherCalendarPage = page('TeacherCalendar');
@@ -78,7 +80,7 @@ const StudentPaymentsPage = page('StudentPayments');
 
 const PREFETCH: Record<string, PageName[]> = {
   coordinator: ['Dashboard', 'Schedule', 'Students', 'Enrolments', 'Payments', 'StudentDetail', 'Teachers',
-    'TeacherScheduleAdmin', 'LessonRates', 'Reports', 'Breaks', 'Locations', 'CurriculumAdmin'],
+    'TeacherScheduleAdmin', 'LessonRates', 'Reports', 'Breaks', 'Locations', 'CurriculumAdmin', 'Groups'],
   teacher: ['TeacherSchedule', 'TeacherCalendar', 'TeacherCurriculum'],
   student: ['StudentShell', 'StudentHome', 'StudentLessonsList', 'StudentCalendar', 'StudentPayments'],
 };
@@ -241,6 +243,7 @@ export default function App() {
                 <Route path="/curriculum" element={<CurriculumAdminPage />} />
                 <Route path="/enrolments" element={<EnrolmentsPage />} />
                 <Route path="/teacher-schedules" element={<TeacherScheduleAdminPage />} />
+                <Route path="/groups" element={<GroupsPage />} />
                 <Route path="/breaks" element={<BreaksPage />} />
                 <Route path="/locations" element={<LocationsPage />} />
                 <Route path="/reports" element={<ReportsPage />} />
