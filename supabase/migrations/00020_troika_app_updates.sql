@@ -2290,3 +2290,187 @@ BEGIN
     PERFORM fn_recompute_lessons_used(r.student_id, NULL);
   END LOOP;
 END $$;
+
+
+-- ── 32. Substitute teacher: move lessons to another teacher ──────────────
+-- ── Substitute teacher: give a teacher's lessons to another teacher ─────────
+-- When a teacher can't come in, the coordinator reassigns one lesson (or a
+-- whole day of them) to a substitute. The lesson's teacher_id changes, so the
+-- substitute sees it (RLS is by teacher_id) and the absent teacher no longer
+-- does. substitute_for_teacher_id remembers who the lesson originally
+-- belonged to (set only the first time; cleared if it goes back to them).
+-- Lessons that would clash with the substitute's other lessons are skipped and
+-- reported instead of failing the whole batch.
+ALTER TABLE lessons
+  ADD COLUMN IF NOT EXISTS substitute_for_teacher_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS reassign_reason TEXT;
+
+CREATE OR REPLACE FUNCTION public.reassign_lessons(
+  p_lesson_ids UUID[],
+  p_new_teacher_id UUID,
+  p_new_start_time TIME DEFAULT NULL,
+  p_reason TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_reason TEXT := NULLIF(trim(COALESCE(p_reason, '')), '');
+  v_sub RECORD;
+  v_l RECORD;
+  v_clash RECORD;
+  v_start TIME;
+  v_end TIME;
+  v_moved INTEGER := 0;
+  v_skipped JSONB := '[]'::jsonb;
+  v_info JSONB := '[]'::jsonb;   -- one object per moved lesson, for notifications
+  v_id UUID;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can reassign lessons' USING ERRCODE = '42501';
+  END IF;
+  IF COALESCE(array_length(p_lesson_ids, 1), 0) = 0 THEN
+    RAISE EXCEPTION 'Choose at least one lesson to reassign';
+  END IF;
+
+  SELECT id, full_name INTO v_sub FROM profiles
+  WHERE id = p_new_teacher_id AND role = 'teacher' AND approved IS TRUE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Choose an approved teacher to take these lessons';
+  END IF;
+
+  -- Serialise reassignments onto the same substitute so two coordinators
+  -- can't both pass the clash check for the same slot.
+  PERFORM pg_advisory_xact_lock(hashtext('reassign_lessons:' || p_new_teacher_id::text));
+
+  -- Ids that don't exist.
+  FOR v_id IN
+    SELECT DISTINCT x FROM unnest(p_lesson_ids) AS x
+    WHERE x IS NOT NULL AND NOT EXISTS (SELECT 1 FROM lessons WHERE id = x)
+  LOOP
+    v_skipped := v_skipped || jsonb_build_object('lesson_id', v_id, 'reason', 'Lesson not found');
+  END LOOP;
+
+  FOR v_l IN
+    SELECT l.*, p.full_name AS teacher_name
+    FROM lessons l LEFT JOIN profiles p ON p.id = l.teacher_id
+    WHERE l.id = ANY(p_lesson_ids)
+    ORDER BY l.date, l.start_time
+    FOR UPDATE OF l
+  LOOP
+    IF v_l.status <> 'scheduled' THEN
+      v_skipped := v_skipped || jsonb_build_object('lesson_id', v_l.id,
+        'reason', format('Lesson is %s — only scheduled lessons can be reassigned', v_l.status));
+      CONTINUE;
+    END IF;
+    IF v_l.teacher_id = p_new_teacher_id THEN
+      v_skipped := v_skipped || jsonb_build_object('lesson_id', v_l.id,
+        'reason', format('Already taught by %s', v_sub.full_name));
+      CONTINUE;
+    END IF;
+
+    v_start := COALESCE(p_new_start_time, v_l.start_time);
+    -- Keep the lesson's length when the time changes.
+    v_end := CASE WHEN v_l.end_time IS NULL THEN NULL
+                  ELSE v_start + (v_l.end_time - v_l.start_time) END;
+    IF v_end IS NOT NULL AND v_end <= v_start THEN
+      v_skipped := v_skipped || jsonb_build_object('lesson_id', v_l.id,
+        'reason', 'The new time would run past midnight');
+      CONTINUE;
+    END IF;
+
+    -- Same rule as fn_check_teacher_double_booking (end = end_time or start + 45 min).
+    SELECT start_time, title INTO v_clash FROM lessons
+    WHERE id <> v_l.id
+      AND teacher_id = p_new_teacher_id
+      AND date = v_l.date
+      AND status <> 'cancelled'
+      AND start_time < COALESCE(v_end, v_start + INTERVAL '45 minutes')
+      AND COALESCE(end_time, start_time + INTERVAL '45 minutes') > v_start
+    ORDER BY start_time
+    LIMIT 1;
+    IF FOUND THEN
+      v_skipped := v_skipped || jsonb_build_object('lesson_id', v_l.id,
+        'reason', format('%s already has a lesson at %s (%s)', v_sub.full_name,
+                         to_char(v_clash.start_time, 'HH24:MI'), COALESCE(NULLIF(v_clash.title, ''), 'Lesson')));
+      CONTINUE;
+    END IF;
+
+    BEGIN
+      UPDATE lessons SET
+        teacher_id = p_new_teacher_id,
+        start_time = v_start,
+        end_time = v_end,
+        -- Back to the original teacher → no longer a substitution.
+        substitute_for_teacher_id = CASE WHEN substitute_for_teacher_id = p_new_teacher_id THEN NULL
+                                         ELSE COALESCE(substitute_for_teacher_id, v_l.teacher_id) END,
+        reassign_reason = CASE WHEN substitute_for_teacher_id = p_new_teacher_id THEN NULL
+                               ELSE COALESCE(v_reason, reassign_reason) END
+      WHERE id = v_l.id;
+    EXCEPTION WHEN raise_exception OR check_violation THEN
+      v_skipped := v_skipped || jsonb_build_object('lesson_id', v_l.id, 'reason', SQLERRM);
+      CONTINUE;
+    END;
+
+    v_moved := v_moved + 1;
+    v_info := v_info || jsonb_build_object(
+      'id', v_l.id, 'date', v_l.date, 'old_start', v_l.start_time, 'new_start', v_start,
+      'title', COALESCE(NULLIF(v_l.title, ''), 'Lesson'),
+      'old_teacher_id', v_l.teacher_id, 'old_teacher_name', COALESCE(v_l.teacher_name, 'another teacher'),
+      'is_return', v_l.substitute_for_teacher_id IS NOT DISTINCT FROM p_new_teacher_id);
+  END LOOP;
+
+  IF v_moved > 0 THEN
+    -- The substitute: one notification per day covered (or "back with you"
+    -- when lessons return to their original teacher).
+    INSERT INTO notifications (user_id, type, title, body)
+    SELECT p_new_teacher_id, 'lesson_updated',
+           CASE WHEN bool_and(m.is_return) THEN
+                  CASE WHEN count(*) = 1 THEN 'A lesson is back with you'
+                       ELSE format('%s lessons are back with you', count(*)) END
+                WHEN count(*) = 1 THEN 'You''re covering a lesson'
+                ELSE format('You''re covering %s lessons', count(*)) END,
+           format('%s %s %s: %s.%s',
+                  to_char(m.date, 'Dy DD Mon'),
+                  CASE WHEN bool_and(m.is_return) THEN 'from' ELSE 'for' END,
+                  string_agg(DISTINCT m.old_teacher_name, ', '),
+                  string_agg(to_char(m.new_start, 'HH24:MI') || ' ' || m.title, ', ' ORDER BY m.new_start),
+                  COALESCE(' Reason: ' || v_reason, ''))
+    FROM jsonb_to_recordset(v_info) AS m(id UUID, date DATE, new_start TIME, title TEXT, old_teacher_name TEXT, is_return BOOLEAN)
+    GROUP BY m.date;
+
+    -- The teacher(s) the lessons were taken from.
+    INSERT INTO notifications (user_id, type, title, body)
+    SELECT m.old_teacher_id, 'lesson_updated',
+           CASE WHEN count(*) = 1 THEN 'Your lesson has been reassigned'
+                ELSE format('%s of your lessons have been reassigned', count(*)) END,
+           format('%s: %s will be taught by %s.',
+                  to_char(m.date, 'Dy DD Mon'),
+                  string_agg(to_char(m.old_start, 'HH24:MI') || ' ' || m.title, ', ' ORDER BY m.old_start),
+                  v_sub.full_name)
+    FROM jsonb_to_recordset(v_info) AS m(id UUID, date DATE, old_start TIME, title TEXT, old_teacher_id UUID)
+    WHERE m.old_teacher_id IS NOT NULL
+    GROUP BY m.old_teacher_id, m.date;
+
+    -- Every student (with a login) in the moved lessons.
+    INSERT INTO notifications (user_id, type, title, body)
+    SELECT DISTINCT s.user_id, 'lesson_updated'::notification_type, 'Lesson teacher changed',
+           format('Your lesson (%s) on %s at %s will be taught by %s%s.',
+                  m.title, to_char(m.date, 'Dy DD Mon'), to_char(m.new_start, 'HH24:MI'), v_sub.full_name,
+                  CASE WHEN m.new_start <> m.old_start
+                       THEN format(' (moved from %s)', to_char(m.old_start, 'HH24:MI')) ELSE '' END)
+    FROM jsonb_to_recordset(v_info) AS m(id UUID, date DATE, old_start TIME, new_start TIME, title TEXT)
+    JOIN lesson_students ls ON ls.lesson_id = m.id
+    JOIN students s ON s.id = ls.student_id
+    WHERE s.user_id IS NOT NULL;
+  END IF;
+
+  RETURN jsonb_build_object('moved', v_moved, 'skipped', v_skipped);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.reassign_lessons(UUID[], UUID, TIME, TEXT) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.reassign_lessons(UUID[], UUID, TIME, TEXT) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
