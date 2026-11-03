@@ -1,5 +1,5 @@
 // web/src/components/SlotPicker.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId } from 'react';
 import { supabase } from '../lib/supabase';
 import { useQuery, unwrap } from '../lib/queryCache';
 import type { Instrument, TeacherScheduleTemplate } from '../types';
@@ -38,15 +38,55 @@ export type SelectedSlot = {
   title: string;
 };
 
-/** Why a slot can't be saved (mirrors enrol_student's checks), or null if it's fine. */
-export function slotError(slot: SelectedSlot | null): string | null {
+/**
+ * Why a slot can't be saved (mirrors enrol_student's checks), or null if it's fine.
+ * `timeOnly`: a class's 2nd/3rd weekly lesson — its instrument/title come from the first slot.
+ */
+export function slotError(slot: SelectedSlot | null, opts: { timeOnly?: boolean } = {}): string | null {
   if (!slot) return 'Please select or create a schedule slot';
   if (slot.mode === 'new') {
     if (!slot.startTime) return 'Choose a start time for the new slot';
     if (slot.endTime && slot.endTime <= slot.startTime) return 'End time must be after the start time';
-    if (!slot.instrumentId) return 'Choose an instrument for the new slot';
+    if (!opts.timeOnly && !slot.instrumentId) return 'Choose an instrument for the new slot';
   }
   return null;
+}
+
+const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+
+/**
+ * Problems across ALL weekly lessons of one class (2×/3× per week), mirroring
+ * enrol_student: every lesson needs a slot, the same slot can't be used twice,
+ * and two lessons on the same day can't overlap. null when fine.
+ */
+export function weeklySlotsError(slots: (SelectedSlot | null)[]): string | null {
+  for (let i = 0; i < slots.length; i++) {
+    const err = slotError(slots[i], { timeOnly: i > 0 });
+    if (err) return slots.length > 1 ? `Weekly lesson ${i + 1}: ${err.charAt(0).toLowerCase()}${err.slice(1)}` : err;
+  }
+  const s = slots as SelectedSlot[];
+  for (let i = 0; i < s.length; i++) {
+    for (let j = i + 1; j < s.length; j++) {
+      const a = s[i], b = s[j];
+      if (a.mode === 'existing' && b.mode === 'existing' && a.templateId === b.templateId) {
+        return `Weekly lessons ${i + 1} and ${j + 1} use the same slot — pick a different day or time`;
+      }
+      if (a.dayOfWeek !== b.dayOfWeek) continue;
+      const aS = toMin(a.startTime), bS = toMin(b.startTime);
+      const aE = a.endTime ? toMin(a.endTime) : aS + 45, bE = b.endTime ? toMin(b.endTime) : bS + 45;
+      if (aS < bE && bS < aE) {
+        return `Weekly lessons ${i + 1} and ${j + 1} overlap on ${DAY_NAMES[a.dayOfWeek]} — choose different days or times`;
+      }
+    }
+  }
+  return null;
+}
+
+/** enrol_student's p_extra_slots entry for a 2nd/3rd weekly lesson. */
+export function extraSlotParam(slot: SelectedSlot) {
+  return slot.mode === 'existing'
+    ? { template_id: slot.templateId }
+    : { day_of_week: slot.dayOfWeek, start_time: slot.startTime, end_time: slot.endTime || null };
 }
 
 interface SlotPickerProps {
@@ -54,11 +94,19 @@ interface SlotPickerProps {
   instruments: Instrument[];
   value: SelectedSlot | null;
   onChange: (slot: SelectedSlot | null) => void;
+  /** Slots already used by this class's other weekly lessons (shown, but can't be picked again). */
+  excludeTemplateIds?: string[];
+  /** 2nd/3rd weekly lesson: only day + time (instrument/title follow the first slot). */
+  timeOnly?: boolean;
+  /** Instrument/title a time-only new slot inherits (kept on the SelectedSlot for labels). */
+  inherit?: { instrumentId: string | null; title: string };
 }
 
-export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPickerProps) {
+export function SlotPicker({ teacherId, instruments, value, onChange, excludeTemplateIds = [], timeOnly = false, inherit }: SlotPickerProps) {
   const { data, loading, error: fetchError } = useTeacherTemplates(teacherId || null);
   const templates = data ?? [];
+  // Several pickers can be open for the same teacher (2×/week): keep their radio groups apart.
+  const radioName = `slot-${teacherId}-${useId()}`;
   const [newSlot, setNewSlot] = useState({
     dayOfWeek: 1,
     startTime: '09:00',
@@ -75,7 +123,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
   }, [value]);
 
   const isNewSelected = value?.mode === 'new';
-  const newSlotError = isNewSelected ? slotError(value) : null;
+  const newSlotError = isNewSelected ? slotError(value, { timeOnly }) : null;
 
   function selectExisting(tpl: ScheduleTemplateRow) {
     onChange({
@@ -97,8 +145,8 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
       dayOfWeek: updated.dayOfWeek,
       startTime: updated.startTime,
       endTime: updated.endTime,
-      instrumentId: updated.instrumentId || null,
-      title: updated.title,
+      instrumentId: timeOnly ? (inherit?.instrumentId ?? null) : (updated.instrumentId || null),
+      title: timeOnly ? (inherit?.title ?? '') : updated.title,
     });
   }
 
@@ -126,18 +174,25 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
             {slots.map((tpl) => {
               const inst = instruments.find(i => i.id === tpl.instrument_id);
               const isSelected = value?.mode === 'existing' && value.templateId === tpl.id;
+              const usedElsewhere = !isSelected && excludeTemplateIds.includes(tpl.id);
+              // A class's weekly lessons are all one instrument (enrol_student checks this too).
+              const otherInstrument = !isSelected && timeOnly && !!inherit?.instrumentId && !!tpl.instrument_id
+                && tpl.instrument_id !== inherit.instrumentId;
+              const blocked = usedElsewhere || otherInstrument;
               return (
                 <label
                   key={tpl.id}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer mb-1 transition-colors ${
-                    isSelected ? 'border-teal bg-teal/5' : 'border-gray-200 hover:border-gray-300'
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mb-1 transition-colors ${
+                    blocked ? 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                    : isSelected ? 'border-teal bg-teal/5 cursor-pointer' : 'border-gray-200 hover:border-gray-300 cursor-pointer'
                   }`}
                 >
                   {/* Fix 5 — Scope radio name to instance */}
                   <input
                     type="radio"
-                    name={`slot-${teacherId}`}
+                    name={radioName}
                     checked={isSelected}
+                    disabled={blocked}
                     onChange={() => selectExisting(tpl)}
                     className="text-teal"
                   />
@@ -148,6 +203,8 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
                     </span>
                     <span className="text-sm text-gray-500 ml-2">{tpl.title || 'Lesson'}</span>
                     {inst && <span className="text-sm ml-1">{inst.icon}</span>}
+                    {usedElsewhere && <span className="text-xs text-gray-400 ml-2">(already chosen for another weekly lesson)</span>}
+                    {!usedElsewhere && otherInstrument && <span className="text-xs text-gray-400 ml-2">(different instrument)</span>}
                   </div>
                 </label>
               );
@@ -165,7 +222,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
         {/* Fix 5 — Scope radio name to instance */}
         <input
           type="radio"
-          name={`slot-${teacherId}`}
+          name={radioName}
           checked={isNewSelected}
           onChange={() => updateNewSlot({})}
           className="mt-0.5 text-coral cursor-pointer"
@@ -209,7 +266,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              {!timeOnly && <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs text-gray-500 mb-0.5">Instrument</label>
                   <select
@@ -232,7 +289,7 @@ export function SlotPicker({ teacherId, instruments, value, onChange }: SlotPick
                     className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
                   />
                 </div>
-              </div>
+              </div>}
               {newSlotError && <p className="text-xs text-coral">{newSlotError}</p>}
             </div>
           )}

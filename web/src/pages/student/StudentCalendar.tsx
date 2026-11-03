@@ -6,9 +6,10 @@ import { useStudentLessonsMonth } from '../../hooks/useStudentLessons';
 import { Skeleton } from '../../components/Skeleton';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { CalendarSyncButton } from '../../components/CalendarSyncButton';
+import { ChildTag } from '../../components/student/shared';
 
 export function StudentCalendar() {
-  const { studentId } = useStudentPortal();
+  const { visibleStudentIds, childLabel, isFamily } = useStudentPortal();
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -18,7 +19,7 @@ export function StudentCalendar() {
   const month = calMonth.getMonth();
   const ym = `${year}-${String(month + 1).padStart(2, '0')}`;
   // Only the visible month is fetched (cached per month).
-  const { lessons: allLessons, loading, error, refresh } = useStudentLessonsMonth(studentId, ym);
+  const { lessons: allLessons, loading, error, refresh } = useStudentLessonsMonth(visibleStudentIds, ym);
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -44,7 +45,9 @@ export function StudentCalendar() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-navy">Calendar</h1>
-          <p className="text-gray-500 text-sm mt-1">All your lessons, month by month.</p>
+          <p className="text-gray-500 text-sm mt-1">
+            {isFamily ? 'Lessons, month by month.' : 'All your lessons, month by month.'}
+          </p>
         </div>
         <CalendarSyncButton />
       </div>
@@ -107,7 +110,7 @@ export function StudentCalendar() {
                               : l.lesson.status === 'cancelled' ? 'bg-gray-300'
                               : 'bg-teal'
                           }`}
-                          title={`${l.lesson.start_time?.slice(0, 5)} - ${l.lesson.title}`}
+                          title={`${l.lesson.start_time?.slice(0, 5)} - ${l.lesson.title}${childLabel(l.student_id) ? ` (${childLabel(l.student_id)})` : ''}`}
                         />
                       ))}
                     </div>
@@ -141,7 +144,10 @@ export function StudentCalendar() {
                       <p className="text-[10px] text-gray-400">{new Date(item.lesson.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' })}</p>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-navy truncate">{item.lesson.title}</p>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <ChildTag studentId={item.student_id} />
+                        <p className="text-sm font-medium text-navy truncate">{item.lesson.title}</p>
+                      </div>
                       <p className="text-[10px] text-gray-500">
                         {item.lesson.start_time?.slice(0, 5)}
                         {teacher && ` · ${teacher}`}

@@ -1,14 +1,20 @@
 import { toDateStr } from '../../lib/dates';
 import { useState } from 'react';
 import { BookOpen, CreditCard, AlertCircle, Clock, Download } from 'lucide-react';
-import { useStudentPortal } from './StudentPortalContext';
+import { useStudentPortal, type Enrolment, type Payment } from './StudentPortalContext';
 import { supabase } from '../../lib/supabase';
 import { openInvoiceHtml } from '../../lib/invoice';
 import { useToast } from '../../contexts/ToastContext';
 import { fmtDate, fmtMoney } from './format';
 
 export function StudentPayments() {
-  const { enrolments, payments } = useStudentPortal();
+  const { enrolments, payments, children, isFamily, selectedChildId, childLabel } = useStudentPortal();
+  // Family login showing "All": group everything by child.
+  const familyAll = isFamily && !selectedChildId;
+  const forChild = (studentId: string) => {
+    const name = childLabel(studentId);
+    return name ? ` for ${name}` : '';
+  };
   const { showToast } = useToast();
   const [opening, setOpening] = useState<string | null>(null);
 
@@ -29,13 +35,14 @@ export function StudentPayments() {
   const today = toDateStr(new Date());
   const overdue = payments.filter((p) => !p.paid_date && p.due_date < today);
   const nextPay = payments.find((p) => !p.paid_date && p.due_date >= today);
-  const paidCount = payments.filter((p) => p.paid_date).length;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-navy">Payments</h1>
-        <p className="text-gray-500 text-sm mt-1">Your enrolment, fees and invoices.</p>
+        <p className="text-gray-500 text-sm mt-1">
+          {familyAll ? 'Enrolments, fees and invoices for each child.' : 'Your enrolment, fees and invoices.'}
+        </p>
       </div>
 
       {/* Alerts */}
@@ -47,7 +54,7 @@ export function StudentPayments() {
           <div>
             <p className="text-sm font-medium text-coral">Overdue Payment</p>
             <p className="text-xs text-coral/80">
-              {fmtMoney(overdue[0].amount)} was due on {fmtDate(overdue[0].due_date, { month: 'short', day: 'numeric' })}
+              {fmtMoney(overdue[0].amount)}{forChild(overdue[0].student_id)} was due on {fmtDate(overdue[0].due_date, { month: 'short', day: 'numeric' })}
             </p>
           </div>
         </div>
@@ -60,12 +67,42 @@ export function StudentPayments() {
           <div>
             <p className="text-sm font-medium text-yellow-700">Next Payment</p>
             <p className="text-xs text-yellow-600">
-              {fmtMoney(nextPay.amount)} due on {fmtDate(nextPay.due_date, { month: 'short', day: 'numeric' })}
+              {fmtMoney(nextPay.amount)}{forChild(nextPay.student_id)} due on {fmtDate(nextPay.due_date, { month: 'short', day: 'numeric' })}
             </p>
           </div>
         </div>
       )}
 
+      {familyAll ? (
+        children.map((c) => (
+          <section key={c.id} className="space-y-4" aria-label={c.full_name}>
+            <h2 className="text-lg font-bold text-navy pt-2">{c.full_name}</h2>
+            <PaymentsBlock
+              enrolments={enrolments.filter((e) => e.student_id === c.id)}
+              payments={payments.filter((p) => p.student_id === c.id)}
+              today={today} opening={opening} onInvoice={downloadInvoice}
+            />
+          </section>
+        ))
+      ) : (
+        <PaymentsBlock enrolments={enrolments} payments={payments} today={today} opening={opening} onInvoice={downloadInvoice} />
+      )}
+    </div>
+  );
+}
+
+function PaymentsBlock({
+  enrolments, payments, today, opening, onInvoice,
+}: {
+  enrolments: Enrolment[];
+  payments: Payment[];
+  today: string;
+  opening: string | null;
+  onInvoice: (pdfPath: string | null) => void;
+}) {
+  const paidCount = payments.filter((p) => p.paid_date).length;
+  return (
+    <>
       {/* Enrolment summary */}
       {enrolments.map((enr) => {
         const enrRemaining = enr.total_lessons - enr.lessons_used;
@@ -144,7 +181,7 @@ export function StudentPayments() {
                         Paid {fmtDate(p.paid_date)}
                         {p.invoice && (
                           <button
-                            onClick={() => downloadInvoice(p.invoice!.pdf_path)}
+                            onClick={() => onInvoice(p.invoice!.pdf_path)}
                             disabled={!p.invoice.pdf_path || opening === p.invoice.pdf_path}
                             className="ml-2 text-teal hover:underline disabled:no-underline disabled:text-gray-400 inline-flex items-center gap-1"
                             title={p.invoice.pdf_path ? 'Download invoice' : 'Invoice not available yet'}
@@ -169,6 +206,6 @@ export function StudentPayments() {
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }

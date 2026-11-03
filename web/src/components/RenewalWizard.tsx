@@ -11,14 +11,17 @@ import { useToast } from '../contexts/ToastContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { ErrorBanner } from './ErrorBanner';
 import { SkeletonList } from './Skeleton';
-import { SlotPicker, slotError } from './SlotPicker';
+import { SlotPicker, weeklySlotsError, extraSlotParam } from './SlotPicker';
 import type { SelectedSlot } from './SlotPicker';
-import { lessonsForPlan } from '../lib/lessonCount';
+import {
+  lessonsForPlan, lessonsForClass, lessonsBreakdown, timesPerWeekLabel, normaliseTimesPerWeek, TIMES_PER_WEEK_OPTIONS,
+} from '../lib/lessonCount';
 import { computeDiscount } from '../lib/fees';
 import { toDateStr } from '../lib/dates';
 import {
   useRenewalCandidates, fetchRenewalCandidates, matchRenewed, enrolClass, releaseSlot, runPool,
-  type RenewalCandidate, type RenewalClass, type RenewedEnrolment, type EnrolParams,
+  classTimesPerWeek, classSlotIds,
+  type RenewalCandidate, type RenewalClass, type RenewedEnrolment, type EnrolParams, type RenewalSlot,
 } from '../hooks/useRenewals';
 import type { Instrument, Profile } from '../types';
 
@@ -50,11 +53,15 @@ interface ClassEdit {
   changeSlot?: boolean;   // coordinator chose to move the class to another slot
   teacherId?: string;
   slot?: SelectedSlot | null;
+  times?: number;                       // times per week when re-picking slots (default: as last year)
+  extraSlots?: (SelectedSlot | null)[]; // 2nd/3rd weekly slots when re-picking
 }
 interface AddedClass {
   key: string;
   teacherId: string;
   slot: SelectedSlot | null;
+  times: number;
+  extraSlots: (SelectedSlot | null)[];
   rateText: string;
   plan: string;
 }
@@ -81,7 +88,9 @@ interface PlannedItem {
   label: string;
   rate: number;
   plan: string;
+  times: number;
   lessons: number;
+  lessonsText: string;   // "12 lessons (6 × 2 per week)"
   totalFee: number;
   regFee: number;
   error: string | null;
@@ -102,11 +111,23 @@ function adjustedRate(rate: number, s: Settings) {
   return Number(rate);
 }
 
-const needsSlot = (c: RenewalClass) => !c.slot || !c.slot.is_active || !c.teacher_id;
+/** A class must be re-slotted when any of its weekly slots is gone/inactive or has another teacher. */
+const needsSlot = (c: RenewalClass) => !c.slot || !c.slot.is_active || !c.teacher_id
+  || (c.extra_slots ?? []).some(x => !x.is_active || x.teacher_id !== c.slot!.teacher_id)
+  || (c.extra_slots?.length ?? 0) + 1 < classTimesPerWeek(c); // an extra slot was deleted
 
 function slotLabel(slot: { dayOfWeek: number; startTime: string; endTime?: string | null }) {
   return `${DAYS[slot.dayOfWeek]} ${hhmm(slot.startTime)}${slot.endTime ? `–${hhmm(slot.endTime)}` : ''}`;
 }
+
+const toSelected = (x: RenewalSlot): SelectedSlot => ({
+  mode: 'existing', templateId: x.id, dayOfWeek: x.day_of_week, startTime: x.start_time,
+  endTime: x.end_time, instrumentId: x.instrument_id, title: x.title,
+});
+
+/** Pad/trim the extra weekly slots to times − 1 entries. */
+const sizeExtras = (extras: (SelectedSlot | null)[] | undefined, times: number) =>
+  Array.from({ length: normaliseTimesPerWeek(times) - 1 }, (_, i) => extras?.[i] ?? null);
 
 function buildPlan(
   c: RenewalCandidate, edit: StudentEdit | undefined, s: Settings,
@@ -128,8 +149,10 @@ function buildPlan(
     teacherId: string, slot: SelectedSlot | null, slotIssue: string | null,
     discount: Pick<RenewalClass, 'discount_primary' | 'discount_multilesson' | 'discount_value'>,
     lessonRateId: string | null, instrumentId: string | null,
+    extraSlots: (SelectedSlot | null)[] = [],
   ): PlannedItem => {
-    const lessons = lessonsForPlan(plan, s.startDate);
+    const times = 1 + extraSlots.length;
+    const lessons = lessonsForClass(plan, s.startDate, times);
     const totalFee = computeDiscount(rate * lessons, {
       primary: discount.discount_primary, plan, specialAmount: Number(discount.discount_value) || 0,
       multilesson: discount.discount_multilesson,
@@ -139,7 +162,8 @@ function buildPlan(
       : slotIssue
       ?? (!(rate >= 0) ? 'Rate cannot be negative'
         : plan !== 'trial' && !(rate > 0) ? 'Enter a rate above ₹0 (or choose Trial)' : null);
-    const label = [instrumentName(instrumentId) || 'Class', teacherName(teacherId), slot ? slotLabel(slot) : null]
+    const when = [slot, ...extraSlots].filter((x): x is SelectedSlot => !!x).map(slotLabel).join(' + ');
+    const label = [instrumentName(instrumentId) || 'Class', timesPerWeekLabel(times), teacherName(teacherId), when || null]
       .filter(Boolean).join(' · ');
     const params: EnrolParams | null = error || !slot ? null : {
       p_student_id: c.student_id,
@@ -163,8 +187,11 @@ function buildPlan(
             p_day_of_week: slot.dayOfWeek, p_start_time: slot.startTime, p_end_time: slot.endTime || null,
             p_instrument_id: slot.instrumentId, p_title: slot.title.trim() || null,
           }),
+      // 2× / 3× per week: the same pattern again (one enrolment, one instalment schedule).
+      p_extra_slots: (extraSlots as SelectedSlot[]).map(extraSlotParam),
     };
-    return { key, kind, label, rate, plan, lessons, totalFee, regFee, error, params };
+    const lessonsText = lessonsBreakdown(plan, s.startDate, times);
+    return { key, kind, label, rate, plan, times, lessons, lessonsText, totalFee, regFee, error, params };
   };
 
   for (const cl of open) {
@@ -174,24 +201,26 @@ function buildPlan(
     const plan = e?.plan ?? (s.defaultPlan === 'keep' ? cl.payment_plan : s.defaultPlan);
     let teacherId = cl.teacher_id ?? '';
     let slot: SelectedSlot | null = null;
+    let extraSlots: (SelectedSlot | null)[] = [];
     let slotIssue: string | null = null;
     if (e?.changeSlot || needsSlot(cl)) {
       teacherId = e?.teacherId ?? cl.teacher_id ?? '';
       slot = e?.slot ?? null;
-      slotIssue = teacherId ? slotError(slot) : null;
+      extraSlots = sizeExtras(e?.extraSlots, e?.times ?? classTimesPerWeek(cl));
+      slotIssue = teacherId ? weeklySlotsError([slot, ...extraSlots]) : null;
     } else if (cl.slot) {
+      // Same weekly pattern as last year (2× per week stays 2× per week, same slots).
       teacherId = cl.slot.teacher_id;
-      slot = {
-        mode: 'existing', templateId: cl.slot.id, dayOfWeek: cl.slot.day_of_week, startTime: cl.slot.start_time,
-        endTime: cl.slot.end_time, instrumentId: cl.slot.instrument_id, title: cl.slot.title,
-      };
+      slot = toSelected(cl.slot);
+      extraSlots = (cl.extra_slots ?? []).map(toSelected);
     }
     items.push(make(cl.enrolment_id, 'kept', rate, plan, teacherId, slot, slotIssue, cl,
-      cl.lesson_rate_id, slot?.instrumentId ?? cl.instrument_id));
+      cl.lesson_rate_id, slot?.instrumentId ?? cl.instrument_id, extraSlots));
   }
   for (const a of added) {
-    items.push(make(a.key, 'added', Number(a.rateText), a.plan, a.teacherId, a.slot,
-      a.teacherId ? slotError(a.slot) : null, first, null, a.slot?.instrumentId ?? null));
+    const extraSlots = sizeExtras(a.extraSlots, a.times);
+    items.push(make(a.key, 'added', a.rateText.trim() === '' ? 0 : Number(a.rateText), a.plan, a.teacherId, a.slot,
+      a.teacherId ? weeklySlotsError([a.slot, ...extraSlots]) : null, first, null, a.slot?.instrumentId ?? null, extraSlots));
   }
   // Renewed earlier with the rest dropped back then (and untouched now): nothing left to do.
   if (items.length === 0 && byClass.size > 0
@@ -376,12 +405,14 @@ function RenewalPanel({ onClose }: { onClose: () => void }) {
         }
       }
       for (const d of plan.dropped) {
-        if (!d.template_id) continue;
-        try { await releaseSlot(c.student_id, d.template_id, toYear); }
-        catch (err) {
-          hadFailure.add(c.student_id);
-          rows.push({ student: c.full_name, label: `${d.instrument_name ?? 'Class'} (dropped)`, status: 'failed',
-            message: `Couldn't take them off the weekly slot: ${errorMessage(err, 'error')}` });
+        // Every weekly slot of the class (2× per week = 2 slots).
+        for (const tid of classSlotIds(d)) {
+          try { await releaseSlot(c.student_id, tid, toYear); }
+          catch (err) {
+            hadFailure.add(c.student_id);
+            rows.push({ student: c.full_name, label: `${d.instrument_name ?? 'Class'} (dropped)`, status: 'failed',
+              message: `Couldn't take them off the weekly slot: ${errorMessage(err, 'error')}` });
+          }
         }
       }
     });
@@ -592,7 +623,8 @@ function SettingsPanel(p: {
         </div>
       </div>
       <p className="text-[11px] text-gray-400">
-        Lessons per class follow the start month ({lessonsForPlan('3_instalments', p.startDate)} for a {new Date(p.startDate + 'T00:00:00').toLocaleDateString('en-IN', { month: 'long' })} start).
+        Lessons per class follow the start month ({lessonsForPlan('3_instalments', p.startDate)} for a {new Date(p.startDate + 'T00:00:00').toLocaleDateString('en-IN', { month: 'long' })} start)
+        × times per week (a class twice a week gets double).
         Each student's existing discounts are kept. Dropped classes keep their {p.fromYear} history.
       </p>
     </div>
@@ -617,13 +649,13 @@ const StudentCard = memo(function StudentCard({ c, plan, edit, settings, teacher
 
   function addClass() {
     const first = c.classes[0];
-    const rate = first ? adjustedRate(first.rate_per_lesson, settings) : 0;
     const planV = settings.defaultPlan === 'keep' ? (first?.payment_plan ?? '3_instalments') : settings.defaultPlan;
     onUpdate(sid, e => ({
       ...e,
       added: [...(e.added ?? []), {
         key: `add-${sid}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        teacherId: '', slot: null, rateText: String(rate), plan: planV,
+        // A brand-new class: the coordinator types its rate (never copied from another class).
+        teacherId: '', slot: null, times: 1, extraSlots: [], rateText: '', plan: planV,
       }],
     }));
   }
@@ -659,8 +691,9 @@ const StudentCard = memo(function StudentCard({ c, plan, edit, settings, teacher
             const r = plan.renewedByClass.get(cl.enrolment_id);
             const instName = cl.instrument_name || 'Class';
             const current = `${inr(cl.rate_per_lesson)}/lesson · ${planLabel(cl.payment_plan)}`;
+            const times = classTimesPerWeek(cl);
             const where = cl.slot && cl.slot.is_active
-              ? `${cl.teacher_name ?? ''} · ${DAYS[cl.slot.day_of_week]} ${hhmm(cl.slot.start_time)}`
+              ? `${cl.teacher_name ?? ''} · ${[cl.slot, ...(cl.extra_slots ?? [])].map(x => `${DAYS[x.day_of_week]} ${hhmm(x.start_time)}`).join(' + ')}`
               : cl.teacher_name ?? '';
             if (r) {
               return (
@@ -679,6 +712,7 @@ const StudentCard = memo(function StudentCard({ c, plan, edit, settings, teacher
               <div key={cl.enrolment_id} className={`rounded-lg border px-3 py-2 sm:ml-7 ${dropped ? 'border-dashed border-gray-200' : 'border-gray-100'}`}>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className={`text-sm font-medium ${dropped ? 'text-gray-400 line-through' : 'text-navy'}`}>{instName}</span>
+                  {times > 1 && <span className="text-[11px] bg-teal/10 text-teal font-semibold px-1.5 py-0.5 rounded">{timesPerWeekLabel(times)}</span>}
                   <span className="text-xs text-gray-500">{where}</span>
                   {needsSlot(cl) && <span className="text-[11px] bg-yellow-light text-yellow font-semibold px-1.5 py-0.5 rounded">needs a slot</span>}
                   {defaultDrop(cl, c) && e?.drop === undefined && <span className="text-[11px] text-gray-400">(left this slot)</span>}
@@ -696,15 +730,18 @@ const StudentCard = memo(function StudentCard({ c, plan, edit, settings, teacher
                     onRate={(v) => setClass(cl.enrolment_id, { rateText: v })}
                     onPlan={(v) => setClass(cl.enrolment_id, { plan: v })}
                     extra={!needsSlot(cl) && (
-                      <button onClick={() => setClass(cl.enrolment_id, { changeSlot: !e?.changeSlot, slot: null, teacherId: undefined })}
+                      <button onClick={() => setClass(cl.enrolment_id, { changeSlot: !e?.changeSlot, slot: null, teacherId: undefined, times: undefined, extraSlots: undefined })}
                         className="text-xs text-teal hover:underline">{e?.changeSlot ? 'Keep current slot' : 'Change slot'}</button>
                     )}
                   />
                 )}
                 {pickSlot && (
                   <SlotChooser teachers={teachers} instruments={instruments} teacherId={teacherId} slot={e?.slot ?? null}
-                    onTeacher={(t) => setClass(cl.enrolment_id, { teacherId: t, slot: null })}
-                    onSlot={(s) => setClass(cl.enrolment_id, { slot: s })} />
+                    times={e?.times ?? times} extraSlots={sizeExtras(e?.extraSlots, e?.times ?? times)}
+                    onTeacher={(t) => setClass(cl.enrolment_id, { teacherId: t, slot: null, extraSlots: [] })}
+                    onSlot={(s) => setClass(cl.enrolment_id, { slot: s })}
+                    onTimes={(t) => setClass(cl.enrolment_id, { times: t, extraSlots: sizeExtras(e?.extraSlots, t) })}
+                    onExtraSlots={(x) => setClass(cl.enrolment_id, { extraSlots: x })} />
                 )}
               </div>
             );
@@ -727,7 +764,10 @@ const StudentCard = memo(function StudentCard({ c, plan, edit, settings, teacher
                     className="ml-auto text-xs text-gray-400 hover:text-coral">Remove</button>
                 </div>
                 <SlotChooser teachers={teachers} instruments={instruments} teacherId={a.teacherId} slot={a.slot}
-                  onTeacher={(t) => setAdded(a.key, { teacherId: t, slot: null })} onSlot={(s) => setAdded(a.key, { slot: s })} />
+                  times={a.times} extraSlots={sizeExtras(a.extraSlots, a.times)}
+                  onTeacher={(t) => setAdded(a.key, { teacherId: t, slot: null, extraSlots: [] })} onSlot={(s) => setAdded(a.key, { slot: s })}
+                  onTimes={(t) => setAdded(a.key, { times: t, extraSlots: sizeExtras(a.extraSlots, t) })}
+                  onExtraSlots={(x) => setAdded(a.key, { extraSlots: x })} />
                 {item && (
                   <ItemControls item={item} rateValue={a.rateText}
                     onRate={(v) => setAdded(a.key, { rateText: v })} onPlan={(v) => setAdded(a.key, { plan: v })} />
@@ -753,13 +793,14 @@ function ItemControls({ item, rateValue, onRate, onPlan, extra }: {
       <label className="flex items-center gap-1 text-xs text-gray-500">
         New rate ₹
         <input type="number" min={0} inputMode="decimal" value={rateValue} onChange={(e) => onRate(e.target.value)}
+          placeholder="e.g. 1200"
           className="w-24 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-navy" aria-label="New rate per lesson" />
       </label>
       <select value={item.plan} onChange={(e) => onPlan(e.target.value)} aria-label="Payment plan"
         className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm">
         {PLANS.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}
       </select>
-      <span className="text-xs text-gray-500">{item.lessons} lessons · <span className="font-semibold text-navy">{inr(item.totalFee + item.regFee)}</span>
+      <span className="text-xs text-gray-500">{item.lessonsText} · <span className="font-semibold text-navy">{inr(item.totalFee + item.regFee)}</span>
         {item.regFee > 0 && <span className="text-gray-400"> (incl. {inr(item.regFee)} reg.)</span>}</span>
       {extra}
       {item.error && <span className="w-full text-xs text-coral">{item.error}</span>}
@@ -767,31 +808,62 @@ function ItemControls({ item, rateValue, onRate, onPlan, extra }: {
   );
 }
 
-/** Teacher + weekly slot. Collapses to a one-line summary once an existing slot is picked. */
-function SlotChooser({ teachers, instruments, teacherId, slot, onTeacher, onSlot }: {
+/** Teacher + times per week + one weekly slot per lesson of the week. */
+function SlotChooser({ teachers, instruments, teacherId, slot, times, extraSlots, onTeacher, onSlot, onTimes, onExtraSlots }: {
   teachers: Profile[]; instruments: Instrument[]; teacherId: string; slot: SelectedSlot | null;
+  times: number; extraSlots: (SelectedSlot | null)[];
   onTeacher: (id: string) => void; onSlot: (s: SelectedSlot | null) => void;
+  onTimes: (t: number) => void; onExtraSlots: (x: (SelectedSlot | null)[]) => void;
+}) {
+  const all = [slot, ...extraSlots];
+  const usedBy = (i: number) => all.filter((x, j) => j !== i && x?.mode === 'existing')
+    .map(x => (x as Extract<SelectedSlot, { mode: 'existing' }>).templateId);
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex flex-wrap gap-2">
+        <select value={teacherId} onChange={(e) => onTeacher(e.target.value)} aria-label="Teacher"
+          className="w-full sm:w-64 border border-gray-200 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">Choose teacher…</option>
+          {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+        </select>
+        <select value={normaliseTimesPerWeek(times)} onChange={(e) => onTimes(Number(e.target.value))} aria-label="Times per week"
+          className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm">
+          {TIMES_PER_WEEK_OPTIONS.map(t => <option key={t} value={t}>{t}× per week</option>)}
+        </select>
+      </div>
+      {teacherId && all.map((s, i) => (
+        <OneSlot key={`${teacherId}-${i}`} label={all.length > 1 ? `Weekly lesson ${i + 1}` : null}
+          teacherId={teacherId} instruments={instruments} slot={s} exclude={usedBy(i)} timeOnly={i > 0}
+          inherit={i > 0 ? { instrumentId: slot?.instrumentId ?? null, title: slot?.title ?? '' } : undefined}
+          onSlot={(v) => (i === 0 ? onSlot(v) : onExtraSlots(extraSlots.map((x, j) => (j === i - 1 ? v : x))))} />
+      ))}
+    </div>
+  );
+}
+
+/** One weekly slot. Collapses to a one-line summary once an existing slot is picked. */
+function OneSlot({ label, teacherId, instruments, slot, exclude, timeOnly, inherit, onSlot }: {
+  label: string | null; teacherId: string; instruments: Instrument[]; slot: SelectedSlot | null;
+  exclude: string[]; timeOnly: boolean; inherit?: { instrumentId: string | null; title: string };
+  onSlot: (s: SelectedSlot | null) => void;
 }) {
   const [open, setOpen] = useState(!slot || slot.mode === 'new');
   const inst = instruments.find(i => i.id === slot?.instrumentId);
   return (
-    <div className="mt-2 space-y-2">
-      <select value={teacherId} onChange={(e) => { onTeacher(e.target.value); setOpen(true); }} aria-label="Teacher"
-        className="w-full sm:w-64 border border-gray-200 rounded-lg px-2 py-1.5 text-sm">
-        <option value="">Choose teacher…</option>
-        {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
-      </select>
-      {teacherId && (open ? (
+    <div>
+      {label && <p className="text-xs font-semibold text-gray-500 mb-1">{label}</p>}
+      {open || !slot ? (
         <div className="max-h-72 overflow-y-auto pr-1">
           <SlotPicker teacherId={teacherId} instruments={instruments} value={slot}
+            excludeTemplateIds={exclude} timeOnly={timeOnly} inherit={inherit}
             onChange={(s) => { onSlot(s); if (s?.mode === 'existing') setOpen(false); }} />
         </div>
-      ) : slot && (
+      ) : (
         <p className="text-xs text-gray-600">
           Slot: <span className="font-medium text-navy">{slotLabel(slot)}</span> {inst ? `· ${inst.name}` : ''}{' '}
           <button onClick={() => setOpen(true)} className="text-teal hover:underline ml-1">Change</button>
         </p>
-      ))}
+      )}
     </div>
   );
 }
