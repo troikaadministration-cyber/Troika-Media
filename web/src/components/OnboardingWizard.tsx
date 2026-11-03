@@ -126,6 +126,10 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
   });
   const [classes, setClasses] = useState<ClassRow[]>([emptyClass()]);
   const [savedClasses, setSavedClasses] = useState<number[]>([]);
+  // Family mode: adding a sibling to a parent's (already approved) login — one email, several children.
+  const [familyLoginId, setFamilyLoginId] = useState<string | null>(null);
+  // Final step (opened from a pending profile): who was just set up on this login.
+  const [doneNames, setDoneNames] = useState<string[]>([]);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -133,6 +137,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       setStep(0);
       setError(null);
       setStudentId(null);
+      setFamilyLoginId(null);
+      setDoneNames([]);
       setS1({ full_name: pendingProfile?.full_name ?? '', phone: '', email: pendingProfile?.email ?? '', location_id: '', address: '' });
       setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0', discount_primary: 'none', discount_special: '0', discount_multilesson: false });
       setClasses([emptyClass()]);
@@ -155,9 +161,23 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
 
   if (!open) return null;
 
+  // "Add another child to this login": a NEW student on the same login. Same email,
+  // phone, location (and address); the coordinator types the child's name.
+  function startSibling() {
+    if (!pendingProfile) return;
+    setFamilyLoginId(pendingProfile.id);
+    setStudentId(null);
+    setS1(prev => ({ ...prev, full_name: '' }));
+    setS2({ payment_plan: '3_instalments', academic_year: new Date().getFullYear().toString(), registration_fee: '0', discount_primary: 'none', discount_special: '0', discount_multilesson: false });
+    setClasses([emptyClass()]);
+    setSavedClasses([]);
+    setError(null);
+    setStep(0);
+  }
+
   // Step 1 → validate only, no DB writes
   function handleStep1Next() {
-    if (!s1.full_name.trim()) { setError('Full name is required'); return; }
+    if (!s1.full_name.trim()) { setError("Enter the child's (student's) full name"); return; }
     setError(null);
     // Classes default to the student's location (each can be changed).
     setClasses(prev => prev.map(c => c.location_id ? c : { ...c, location_id: s1.location_id }));
@@ -212,13 +232,18 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       let resolvedStudentId = studentId;
       if (!resolvedStudentId) {
         let existingId: string | null = null;
-        if (pendingProfile) {
-          // A self-registered student was already linked to a students row at sign-up.
-          const { data: existing, error: findErr } = await supabase
-            .from('students').select('id').eq('user_id', pendingProfile.id).maybeSingle();
+        if (pendingProfile && !familyLoginId) {
+          // First child: sign-up already linked a students row to this login. Reuse it only
+          // when exactly one not-yet-enrolled row exists (a login can hold several children).
+          const { data: rows, error: findErr } = await supabase
+            .from('students').select('id, created_at, student_enrolments(count)')
+            .eq('user_id', pendingProfile.id).order('created_at').limit(50);
           if (findErr) throw findErr;
-          if (existing) existingId = existing.id;
+          const unenrolled = (rows ?? []).filter((r: { student_enrolments?: { count: number }[] }) =>
+            !(r.student_enrolments?.[0]?.count));
+          if (unenrolled.length === 1) existingId = unenrolled[0].id;
         }
+        // Sibling mode never reuses a row: always a new student on the same login.
         // Only send fields that were filled in, so existing details aren't wiped.
         const fields: Record<string, unknown> = { full_name: s1.full_name.trim() };
         if (s1.phone.trim()) fields.phone = s1.phone.trim();
@@ -234,7 +259,7 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
         } else {
           const { data, error: studentErr } = await supabase.from('students').insert({
             ...fields,
-            user_id: pendingProfile?.id ?? null,
+            user_id: familyLoginId ?? pendingProfile?.id ?? null,
             is_active: true,
             payment_plan: s2.payment_plan,
           }).select('id').single();
@@ -307,7 +332,8 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       }
 
       // 3. Approve the student's profile only after everything above succeeded
-      if (pendingProfile) {
+      //    (a sibling's login is already approved).
+      if (pendingProfile && !familyLoginId) {
         const { error: approveErr } = await supabase.from('profiles').update({ approved: true }).eq('id', pendingProfile.id);
         if (approveErr) throw approveErr;
       }
@@ -319,7 +345,13 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       invalidateLessonViews();
       if (warnings.length) showToast('error', warnings.join(' · '));
       else showToast('success', skip ? 'Student saved.' : 'Student enrolled.');
-      onComplete();
+      if (pendingProfile) {
+        // Parent's login: offer to add a sibling before closing.
+        setDoneNames(prev => [...prev, s1.full_name.trim()]);
+        setStep(2);
+      } else {
+        onComplete();
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -332,9 +364,11 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
       <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-navy">
-            {pendingProfile ? `Approve & Onboard — ${pendingProfile.full_name || pendingProfile.email}` : 'Add New Student'}
+            {familyLoginId && pendingProfile ? `Add another child — ${pendingProfile.email}`
+              : pendingProfile ? `Approve & Onboard — ${pendingProfile.full_name || pendingProfile.email}` : 'Add New Student'}
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-navy"><X size={20} /></button>
+          {/* After the final step, closing = done (lists refresh). */}
+          <button onClick={step === 2 ? onComplete : onClose} aria-label="Close" className="text-gray-400 hover:text-navy"><X size={20} /></button>
         </div>
 
         <StepBar step={step} />
@@ -348,10 +382,20 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Full Name <span className="text-coral">*</span></label>
-                <input type="text" value={s1.full_name} onChange={e => setS1(p => ({ ...p, full_name: e.target.value }))}
+                <label htmlFor="student-name" className="block text-xs font-semibold text-gray-500 mb-1">
+                  {pendingProfile ? "Child's (student's) full name" : "Student's full name"} <span className="text-coral">*</span>
+                </label>
+                <input id="student-name" type="text" value={s1.full_name} onChange={e => setS1(p => ({ ...p, full_name: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-teal focus:outline-none"
-                  placeholder="Student's full name" />
+                  placeholder={pendingProfile ? "The child's name (the student taking lessons)" : "Student's full name"} />
+                {pendingProfile && (
+                  <p className="text-xs text-gray-500 mt-1" data-testid="child-name-hint">
+                    {familyLoginId
+                      ? <>A new child on the login <span className="font-medium text-navy">{pendingProfile.email}</span> — type this child's name.</>
+                      : <>Signed up as “{pendingProfile.full_name || pendingProfile.email}” ({pendingProfile.email}) — that may be the parent.
+                          Enter the name of the child taking lessons. More children can be added to this login at the end.</>}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Phone</label>
@@ -384,6 +428,28 @@ export function OnboardingWizard({ open, onClose, onComplete, pendingProfile }: 
               <button onClick={handleStep1Next} disabled={!s1.full_name.trim()}
                 className="flex items-center gap-2 bg-teal text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
                 Next: Payment & Classes <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── FINAL (from a pending profile): done, or add a sibling to the same login ── */}
+        {step === 2 && pendingProfile && (
+          <div className="space-y-4" data-testid="onboarding-done">
+            <div className="bg-teal/10 rounded-xl p-4 text-sm text-navy">
+              <p className="font-semibold">Set up on the login {pendingProfile.email}:</p>
+              <ul className="list-disc pl-5 mt-1">
+                {doneNames.map((n, i) => <li key={i}>{n}</li>)}
+              </ul>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button onClick={startSibling}
+                className="flex-1 flex items-center justify-center gap-2 border border-teal text-teal px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/5">
+                <Plus size={16} /> Add another child to this login ({pendingProfile.email})
+              </button>
+              <button onClick={onComplete}
+                className="flex-1 bg-teal text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90">
+                Done
               </button>
             </div>
           </div>
