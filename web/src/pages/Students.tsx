@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, UserCheck, UserX } from 'lucide-react';
 import { useStudents } from '../hooks/useStudents';
+import { useInstruments, invalidateReference } from '../hooks/useReference';
 import { Skeleton } from '../components/Skeleton';
+import { ErrorBanner } from '../components/ErrorBanner';
 import { supabase } from '../lib/supabase';
-import type { Instrument, Location } from '../types';
+import { useQuery, unwrap, invalidateQueries } from '../lib/queryCache';
 import { OnboardingWizard } from '../components/OnboardingWizard';
 
 interface PendingProfile { id: string; full_name: string; email: string; }
@@ -13,34 +15,25 @@ export function StudentsPage() {
   const [search, setSearch] = useState('');
   const [instrumentFilter, setInstrumentFilter] = useState('');
   const [activeFilter, setActiveFilter] = useState<boolean | undefined>(undefined);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
   const navigate = useNavigate();
+  const { instruments } = useInstruments();
 
-  // Pending approvals
-  const [pendingProfiles, setPendingProfiles] = useState<PendingProfile[]>([]);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardProfile, setWizardProfile] = useState<PendingProfile | null>(null);
-
-  const { students, loading, refresh } = useStudents({
-    instrumentId: instrumentFilter || undefined,
-    isActive: activeFilter,
-  });
-
-  useEffect(() => {
-    supabase.from('instruments').select('*').then(({ data }) => setInstruments(data || []));
-    supabase.from('locations').select('*').then(({ data }) => setLocations(data || []));
-    fetchPending();
-  }, []);
-
-  async function fetchPending() {
-    const { data } = await supabase
+  // Self-registered students awaiting approval
+  const pendingQ = useQuery<PendingProfile[]>('students:pending', async () =>
+    unwrap(await supabase
       .from('profiles')
       .select('id, full_name, email')
       .eq('role', 'student')
-      .is('approved', null);
-    setPendingProfiles((data || []) as PendingProfile[]);
-  }
+      .is('approved', null), []) as PendingProfile[]);
+  const pendingProfiles = pendingQ.data ?? [];
+
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardProfile, setWizardProfile] = useState<PendingProfile | null>(null);
+
+  const { students, loading, error, refresh } = useStudents({
+    instrumentId: instrumentFilter || undefined,
+    isActive: activeFilter,
+  });
 
   function openWizard(profile: PendingProfile | null) {
     setWizardProfile(profile);
@@ -50,17 +43,15 @@ export function StudentsPage() {
   function handleWizardComplete() {
     setWizardOpen(false);
     setWizardProfile(null);
-    fetchPending();
-    refresh();
+    // Refreshes this list, the pending list and every other students view.
+    invalidateQueries('students:');
+    invalidateReference('students');
   }
 
   const filtered = students.filter((s: any) =>
     s.full_name.toLowerCase().includes(search.toLowerCase()) ||
     s.email?.toLowerCase().includes(search.toLowerCase())
   );
-
-  // suppress unused warning
-  void locations;
 
   return (
     <div>
@@ -76,6 +67,8 @@ export function StudentsPage() {
           + Add Student
         </button>
       </div>
+
+      {error && <div className="mb-6"><ErrorBanner message={error} onRetry={refresh} /></div>}
 
       {/* Pending approval list */}
       {pendingProfiles.length > 0 && (

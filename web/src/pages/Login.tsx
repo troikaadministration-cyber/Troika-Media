@@ -45,11 +45,15 @@ export function LoginPage() {
     setLoading(true);
     try {
       if (isSignUp) {
-        await signUp(email, password, fullName);
-        setSuccess('Account created! Check your email to confirm, then sign in.');
-        setIsSignUp(false);
-        setFullName('');
-        setPassword('');
+        if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+        const { needsConfirmation } = await signUp(email, password, fullName);
+        if (needsConfirmation) {
+          setSuccess('Account created! Check your email to confirm, then sign in.');
+          setIsSignUp(false);
+          setFullName('');
+          setPassword('');
+        }
+        // Otherwise the new session signs them straight in (next: choose role).
       } else {
         await signIn(email, password);
       }
@@ -169,7 +173,7 @@ export function LoginPage() {
                   className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-coral/30 focus:border-coral text-sm"
                   placeholder={isSignUp ? 'Create a password' : 'Enter your password'}
                   required
-                  minLength={isSignUp ? 6 : undefined}
+                  minLength={isSignUp ? 8 : undefined}
                 />
               </div>
               <button

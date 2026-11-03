@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useQuery, unwrap, invalidateQueries } from '../lib/queryCache';
+import { fetchAll } from '../lib/fetchAll';
+import { invalidateReference } from '../hooks/useReference';
 import { Search, Mail, Phone, MapPin, Music, Calendar, RefreshCw } from 'lucide-react';
 import { TeacherApprovalPanel } from '../components/TeacherApprovalPanel';
 import { SkeletonList } from '../components/Skeleton';
@@ -17,24 +20,70 @@ interface TeacherInfo {
   locations: string[];
 }
 
-export function TeachersPage() {
-  const [teachers, setTeachers] = useState<TeacherInfo[]>([]);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface SlotRow {
+  teacher_id: string;
+  student_ids: string[] | null;
+  instrument: { name: string } | null;
+  location: { name: string } | null;
+}
 
-  const [pendingProfiles, setPendingProfiles] = useState<PendingProfile[]>([]);
+const uniq = (xs: (string | undefined | null)[]) => [...new Set(xs.filter(Boolean))] as string[];
+
+/**
+ * Teacher cards. Instead of downloading every lesson (and its students) ever
+ * taught, we fetch: lesson counts (head-only, per teacher, in parallel) and the
+ * active weekly class slots, which give the current students/instruments/locations.
+ */
+async function loadTeachers(): Promise<TeacherInfo[]> {
+  const [profiles, slots] = await Promise.all([
+    supabase.from('profiles')
+      .select('id, full_name, email, phone')
+      .eq('role', 'teacher')
+      .eq('approved', true)
+      .order('full_name')
+      .then((r) => unwrap(r, []) as { id: string; full_name: string; email: string; phone: string | null }[]),
+    fetchAll<SlotRow>((from, to) => supabase.from('teacher_schedule_templates')
+      .select('teacher_id, student_ids, instrument:instruments(name), location:locations(name)')
+      .eq('is_active', true)
+      .order('id')
+      .range(from, to)),
+  ]);
+
+  const counts = await Promise.all(profiles.map(async (p) => {
+    const { count, error } = await supabase.from('lessons')
+      .select('id', { count: 'exact', head: true })
+      .eq('teacher_id', p.id);
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+  }));
+
+  return profiles.map((p, i) => {
+    const mine = slots.filter((s) => s.teacher_id === p.id);
+    return {
+      ...p,
+      lessonCount: counts[i],
+      studentCount: new Set(mine.flatMap((s) => s.student_ids ?? [])).size,
+      instruments: uniq(mine.map((s) => s.instrument?.name)),
+      locations: uniq(mine.map((s) => s.location?.name)),
+    };
+  });
+}
+
+export function TeachersPage() {
+  const [search, setSearch] = useState('');
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelProfile, setPanelProfile] = useState<PendingProfile | null>(null);
 
-  async function fetchPending() {
-    const { data } = await supabase
+  const { data, loading, error, refresh } = useQuery<TeacherInfo[]>('teachers:list', loadTeachers);
+  const teachers = data ?? [];
+
+  const pendingQ = useQuery<PendingProfile[]>('teachers:pending', async () =>
+    unwrap(await supabase
       .from('profiles')
       .select('id, full_name, email')
       .eq('role', 'teacher')
-      .is('approved', null);
-    setPendingProfiles((data || []) as PendingProfile[]);
-  }
+      .is('approved', null), []) as PendingProfile[]);
+  const pendingProfiles = pendingQ.data ?? [];
 
   function openPanel(profile: PendingProfile) {
     setPanelProfile(profile);
@@ -44,61 +93,9 @@ export function TeachersPage() {
   function handlePanelComplete() {
     setPanelOpen(false);
     setPanelProfile(null);
-    fetchPending();
-    load();
+    invalidateQueries('teachers:');
+    invalidateReference('teachers');
   }
-
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      // Single nested query instead of 2N+1
-      const { data: profiles, error: err } = await supabase
-        .from('profiles')
-        .select(`
-          id, full_name, email, phone,
-          lessons:lessons!teacher_id(
-            id,
-            instrument:instruments(name),
-            location:locations(name),
-            students:lesson_students(student_id)
-          )
-        `)
-        .eq('role', 'teacher')
-        .eq('approved', true)
-        .order('full_name');
-
-      if (err) throw err;
-      if (!profiles) { setLoading(false); return; }
-
-      const teacherInfos: TeacherInfo[] = profiles.map((p: any) => {
-        const lessons = p.lessons || [];
-        const instrumentNames = [...new Set(lessons.map((l: any) => l.instrument?.name).filter(Boolean))] as string[];
-        const locationNames = [...new Set(lessons.map((l: any) => l.location?.name).filter(Boolean))] as string[];
-        const uniqueStudents = new Set(
-          lessons.flatMap((l: any) => (l.students || []).map((s: any) => s.student_id))
-        );
-        return {
-          id: p.id,
-          full_name: p.full_name,
-          email: p.email,
-          phone: p.phone,
-          lessonCount: lessons.length,
-          studentCount: uniqueStudents.size,
-          instruments: instrumentNames,
-          locations: locationNames,
-        };
-      });
-
-      setTeachers(teacherInfos);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load teachers');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { load(); fetchPending(); }, []);
 
   const filtered = teachers.filter((t) =>
     t.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -117,7 +114,7 @@ export function TeachersPage() {
       {error && (
         <div className="bg-coral/10 border border-coral/20 rounded-xl p-4 flex items-center justify-between">
           <p className="text-coral text-sm">{error}</p>
-          <button onClick={load} className="flex items-center gap-1 text-coral text-sm font-medium hover:underline"><RefreshCw size={14} />Retry</button>
+          <button onClick={refresh} className="flex items-center gap-1 text-coral text-sm font-medium hover:underline"><RefreshCw size={14} />Retry</button>
         </div>
       )}
 

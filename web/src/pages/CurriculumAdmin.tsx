@@ -17,6 +17,21 @@ export function CurriculumAdminPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!confirmDelete || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteResource(confirmDelete);
+      showToast('success', 'Resource deleted');
+      setConfirmDelete(null);
+    } catch (err: any) {
+      showToast('error', `Couldn't delete resource: ${err.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const typeButtons: { label: string; value: ResourceType | 'all' }[] = [
     { label: 'All', value: 'all' },
@@ -132,7 +147,8 @@ export function CurriculumAdminPage() {
         open={!!confirmDelete}
         title="Delete Resource"
         message="Are you sure you want to delete this curriculum resource?"
-        onConfirm={async () => { if (confirmDelete) { await deleteResource(confirmDelete); setConfirmDelete(null); } }}
+        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
+        onConfirm={handleDelete}
         onCancel={() => setConfirmDelete(null)}
       />
 
