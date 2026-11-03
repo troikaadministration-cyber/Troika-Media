@@ -8,13 +8,22 @@ import { useStudentPortal } from './StudentPortalContext';
 import { Skeleton } from '../../components/Skeleton';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { AbsenceControls } from '../../components/student/shared';
+import type { StudentLesson } from '../../hooks/useStudentLessons';
+import type { Child, Enrolment } from './StudentPortalContext';
 import { greeting, firstName, fmtDate, fmtTime, fmtMoney } from './format';
 
 export function StudentHome() {
   const {
     upcoming, totalCompleted, totalMissed, enrolments, payments, studentName,
-    loadingLessons, lessonsError, refresh,
+    loadingLessons, lessonsError, refresh, children, isFamily, selectedChildId, childLabel,
   } = useStudentPortal();
+  // Family login showing "All": one card per child instead of one hero.
+  const familyAll = isFamily && !selectedChildId;
+  const selectedChild = isFamily ? children.find((c) => c.id === selectedChildId) : undefined;
+  const forChild = (studentId: string) => {
+    const name = childLabel(studentId);
+    return name ? ` for ${name}` : '';
+  };
 
   const next = upcoming.find((i) => i.lesson.status !== 'cancelled') || null;
   const nextTeacher = next ? next.lesson.teacher?.full_name : undefined;
@@ -50,10 +59,16 @@ export function StudentHome() {
       {/* Next lesson hero */}
       {loadingLessons ? (
         <Skeleton className="h-40 w-full rounded-2xl" />
+      ) : familyAll ? (
+        <div className="grid sm:grid-cols-2 gap-4">
+          {children.map((c) => (
+            <ChildCard key={c.id} child={c} upcoming={upcoming} enrolments={enrolments} />
+          ))}
+        </div>
       ) : next ? (
         <div className="rounded-2xl bg-gradient-to-br from-coral to-[#ef7a64] text-white p-6 shadow-sm">
           <div className="flex items-center gap-2 text-white/85 text-sm font-medium mb-3">
-            <CalendarClock size={16} /> Your next lesson
+            <CalendarClock size={16} /> {selectedChild ? `${selectedChild.label}'s next lesson` : 'Your next lesson'}
           </div>
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
@@ -97,7 +112,7 @@ export function StudentHome() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-coral">Payment overdue</p>
             <p className="text-xs text-coral/80">
-              {fmtMoney(overdue[0].amount)} was due on {fmtDate(overdue[0].due_date, { month: 'short', day: 'numeric' })}
+              {fmtMoney(overdue[0].amount)}{forChild(overdue[0].student_id)} was due on {fmtDate(overdue[0].due_date, { month: 'short', day: 'numeric' })}
             </p>
           </div>
           <ChevronRight size={18} className="text-coral/60 flex-shrink-0" />
@@ -113,7 +128,7 @@ export function StudentHome() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-yellow-700">Next payment</p>
             <p className="text-xs text-yellow-600">
-              {fmtMoney(nextPay.amount)} due on {fmtDate(nextPay.due_date, { month: 'short', day: 'numeric' })}
+              {fmtMoney(nextPay.amount)}{forChild(nextPay.student_id)} due on {fmtDate(nextPay.due_date, { month: 'short', day: 'numeric' })}
             </p>
           </div>
           <ChevronRight size={18} className="text-yellow-600/60 flex-shrink-0" />
@@ -142,6 +157,46 @@ export function StudentHome() {
           <QuickLink to="/payments" icon={CreditCard} title="Payments" desc="Fees & invoices" />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Family "All" view: one child's next lesson and lessons left. */
+function ChildCard({
+  child, upcoming, enrolments,
+}: { child: Child; upcoming: StudentLesson[]; enrolments: Enrolment[] }) {
+  const next = upcoming.find((i) => i.student_id === child.id && i.lesson.status !== 'cancelled') || null;
+  const mine = enrolments.filter((e) => e.student_id === child.id);
+  const left = mine.length ? mine.reduce((sum, e) => sum + Math.max(0, e.total_lessons - e.lessons_used), 0) : null;
+  return (
+    <div className="bg-white rounded-2xl border border-black/5 p-5 flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-bold text-navy text-lg truncate" title={child.full_name}>{child.full_name}</p>
+        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-yellow/10 text-yellow-700 whitespace-nowrap">
+          {left === null ? 'No enrolment' : `${left} lesson${left === 1 ? '' : 's'} left`}
+        </span>
+      </div>
+      {next ? (
+        <div>
+          <p className="text-xs font-medium text-gray-400 flex items-center gap-1.5"><CalendarClock size={13} /> Next lesson</p>
+          <p className="text-navy font-semibold mt-1">
+            {fmtDate(next.lesson.date, { weekday: 'short', month: 'short', day: 'numeric' })} · {fmtTime(next.lesson.start_time)}
+          </p>
+          <div className="flex items-center gap-x-3 gap-y-0.5 mt-0.5 text-sm text-gray-500 flex-wrap">
+            <span className="flex items-center gap-1.5">
+              {next.lesson.instrument?.icon && <span className="text-base">{next.lesson.instrument.icon}</span>}
+              {next.lesson.title}
+            </span>
+            {next.lesson.teacher?.full_name && <span>· {next.lesson.teacher.full_name}</span>}
+            {next.lesson.location?.name && (
+              <span className="flex items-center gap-1"><MapPin size={12} />{next.lesson.location.name}</span>
+            )}
+          </div>
+          <AbsenceControls item={next} className="mt-3" />
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">No upcoming lessons scheduled.</p>
+      )}
     </div>
   );
 }

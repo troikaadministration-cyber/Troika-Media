@@ -47,7 +47,12 @@ interface LessonRow {
   location: { name: string | null; address: string | null } | null;
   instrument: Named;
   lesson_students?: { student: Named }[];
+  /** Student logins: which of the login's children are on this lesson. */
+  ls?: { student_id: string }[];
 }
+
+/** Family login (several children): child id → names, used to label events. */
+type ChildNames = Map<string, { short: string; full: string }> | null;
 
 function notFound(): Response {
   return new Response("Not found", {
@@ -133,7 +138,7 @@ async function fetchLessons(
   db: SupabaseClient,
   role: Role,
   userId: string,
-): Promise<LessonRow[] | null> {
+): Promise<{ rows: LessonRow[]; childNames: ChildNames }> {
   const from = istDate(-(role === "coordinator" ? COORDINATOR_PAST_DAYS : PAST_DAYS));
   const to = istDate(FUTURE_DAYS);
 
@@ -142,12 +147,21 @@ async function fetchLessons(
     " teacher:profiles!lessons_teacher_id_fkey(full_name)," +
     " location:locations(name, address), instrument:instruments(name)";
 
+  // A student login may be a family login covering several children.
   let studentIds: string[] = [];
+  let childNames: ChildNames = null;
   if (role === "student") {
-    const { data, error } = await db.from("students").select("id").eq("user_id", userId);
+    const { data, error } = await db.from("students").select("id, full_name").eq("user_id", userId);
     if (error) throw new Error(error.message);
-    studentIds = (data ?? []).map((s: { id: string }) => s.id);
-    if (studentIds.length === 0) return [];
+    const kids = (data ?? []) as { id: string; full_name: string | null }[];
+    studentIds = kids.map((s) => s.id);
+    if (studentIds.length === 0) return { rows: [], childNames };
+    if (kids.length > 1) {
+      childNames = new Map(kids.map((k) => [k.id, {
+        short: firstNameOf(k.full_name, kids),
+        full: (k.full_name ?? "").trim() || "Student",
+      }]));
+    }
   }
 
   const rows: LessonRow[] = [];
@@ -175,7 +189,22 @@ async function fetchLessons(
     rows.push(...batch);
     if (batch.length < PAGE) break;
   }
-  return rows;
+  return { rows, childNames };
+}
+
+/** First name, or the full name when siblings share a first name. */
+function firstNameOf(name: string | null, all: { full_name: string | null }[]): string {
+  const full = (name ?? "").trim();
+  const first = full.split(/\s+/)[0] || full;
+  const same = all.filter((k) => ((k.full_name ?? "").trim().split(/\s+/)[0] || "").toLowerCase() === first.toLowerCase());
+  return (same.length > 1 ? full : first) || "Student";
+}
+
+/** Names of the family login's children on this lesson (empty for one-child logins). */
+function childrenOn(l: LessonRow, childNames: ChildNames, which: "short" | "full" = "short"): string[] {
+  if (!childNames) return [];
+  const names = (l.ls ?? []).map((x) => childNames.get(x.student_id)?.[which]).filter((n): n is string => Boolean(n));
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -186,7 +215,7 @@ function studentNames(l: LessonRow): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
-function summaryOf(l: LessonRow, role: Role): string {
+function summaryOf(l: LessonRow, role: Role, childNames: ChildNames): string {
   const instrument = l.instrument?.name?.trim() || "";
   const title = l.title?.trim() || "";
   const typeLabel = TYPE_LABEL[l.lesson_type] || "";
@@ -208,6 +237,9 @@ function summaryOf(l: LessonRow, role: Role): string {
     if (role === "coordinator" && teacher) s += ` (${teacher})`;
   }
   if (typeLabel && !s.toLowerCase().startsWith(typeLabel.toLowerCase())) s = `${typeLabel}: ${s}`;
+  // Family login: say which child the lesson is for.
+  const kids = role === "student" ? childrenOn(l, childNames) : [];
+  if (kids.length) s = `${kids.join(" & ")} – ${s}`;
   if (l.status === "cancelled") s = `Cancelled: ${s}`;
   return s;
 }
@@ -220,8 +252,10 @@ function locationOf(l: LessonRow): string {
   return `${name}, ${addr}`;
 }
 
-function descriptionOf(l: LessonRow, role: Role): string {
+function descriptionOf(l: LessonRow, role: Role, childNames: ChildNames): string {
   const lines: string[] = [];
+  const kids = childrenOn(l, childNames, "full");
+  if (kids.length) lines.push(`Student${kids.length > 1 ? "s" : ""}: ${kids.join(", ")}`);
   const teacher = l.teacher?.full_name?.trim();
   if (role !== "teacher" && teacher) lines.push(`Teacher: ${teacher}`);
   if (role !== "student") {
@@ -238,7 +272,7 @@ function descriptionOf(l: LessonRow, role: Role): string {
   return lines.join("\n");
 }
 
-function buildCalendar(lessons: LessonRow[], role: Role): string {
+function buildCalendar(lessons: LessonRow[], role: Role, childNames: ChildNames = null): string {
   const now = utcStamp(new Date());
   const out: string[] = [
     "BEGIN:VCALENDAR",
@@ -273,11 +307,11 @@ function buildCalendar(lessons: LessonRow[], role: Role): string {
       `DTSTAMP:${now}`,
       `DTSTART;TZID=${TZ}:${localStamp(l.date, l.start_time)}`,
       `DTEND;TZID=${TZ}:${localStamp(end.date, end.time)}`,
-      `SUMMARY:${escText(summaryOf(l, role))}`,
+      `SUMMARY:${escText(summaryOf(l, role, childNames))}`,
     ];
     const loc = locationOf(l);
     if (loc) ev.push(`LOCATION:${escText(loc)}`);
-    const desc = descriptionOf(l, role);
+    const desc = descriptionOf(l, role, childNames);
     if (desc) ev.push(`DESCRIPTION:${escText(desc)}`);
     ev.push(
       `STATUS:${l.status === "cancelled" ? "CANCELLED" : "CONFIRMED"}`,
@@ -327,8 +361,8 @@ serve(async (req) => {
     // Same rule as the RPCs: pending / rejected users get no feed.
     if (role !== "coordinator" && profile.approved !== true) return notFound();
 
-    const lessons = await fetchLessons(db, role, tok.user_id);
-    const body = buildCalendar(lessons ?? [], role);
+    const { rows: lessons, childNames } = await fetchLessons(db, role, tok.user_id);
+    const body = buildCalendar(lessons, role, childNames);
 
     return new Response(req.method === "HEAD" ? null : body, {
       status: 200,

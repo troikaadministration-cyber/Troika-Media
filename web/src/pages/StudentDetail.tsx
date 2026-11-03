@@ -9,6 +9,7 @@ import { invalidateLessonViews } from '../hooks/useLessons';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { FamilyLoginBox } from '../components/FamilyLoginBox';
 import { Skeleton, SkeletonCards } from '../components/Skeleton';
 import type { AbsenceCategory, StudentEnrolment, StudentStats } from '../types';
 
@@ -503,6 +504,11 @@ export function StudentDetailPage() {
                 <p className="text-sm text-gray-600">{student.notes}</p>
               </div>
             )}
+          </div>
+
+          {/* App login (a family login can cover several children) */}
+          <div className="col-span-2">
+            <FamilyLoginBox key={student.id} studentId={student.id} studentName={student.full_name} />
           </div>
         </div>
       )}

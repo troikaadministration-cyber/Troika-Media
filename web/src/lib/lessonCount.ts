@@ -42,3 +42,39 @@ export function lessonsForPlan(plan: string, startDate: string | Date): number {
   const idx = monthIndexOf(startDate);
   return LESSONS_BY_JOIN_MONTH[idx] ?? DEFAULT_TOTAL_LESSONS;
 }
+
+/** How often a class meets each week (each occurrence is its own weekly slot). */
+export const TIMES_PER_WEEK_OPTIONS = [1, 2, 3] as const;
+export type TimesPerWeek = (typeof TIMES_PER_WEEK_OPTIONS)[number];
+
+/** Clamp anything (string from a <select>, bad data) to 1, 2 or 3. */
+export function normaliseTimesPerWeek(n: unknown): TimesPerWeek {
+  const v = Math.round(Number(n));
+  return v >= 3 ? 3 : v === 2 ? 2 : 1;
+}
+
+/**
+ * Total lessons for one class: the join-month allotment × times per week
+ * (twice a week for the year = double). Trial stays a single lesson.
+ */
+export function lessonsForClass(plan: string, startDate: string | Date, timesPerWeek: number = 1): number {
+  if (plan === 'trial') return 1;
+  return lessonsForPlan(plan, startDate) * normaliseTimesPerWeek(timesPerWeek);
+}
+
+/** "2× per week" (empty for 1×, which is the normal case). */
+export function timesPerWeekLabel(timesPerWeek: number): string {
+  const t = normaliseTimesPerWeek(timesPerWeek);
+  return t === 1 ? '' : `${t}× per week`;
+}
+
+/**
+ * Fee-summary wording: "12 lessons (6 × 2 per week)" at 2×/week, "6 lessons" at 1×.
+ */
+export function lessonsBreakdown(plan: string, startDate: string | Date, timesPerWeek: number = 1): string {
+  const total = lessonsForClass(plan, startDate, timesPerWeek);
+  const t = normaliseTimesPerWeek(timesPerWeek);
+  const word = `${total} lesson${total === 1 ? '' : 's'}`;
+  if (plan === 'trial' || t === 1) return word;
+  return `${word} (${lessonsForPlan(plan, startDate)} × ${t} per week)`;
+}

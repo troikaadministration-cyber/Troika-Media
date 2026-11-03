@@ -1,19 +1,21 @@
 import { toDateStr, parseDateStr } from '../lib/dates';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { useQuery, unwrap, invalidateQueries, errorMessage } from '../lib/queryCache';
+import { useQuery, invalidateQueries, errorMessage } from '../lib/queryCache';
 import { fetchAll } from '../lib/fetchAll';
 import { useActiveStudentsList, useInstruments, useTeachersList } from '../hooks/useReference';
 import { invalidateLessonViews } from '../hooks/useLessons';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorBanner } from '../components/ErrorBanner';
-import { SlotPicker, slotError } from '../components/SlotPicker';
+import { SlotPicker, weeklySlotsError, extraSlotParam } from '../components/SlotPicker';
 import type { SelectedSlot } from '../components/SlotPicker';
 import { Plus, X, BookOpen, ChevronRight, CalendarPlus } from 'lucide-react';
 import { RenewalWizard } from '../components/RenewalWizard';
 import { useNavigate } from 'react-router-dom';
-import { lessonsForPlan } from '../lib/lessonCount';
+import {
+  lessonsForClass, lessonsBreakdown, timesPerWeekLabel, normaliseTimesPerWeek, TIMES_PER_WEEK_OPTIONS,
+} from '../lib/lessonCount';
 import { SkeletonList } from '../components/Skeleton';
 import { computeDiscount, type DiscountPrimary } from '../lib/fees';
 
@@ -26,18 +28,9 @@ interface Enrolment {
   payment_plan: string;
   rate_per_lesson: number;
   total_fee: number;
+  extra_template_ids: string[] | null; // 2nd/3rd weekly slots (2×/3× per week)
   student: { id: string; full_name: string } | null;
   instrument: { name: string } | null; // the enrolment's own class instrument
-}
-
-interface LessonRate {
-  id: string;
-  teacher_id: string | null;
-  category: string;
-  rate_per_lesson: number;
-  is_online: boolean;
-  location_id: string | null;
-  academic_year: string | null;
 }
 
 interface EnrolResult {
@@ -48,10 +41,11 @@ interface EnrolResult {
   lessons_created: number;
   conflicts: number;
   conflict_dates: string[];
+  slots?: number;
 }
 
 const ENROLMENT_COLUMNS =
-  'id, student_id, academic_year, total_lessons, lessons_used, payment_plan, rate_per_lesson, total_fee, ' +
+  'id, student_id, academic_year, total_lessons, lessons_used, payment_plan, rate_per_lesson, total_fee, extra_template_ids, ' +
   'student:students(id, full_name), instrument:instruments(name)';
 
 const PLAN_OPTIONS = [
@@ -70,38 +64,20 @@ function oneYearFromToday() {
 function emptyForm() {
   return {
     student_id: '',
-    lesson_rate_id: '',
     payment_plan: '3_instalments',
     start_date: toDateStr(new Date()),
     end_date: oneYearFromToday(),
     registration_fee: 0,
-    rate_override: 0,
+    rate_text: '',        // typed by the coordinator for every enrolment — never pre-filled
+    times_per_week: 1,
     discount_primary: 'none' as DiscountPrimary,
     discount_special: 0,
     discount_multilesson: false,
   };
 }
 
-/** Rates for an academic year; falls back to the latest year that has rates. */
-/**
- * The rate card for a year: for each teacher/category/location/online combo,
- * that year's rate, or — if none was set for that year yet — the most recent
- * earlier one. (Previously one new-year rate hid every other rate.)
- */
-function ratesForYear(rates: LessonRate[], year: string): { list: LessonRate[]; shownYear: string } {
-  const best = new Map<string, LessonRate>();
-  for (const r of rates) {
-    const y = r.academic_year || year;
-    if (y > year) continue;
-    const key = [r.teacher_id ?? '', r.category, r.location_id ?? '', r.is_online].join('|');
-    const cur = best.get(key);
-    if (!cur || (cur.academic_year || year) < y) best.set(key, r);
-  }
-  const list = [...best.values()];
-  const older = list.filter(r => r.academic_year && r.academic_year !== year);
-  const shownYear = older.length === 0 ? year : older.reduce((m, r) => (r.academic_year! < m ? r.academic_year! : m), year);
-  return { list, shownYear };
-}
+/** 1 + the class's extra weekly slots (2× / 3× per week). */
+const timesOf = (e: Pick<Enrolment, 'extra_template_ids'>) => 1 + (e.extra_template_ids?.length ?? 0);
 
 function fmtShortDate(d: string) {
   return parseDateStr(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
@@ -125,10 +101,6 @@ export function EnrolmentsPage() {
     fetchAll<Enrolment>((from, to) =>
       supabase.from('student_enrolments').select(ENROLMENT_COLUMNS)
         .order('created_at', { ascending: false }).order('id').range(from, to)));
-  const ratesQ = useQuery<LessonRate[]>('lesson-rates:enrol-picker', async () =>
-    unwrap(await supabase.from('lesson_rates')
-      .select('id, teacher_id, category, rate_per_lesson, is_online, location_id, academic_year')
-      .order('category'), []) as LessonRate[]);
   const { students } = useActiveStudentsList();
   const { teachers } = useTeachersList(); // approved only
   const { instruments } = useInstruments();
@@ -142,35 +114,24 @@ export function EnrolmentsPage() {
   const [showErrors, setShowErrors] = useState(false); // inline field errors after "Next"
   const [confirmDelete, setConfirmDelete] = useState<Enrolment | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
-  const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
+  // One weekly slot per lesson of the week (2× per week = 2 slots), same teacher.
+  const [slots, setSlots] = useState<(SelectedSlot | null)[]>([null]);
   const [manualTeacherId, setManualTeacherId] = useState('');
   const [result, setResult] = useState<{ text: string; warning: string | null } | null>(null);
   const [classDone, setClassDone] = useState(false);   // a class was just created; offer "add another"
   const [addedCount, setAddedCount] = useState(0);      // classes created this session
   const [form, setForm] = useState(emptyForm);
 
-  // Only rates of approved teachers (or teacher-less rates) can be picked.
-  const rates = useMemo(() => {
-    const approved = new Set(teachers.map(t => t.id));
-    return (ratesQ.data ?? []).filter(r => !r.teacher_id || approved.has(r.teacher_id));
-  }, [ratesQ.data, teachers]);
-
   // Academic year always follows the start date.
   const academicYear = form.start_date.slice(0, 4);
-  const { list: yearRates, shownYear: rateYear } = ratesForYear(rates, academicYear);
 
   const isTrial = form.payment_plan === 'trial';
-  const selectedRate = yearRates.find(r => r.id === form.lesson_rate_id);
-  // Per-student rate: defaults to the rate-card value but can be overridden.
-  const effectiveRate = form.rate_override || 0;
+  // The coordinator types the rate for every enrolment (no rate card pre-fill).
+  const effectiveRate = form.rate_text.trim() === '' ? 0 : Number(form.rate_text);
   const selectedStudent = students.find(s => s.id === form.student_id);
   const instrumentName = (id: string | null | undefined) => instruments.find(i => i.id === id)?.name;
-  const filteredRates = selectedStudent?.location_id
-    ? yearRates.filter(r => r.location_id === selectedStudent.location_id || r.location_id === null)
-    : yearRates;
-  const hasLocationRates = !!(selectedStudent?.location_id &&
-    yearRates.some(r => r.location_id === selectedStudent.location_id));
-  const totalLessons = lessonsForPlan(form.payment_plan, form.start_date);
+  const timesPerWeek = normaliseTimesPerWeek(form.times_per_week);
+  const totalLessons = lessonsForClass(form.payment_plan, form.start_date, timesPerWeek);
   const tuition = effectiveRate * totalLessons;
   const discount = computeDiscount(tuition, {
     primary: form.discount_primary,
@@ -181,18 +142,26 @@ export function EnrolmentsPage() {
   const tuitionDiscount = discount.discountAmount;
   // total_fee stores discounted tuition; registration fee is separate.
   const totalFee = discount.discounted;
-  const teacherId = selectedRate?.teacher_id || manualTeacherId || '';
+  const teacherId = manualTeacherId;
   const teacherName = teachers.find(t => t.id === teacherId)?.full_name || '';
 
-  // A slot belongs to one teacher: forget it whenever the teacher changes.
-  useEffect(() => { setSelectedSlot(null); }, [teacherId]);
+  // A slot belongs to one teacher: forget them whenever the teacher changes.
+  useEffect(() => { setSlots(prev => prev.map(() => null)); }, [teacherId]);
+  // One slot per weekly lesson: grow/shrink with "times per week" (keeping what's picked).
+  useEffect(() => {
+    setSlots(prev => (prev.length === timesPerWeek ? prev
+      : Array.from({ length: timesPerWeek }, (_, i) => prev[i] ?? null)));
+  }, [timesPerWeek]);
+  const slotsError = weeklySlotsError(slots);
+  const mainSlot = slots[0];
+  const setSlotAt = (i: number, s: SelectedSlot | null) => setSlots(prev => prev.map((x, j) => (j === i ? s : x)));
 
   // Client-side checks mirroring enrol_student (negative values flag immediately).
   const fieldErrors = {
     student: !form.student_id ? 'Please select a student' : null,
-    rate: !isTrial && !form.lesson_rate_id ? 'Please select a lesson rate'
-      : !isTrial && !(effectiveRate > 0) ? 'Enter a rate greater than ₹0 (or choose the Trial plan)'
-      : effectiveRate < 0 ? 'Rate cannot be negative' : null,
+    rate: !Number.isFinite(effectiveRate) || effectiveRate < 0 ? 'Rate cannot be negative'
+      : !isTrial && !(effectiveRate > 0) ? 'Enter the rate per lesson (₹) — or choose the Trial plan'
+      : null,
     dates: form.end_date <= form.start_date ? 'End date must be after the start date' : null,
     registration: !(form.registration_fee >= 0) ? 'Registration fee cannot be negative' : null,
     discount: form.discount_primary === 'special' && !(form.discount_special >= 0) ? 'Discount cannot be negative' : null,
@@ -208,25 +177,11 @@ export function EnrolmentsPage() {
     setStep(2);
   }
 
-  function pickRate(id: string) {
-    const picked = yearRates.find(r => r.id === id);
-    setForm(f => ({ ...f, lesson_rate_id: id, rate_override: Number(picked?.rate_per_lesson) || 0 }));
-    setSelectedSlot(null); // the slot was chosen for the previous rate's teacher
-  }
-
-  function changeStartDate(start_date: string) {
-    setForm(f => {
-      // A new academic year may offer different rates: drop a rate that's no longer listed.
-      const stillListed = ratesForYear(rates, start_date.slice(0, 4)).list.some(r => r.id === f.lesson_rate_id);
-      return stillListed ? { ...f, start_date } : { ...f, start_date, lesson_rate_id: '', rate_override: 0 };
-    });
-  }
-
   // Reset only the class-specific fields, keeping the student, dates and plan, so
   // the coordinator can add another class (e.g. Violin after Guitar) in one pass.
   function resetForNextClass() {
     setStep(1);
-    setSelectedSlot(null);
+    setSlots([null]);
     setManualTeacherId('');
     setResult(null);
     setFormError(null);
@@ -234,8 +189,8 @@ export function EnrolmentsPage() {
     setClassDone(false);
     setForm(f => ({
       ...f,
-      lesson_rate_id: '',
-      rate_override: 0,
+      rate_text: '',
+      times_per_week: 1,
       registration_fee: 0,
       discount_primary: 'none',
       discount_special: 0,
@@ -246,7 +201,7 @@ export function EnrolmentsPage() {
   function closeModal() {
     setModal(false);
     setStep(1);
-    setSelectedSlot(null);
+    setSlots([null]);
     setManualTeacherId('');
     setResult(null);
     setFormError(null);
@@ -260,10 +215,10 @@ export function EnrolmentsPage() {
   async function handleCreate() {
     if (saving) return;
     if (hasFieldErrors) { setStep(1); setShowErrors(true); return; }
-    if (!teacherId) { setFormError('Please select a teacher'); return; }
-    const slotErr = slotError(selectedSlot);
-    if (slotErr || !selectedSlot) { setFormError(slotErr); return; }
-    const slot = selectedSlot;
+    if (!teacherId) { setFormError('Please choose the teacher'); return; }
+    if (slotsError || !mainSlot) { setFormError(slotsError); return; }
+    const slot = mainSlot;
+    const extras = (slots.slice(1) as SelectedSlot[]).map(extraSlotParam);
 
     setSaving(true);
     setFormError(null);
@@ -279,7 +234,7 @@ export function EnrolmentsPage() {
         p_rate_per_lesson: effectiveRate,
         p_total_fee: totalFee,
         p_registration_fee: form.registration_fee || 0,
-        p_lesson_rate_id: form.lesson_rate_id || null,
+        p_lesson_rate_id: null, // rate is typed per enrolment, not taken from the rate card
         p_academic_year: academicYear,
         p_discount_primary: form.discount_primary,
         p_discount_multilesson: form.discount_multilesson,
@@ -294,6 +249,7 @@ export function EnrolmentsPage() {
               p_instrument_id: slot.instrumentId,
               p_title: slot.title.trim() || null,
             }),
+        p_extra_slots: extras, // 2× / 3× per week: the class's other weekly lessons
       });
       if (error) throw error;
       const r = data as EnrolResult;
@@ -308,11 +264,12 @@ export function EnrolmentsPage() {
             ? `Only ${r.lessons_scheduled} of ${r.lessons_expected} lessons fit before the end date.`
             : `All ${r.lessons_scheduled} lessons scheduled, but some weeks were skipped.`) +
           (r.conflicts > 0
-            ? ` ${r.conflicts} week${r.conflicts !== 1 ? 's' : ''} clashed with ${teacherName || 'the teacher'}'s other lessons: ${shown}.`
+            ? ` ${r.conflicts} date${r.conflicts !== 1 ? 's' : ''} clashed with ${teacherName || 'the teacher'}'s other lessons: ${shown}.`
             : '') +
           ' Add the missing lessons from the Schedule page or extend the end date.';
       }
-      setResult({ text: `${name} added — ${r.lessons_scheduled} lesson${r.lessons_scheduled !== 1 ? 's' : ''} scheduled${joined}.`, warning });
+      const often = timesPerWeek > 1 ? ` (${timesPerWeekLabel(timesPerWeek)})` : '';
+      setResult({ text: `${name}${often} added — ${r.lessons_scheduled} lesson${r.lessons_scheduled !== 1 ? 's' : ''} scheduled${joined}.`, warning });
       setAddedCount(c => c + 1);
       setClassDone(true); // show the "add another class / done" choice
       invalidateAfterEnrolmentChange();
@@ -399,7 +356,12 @@ export function EnrolmentsPage() {
                       <td className="px-5 py-3">
                         <button onClick={() => navigate(`/students/${e.student_id}`)} className="text-left">
                           <p className="text-sm font-medium text-navy hover:underline">{e.student?.full_name || '-'}</p>
-                          {e.instrument && <p className="text-xs text-gray-400">{e.instrument.name}</p>}
+                          {(e.instrument || timesOf(e) > 1) && (
+                            <p className="text-xs text-gray-400">
+                              {e.instrument?.name}
+                              {timesOf(e) > 1 && <span className="ml-1.5 bg-teal/10 text-teal font-semibold px-1.5 py-0.5 rounded">{timesPerWeekLabel(timesOf(e))}</span>}
+                            </p>
+                          )}
                         </button>
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-500">{e.academic_year}</td>
@@ -436,7 +398,7 @@ export function EnrolmentsPage() {
                     <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{e.payment_plan?.replace(/_/g, ' ')}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                    <span>{e.instrument ? `${e.instrument.name} · ` : ''}{e.academic_year} · ₹{Number(e.rate_per_lesson).toLocaleString('en-IN')}/lesson</span>
+                    <span>{e.instrument ? `${e.instrument.name} · ` : ''}{timesOf(e) > 1 ? `${timesPerWeekLabel(timesOf(e))} · ` : ''}{e.academic_year} · ₹{Number(e.rate_per_lesson).toLocaleString('en-IN')}/lesson</span>
                     <span className="font-semibold text-navy">₹{Number(e.total_fee).toLocaleString('en-IN')}</span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -498,7 +460,7 @@ export function EnrolmentsPage() {
                   <select
                     required
                     value={form.student_id}
-                    onChange={(e) => setForm({ ...form, student_id: e.target.value, lesson_rate_id: '' })}
+                    onChange={(e) => setForm({ ...form, student_id: e.target.value })}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   >
                     <option value="">Select student...</option>
@@ -513,50 +475,40 @@ export function EnrolmentsPage() {
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Lesson Rate</label>
-                  {rateYear !== academicYear && (
-                    <p className="text-xs text-yellow-600 mb-1">Some rates have no {academicYear} value yet — using the latest earlier rate ({rateYear}).</p>
-                  )}
-                  {selectedStudent?.location_id && hasLocationRates && (
-                    <p className="text-xs text-teal mb-1">Showing rates for this student's location first.</p>
-                  )}
-                  {selectedStudent?.location_id && !hasLocationRates && (
-                    <p className="text-xs text-yellow-600 mb-1">No location-specific rates set — showing all rates.</p>
-                  )}
-                  <select
-                    value={form.lesson_rate_id}
-                    onChange={(e) => pickRate(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="">Select rate...</option>
-                    {filteredRates.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.category} — ₹{Number(r.rate_per_lesson).toLocaleString('en-IN')}
-                        {r.is_online ? ' (Online)' : ''}
-                        {r.teacher_id ? ` — ${teachers.find(t => t.id === r.teacher_id)?.full_name ?? ''}` : ''}
-                        {r.location_id ? ' ★' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="mt-2">
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Rate per lesson (₹) — editable for this student</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="enrol-rate" className="block text-xs font-medium text-gray-500 mb-1">
+                      Rate per lesson (₹){!isTrial && <span className="text-coral"> *</span>}
+                    </label>
                     <input
+                      id="enrol-rate"
                       type="number"
                       min={0}
-                      value={form.rate_override}
-                      onChange={(e) => setForm({ ...form, rate_override: Number(e.target.value) })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      placeholder="0"
+                      inputMode="decimal"
+                      value={form.rate_text}
+                      onChange={(e) => setForm({ ...form, rate_text: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm ${fieldError('rate') ? 'border-coral/60' : 'border-gray-200'}`}
+                      placeholder="e.g. 1200"
                     />
-                    {selectedRate && effectiveRate !== Number(selectedRate.rate_per_lesson) && (
-                      <p className="text-xs text-yellow-600 mt-1">
-                        Overriding rate-card default of ₹{Number(selectedRate.rate_per_lesson).toLocaleString('en-IN')}.
-                      </p>
-                    )}
-                    {fieldError('rate') && <p className="text-xs text-coral mt-1">{fieldError('rate')}</p>}
+                  </div>
+                  <div>
+                    <label htmlFor="enrol-times" className="block text-xs font-medium text-gray-500 mb-1">Times per week</label>
+                    <select
+                      id="enrol-times"
+                      value={timesPerWeek}
+                      onChange={(e) => setForm({ ...form, times_per_week: Number(e.target.value) })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                    >
+                      {TIMES_PER_WEEK_OPTIONS.map(t => <option key={t} value={t}>{t}× per week</option>)}
+                    </select>
                   </div>
                 </div>
+                {fieldError('rate') && <p className="text-xs text-coral -mt-2">{fieldError('rate')}</p>}
+                {timesPerWeek > 1 && (
+                  <p className="text-xs text-gray-500 -mt-2">
+                    One class, {timesPerWeek} lessons a week — you'll pick a day and time for each on the next step.
+                  </p>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -587,7 +539,7 @@ export function EnrolmentsPage() {
                     <input
                       type="date"
                       value={form.start_date}
-                      onChange={(e) => changeStartDate(e.target.value)}
+                      onChange={(e) => setForm({ ...form, start_date: e.target.value })}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                     />
                   </div>
@@ -651,11 +603,11 @@ export function EnrolmentsPage() {
                 </div>
 
                 {/* Fee Summary */}
-                {selectedRate && form.payment_plan !== 'trial' && (
-                  <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+                {!isTrial && effectiveRate > 0 && (
+                  <div className="bg-gray-50 rounded-xl p-4 space-y-2" data-testid="fee-summary">
                     <h4 className="text-xs font-semibold text-gray-500 uppercase">Fee Summary</h4>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">₹{effectiveRate.toLocaleString('en-IN')} × {totalLessons} lessons</span>
+                      <span className="text-gray-500">₹{effectiveRate.toLocaleString('en-IN')} × {lessonsBreakdown(form.payment_plan, form.start_date, timesPerWeek)}</span>
                       <span className="font-medium text-navy">₹{tuition.toLocaleString('en-IN')}</span>
                     </div>
                     {tuitionDiscount > 0 && (
@@ -704,39 +656,56 @@ export function EnrolmentsPage() {
             {/* ── STEP 2 ── */}
             {step === 2 && (
               <div className="space-y-4">
-                {/* Teacher display / picker */}
+                {/* Teacher: always chosen here, by the coordinator */}
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Teacher</label>
-                  {/* Fixed when the chosen rate belongs to a teacher; otherwise pick (and re-pick) here. */}
-                  {selectedRate?.teacher_id ? (
-                    <div className="px-3 py-2 bg-gray-50 rounded-lg text-sm text-navy font-medium">
-                      {teacherName}
-                    </div>
-                  ) : (
-                    <select
-                      value={manualTeacherId}
-                      onChange={(e) => { setManualTeacherId(e.target.value); setSelectedSlot(null); }}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    >
-                      <option value="">Select teacher...</option>
-                      {teachers.map(t => (
-                        <option key={t.id} value={t.id}>{t.full_name}</option>
-                      ))}
-                    </select>
-                  )}
+                  <label htmlFor="enrol-teacher" className="block text-xs font-medium text-gray-500 mb-1">
+                    Teacher <span className="text-coral">*</span>
+                  </label>
+                  <select
+                    id="enrol-teacher"
+                    value={manualTeacherId}
+                    onChange={(e) => setManualTeacherId(e.target.value)}
+                    disabled={classDone}
+                    className={`w-full border rounded-lg px-3 py-2 text-sm ${!teacherId ? 'border-coral/50' : 'border-gray-200'}`}
+                  >
+                    <option value="">Select teacher...</option>
+                    {teachers.map(t => (
+                      <option key={t.id} value={t.id}>{t.full_name}</option>
+                    ))}
+                  </select>
+                  {!teacherId && <p className="text-xs text-gray-500 mt-1">Choose the teacher — their weekly slots appear below.</p>}
                 </div>
 
-                {/* Slot picker — only show once teacher is known */}
-                {teacherId && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-2">Schedule Slot</label>
-                    <SlotPicker
-                      teacherId={teacherId}
-                      instruments={instruments}
-                      value={selectedSlot}
-                      onChange={setSelectedSlot}
-                    />
-                  </div>
+                {/* One slot picker per weekly lesson — only once the teacher is known */}
+                {teacherId && slots.map((value, i) => {
+                  const others = slots.filter((x, j) => j !== i && x?.mode === 'existing')
+                    .map(x => (x as Extract<SelectedSlot, { mode: 'existing' }>).templateId);
+                  return (
+                    <div key={i} data-testid="weekly-slot">
+                      <label className="block text-xs font-medium text-gray-500 mb-2">
+                        {timesPerWeek > 1 ? `Weekly lesson ${i + 1} of ${timesPerWeek} — schedule slot` : 'Schedule Slot'}
+                        {i > 0 && <span className="text-gray-400 font-normal"> (same teacher and instrument)</span>}
+                      </label>
+                      <SlotPicker
+                        teacherId={teacherId}
+                        instruments={instruments}
+                        value={value}
+                        onChange={(sl) => setSlotAt(i, sl)}
+                        excludeTemplateIds={others}
+                        timeOnly={i > 0}
+                        inherit={i > 0 ? { instrumentId: mainSlot?.instrumentId ?? null, title: mainSlot?.title ?? '' } : undefined}
+                      />
+                    </div>
+                  );
+                })}
+                {teacherId && slotsError && slots.every(Boolean) && (
+                  <p className="text-xs text-coral" data-testid="slots-error">{slotsError}</p>
+                )}
+                {teacherId && !isTrial && effectiveRate > 0 && (
+                  <p className="text-xs text-gray-500">
+                    ₹{effectiveRate.toLocaleString('en-IN')} × {lessonsBreakdown(form.payment_plan, form.start_date, timesPerWeek)}
+                    {' '}= ₹{tuition.toLocaleString('en-IN')} before discounts
+                  </p>
                 )}
 
                 {result && (
@@ -781,7 +750,8 @@ export function EnrolmentsPage() {
                     <button
                       type="button"
                       onClick={handleCreate}
-                      disabled={saving || !teacherId || !!slotError(selectedSlot)}
+                      disabled={saving || !teacherId || !!slotsError}
+                      title={!teacherId ? 'Choose the teacher' : slotsError ?? undefined}
                       className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
                     >
                       {saving ? 'Creating...' : 'Save & Generate Lessons'}

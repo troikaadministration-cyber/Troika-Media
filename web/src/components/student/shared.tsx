@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { MapPin, CheckCircle, XCircle, CalendarX, Hourglass, Ban, X } from 'lucide-react';
-import type { StudentLesson, AbsenceRequest } from '../../hooks/useStudentLessons';
-import { useStudentPortal } from '../../pages/student/StudentPortalContext';
+import { MapPin, CheckCircle, XCircle, CalendarX, Hourglass, Ban, X, Users } from 'lucide-react';
+import { absenceKey, type StudentLesson, type AbsenceRequest } from '../../hooks/useStudentLessons';
+import { useStudentPortal, type Child } from '../../pages/student/StudentPortalContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -41,6 +41,47 @@ export function AttendanceBadge({ item }: { item: StudentLesson }) {
   return <span className="px-2.5 py-1 rounded-full text-xs text-gray-400 bg-gray-50">Not recorded</span>;
 }
 
+// ── Family login: child switcher + name tags ─────────────────────────────
+
+/** "All" + one chip per child. Only rendered for a login with several children. */
+export function ChildChips({
+  items, selected, onSelect,
+}: { items: Child[]; selected: string | null; onSelect: (id: string | null) => void }) {
+  const chip = (active: boolean) =>
+    `inline-flex items-center gap-1.5 min-h-[36px] px-3.5 rounded-full text-sm font-medium border transition-colors whitespace-nowrap ${
+      active ? 'bg-navy text-white border-navy' : 'bg-white text-gray-600 border-gray-200 hover:border-navy/40 hover:text-navy'
+    }`;
+  return (
+    <div className="mb-5 -mx-1 px-1 overflow-x-auto" role="group" aria-label="Show lessons and payments for">
+      <div className="flex gap-2 w-max">
+        <button type="button" aria-pressed={selected === null} onClick={() => onSelect(null)} className={chip(selected === null)}>
+          <Users size={14} /> All
+        </button>
+        {items.map((c) => (
+          <button key={c.id} type="button" aria-pressed={selected === c.id} onClick={() => onSelect(c.id)}
+            className={chip(selected === c.id)} title={c.full_name}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Small "whose is this" tag; renders nothing unless several children are shown. */
+export function ChildTag({ studentId, onAccent = false }: { studentId: string; onAccent?: boolean }) {
+  const { childLabel } = useStudentPortal();
+  const name = childLabel(studentId);
+  if (!name) return null;
+  return (
+    <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+      onAccent ? 'bg-white/20 text-white' : 'bg-navy/5 text-navy'
+    }`}>
+      {name}
+    </span>
+  );
+}
+
 // ── Lesson row (shared by Home, Lessons, Calendar) ───────────────────────
 
 export function LessonRow({
@@ -66,6 +107,7 @@ export function LessonRow({
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
+          <ChildTag studentId={item.student_id} />
           <p className="font-medium text-navy text-sm">{l.title}</p>
           {l.instrument?.icon && <span className="text-base">{l.instrument.icon}</span>}
           {l.lesson_type !== 'regular' && (
@@ -143,7 +185,7 @@ export function AbsenceControls({
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const request = absences[item.lesson.id];
+  const request = absences[absenceKey(item.lesson.id, item.student_id)];
   const eligible = canRequest(item);
   const canAskAgain = eligible && (!request || request.status === 'declined');
   if (!request && !eligible) return null;
@@ -204,7 +246,7 @@ export function AbsenceControls({
           item={item}
           onClose={() => setSheetOpen(false)}
           onSubmit={async (reason) => {
-            const res = await requestAbsence(item.lesson.id, reason);
+            const res = await requestAbsence(item.lesson.id, item.student_id, reason);
             setSheetOpen(false);
             showToast('success', res.late_notice
               ? 'Request sent. It was less than 24 hours’ notice, so the lesson may still be charged.'
@@ -231,6 +273,8 @@ function AbsenceSheet({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const trapRef = useFocusTrap(true);
+  const { isFamily, children } = useStudentPortal();
+  const childName = isFamily ? children.find((c) => c.id === item.student_id)?.full_name : undefined;
   const l = item.lesson;
   const startsAt = lessonStartsAt(l.date, l.start_time);
   const late = startsAt.getTime() - Date.now() < 24 * 3600_000;
@@ -277,7 +321,9 @@ function AbsenceSheet({
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-gray-200 sm:hidden" aria-hidden />
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 id="absence-sheet-title" className="font-semibold text-navy text-lg">Can&rsquo;t attend this lesson?</h3>
+            <h3 id="absence-sheet-title" className="font-semibold text-navy text-lg">
+              {childName ? <>{childName} can&rsquo;t attend?</> : <>Can&rsquo;t attend this lesson?</>}
+            </h3>
             <p className="text-sm text-gray-500 mt-0.5">
               {l.title}{l.teacher?.full_name ? ` · ${l.teacher.full_name}` : ''}
             </p>

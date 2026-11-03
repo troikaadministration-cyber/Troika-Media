@@ -145,6 +145,25 @@ CREATE TYPE public.user_role AS ENUM (
 );
 
 --
+-- Name: _approved_login_for_email(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._approved_login_for_email(p_email text) RETURNS uuid
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT p.id
+  FROM profiles p
+  JOIN auth.users u ON u.id = p.id
+  WHERE COALESCE(btrim(p_email), '') <> ''
+    AND lower(btrim(p.email)) = lower(btrim(p_email))
+    AND p.role = 'student' AND p.approved IS TRUE
+    AND u.email_confirmed_at IS NOT NULL
+  ORDER BY p.created_at, p.id
+  LIMIT 1;
+$$;
+
+--
 -- Name: _generate_group_sessions(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -734,6 +753,7 @@ DECLARE
   v_unpaid INTEGER;
   v_lessons INTEGER;
   v_lesson_ids UUID[];
+  v_slots UUID[];
 BEGIN
   IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
     RAISE EXCEPTION 'Only coordinators can delete enrolments' USING ERRCODE = '42501';
@@ -746,8 +766,9 @@ BEGIN
   DELETE FROM payment_records WHERE enrolment_id = p_enrolment_id AND paid_date IS NULL;
   GET DIAGNOSTICS v_unpaid = ROW_COUNT;
 
-  -- Unlink the student from this enrolment's future, not-yet-held lessons,
-  -- then delete those lessons if nobody else is in them.
+  -- Unlink the student from this enrolment's future, not-yet-held lessons
+  -- (every weekly slot of the class), then delete those lessons if nobody
+  -- else is in them.
   WITH removed AS (
     DELETE FROM lesson_students ls
     USING lessons l
@@ -770,6 +791,19 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM student_enrolments o
                        WHERE o.student_id = v_enr.student_id AND o.id <> v_enr.id
                          AND o.instrument_id IS NOT DISTINCT FROM v_enr.instrument_id);
+
+  -- … and off this class's own weekly slots (incl. its 2nd/3rd weekly lesson).
+  v_slots := array_remove(ARRAY[v_enr.template_id] || COALESCE(v_enr.extra_template_ids, '{}'), NULL);
+  UPDATE teacher_schedule_templates t
+    SET student_ids = array_remove(t.student_ids, v_enr.student_id), updated_at = now()
+    WHERE t.id = ANY(v_slots)
+      AND v_enr.student_id = ANY(COALESCE(t.student_ids, '{}'))
+      AND NOT EXISTS (SELECT 1 FROM student_enrolments o
+                       WHERE o.student_id = v_enr.student_id AND o.id <> v_enr.id
+                         AND (o.template_id = t.id
+                              OR t.id = ANY(COALESCE(o.extra_template_ids, '{}'))
+                              OR (o.template_id IS NULL
+                                  AND o.instrument_id IS NOT DISTINCT FROM v_enr.instrument_id)));
 
   DELETE FROM student_enrolments WHERE id = p_enrolment_id;
 
@@ -798,19 +832,40 @@ END;
 $$;
 
 --
--- Name: enrol_student(uuid, uuid, public.payment_plan, date, date, integer, numeric, numeric, numeric, uuid, text, text, boolean, numeric, uuid, integer, time without time zone, time without time zone, uuid, text, uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: enrol_student(uuid, uuid, public.payment_plan, date, date, integer, numeric, numeric, numeric, uuid, text, text, boolean, numeric, uuid, integer, time without time zone, time without time zone, uuid, text, uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric DEFAULT 0, p_lesson_rate_id uuid DEFAULT NULL::uuid, p_academic_year text DEFAULT NULL::text, p_discount_primary text DEFAULT 'none'::text, p_discount_multilesson boolean DEFAULT false, p_discount_value numeric DEFAULT 0, p_template_id uuid DEFAULT NULL::uuid, p_day_of_week integer DEFAULT NULL::integer, p_start_time time without time zone DEFAULT NULL::time without time zone, p_end_time time without time zone DEFAULT NULL::time without time zone, p_instrument_id uuid DEFAULT NULL::uuid, p_title text DEFAULT NULL::text, p_location_id uuid DEFAULT NULL::uuid) RETURNS jsonb
+CREATE FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric DEFAULT 0, p_lesson_rate_id uuid DEFAULT NULL::uuid, p_academic_year text DEFAULT NULL::text, p_discount_primary text DEFAULT 'none'::text, p_discount_multilesson boolean DEFAULT false, p_discount_value numeric DEFAULT 0, p_template_id uuid DEFAULT NULL::uuid, p_day_of_week integer DEFAULT NULL::integer, p_start_time time without time zone DEFAULT NULL::time without time zone, p_end_time time without time zone DEFAULT NULL::time without time zone, p_instrument_id uuid DEFAULT NULL::uuid, p_title text DEFAULT NULL::text, p_location_id uuid DEFAULT NULL::uuid, p_extra_slots jsonb DEFAULT '[]'::jsonb) RETURNS jsonb
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
+  c_days CONSTANT TEXT[] := ARRAY['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  v_extras JSONB := COALESCE(p_extra_slots, '[]'::jsonb);
+  v_slot_count INTEGER;
+  v_max_lessons INTEGER;
   v_tpl teacher_schedule_templates%ROWTYPE;
+  v_x teacher_schedule_templates%ROWTYPE;
+  v_item JSONB;
+  v_n INTEGER;
+  v_i INTEGER;
+  v_j INTEGER;
+  v_raw TEXT;
+  v_x_id UUID;
+  v_x_day INTEGER;
+  v_x_start TIME;
+  v_x_end TIME;
+  -- one entry per weekly occurrence (1 = the first slot)
+  v_tpl_ids UUID[] := '{}';      -- NULL = new slot, created after validation
+  v_joinable BOOLEAN[] := '{}';  -- existing slot picked on purpose → may join its lessons
+  v_days INTEGER[] := '{}';
+  v_starts TIME[] := '{}';
+  v_ends TIME[] := '{}';         -- NULL end = 45 minutes (for overlap checks)
+  v_new_ends TIME[] := '{}';     -- end time as entered (for new slots)
   v_enrolment_id UUID;
   v_location UUID;
   v_end_time TIME;
-  v_date DATE;
+  v_occ RECORD;
   v_existing RECORD;
   v_lesson_id UUID;
   v_created INTEGER := 0;
@@ -823,6 +878,15 @@ BEGIN
   END IF;
 
   -- ── validation ──
+  IF jsonb_typeof(v_extras) <> 'array' THEN
+    RAISE EXCEPTION 'The extra weekly lessons could not be read — please re-select the days and times';
+  END IF;
+  IF jsonb_array_length(v_extras) > 2 THEN
+    RAISE EXCEPTION 'A class can be at most 3 times a week';
+  END IF;
+  v_slot_count := 1 + jsonb_array_length(v_extras);
+  v_max_lessons := 60 * v_slot_count;
+
   IF NOT EXISTS (SELECT 1 FROM students WHERE id = p_student_id) THEN
     RAISE EXCEPTION 'Student not found';
   END IF;
@@ -832,8 +896,8 @@ BEGIN
   IF p_start_date IS NULL OR p_end_date IS NULL OR p_end_date <= p_start_date THEN
     RAISE EXCEPTION 'End date must be after the start date';
   END IF;
-  IF p_total_lessons IS NULL OR p_total_lessons < 1 OR p_total_lessons > 60 THEN
-    RAISE EXCEPTION 'Number of lessons must be between 1 and 60';
+  IF p_total_lessons IS NULL OR p_total_lessons < 1 OR p_total_lessons > v_max_lessons THEN
+    RAISE EXCEPTION 'Number of lessons must be between 1 and %', v_max_lessons;
   END IF;
   IF COALESCE(p_rate_per_lesson, -1) < 0 OR COALESCE(p_total_fee, -1) < 0
      OR COALESCE(p_registration_fee, 0) < 0 OR COALESCE(p_discount_value, 0) < 0 THEN
@@ -843,7 +907,7 @@ BEGIN
     RAISE EXCEPTION 'Enter a lesson rate greater than ₹0 (or choose the Trial plan)';
   END IF;
 
-  -- ── slot ──
+  -- ── first weekly slot (unchanged behaviour) ──
   IF p_template_id IS NOT NULL THEN
     SELECT * INTO v_tpl FROM teacher_schedule_templates WHERE id = p_template_id FOR UPDATE;
     IF NOT FOUND THEN
@@ -872,50 +936,153 @@ BEGIN
     RETURNING * INTO v_tpl;
   END IF;
 
+  v_tpl_ids  := ARRAY[v_tpl.id];
+  v_joinable := ARRAY[p_template_id IS NOT NULL];
+  v_days     := ARRAY[v_tpl.day_of_week::INTEGER];
+  v_starts   := ARRAY[v_tpl.start_time];
+  v_ends     := ARRAY[COALESCE(v_tpl.end_time, (v_tpl.start_time + INTERVAL '45 minutes')::TIME)];
+  v_new_ends := ARRAY[v_tpl.end_time];
+
+  -- ── extra weekly occurrences: read + validate all before creating anything ──
+  FOR v_i IN 0 .. jsonb_array_length(v_extras) - 1 LOOP
+    v_n := v_i + 2;  -- "weekly lesson 2", "weekly lesson 3"
+    v_item := v_extras -> v_i;
+    IF jsonb_typeof(v_item) <> 'object' THEN
+      RAISE EXCEPTION 'Weekly lesson %: choose a slot or a day and time', v_n;
+    END IF;
+
+    IF NULLIF(v_item ->> 'template_id', '') IS NOT NULL THEN
+      BEGIN
+        v_x_id := (v_item ->> 'template_id')::UUID;
+      EXCEPTION WHEN others THEN
+        RAISE EXCEPTION 'Weekly lesson %: that slot could not be found — please pick it again', v_n;
+      END;
+      SELECT * INTO v_x FROM teacher_schedule_templates WHERE id = v_x_id FOR UPDATE;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'Weekly lesson %: that schedule slot no longer exists', v_n;
+      END IF;
+      IF v_x.teacher_id <> p_teacher_id THEN
+        RAISE EXCEPTION 'Weekly lesson %: that slot belongs to a different teacher — all weekly lessons of a class are with the same teacher', v_n;
+      END IF;
+      IF NOT v_x.is_active THEN
+        RAISE EXCEPTION 'Weekly lesson %: that slot is no longer active — pick another one', v_n;
+      END IF;
+      IF v_x.id = ANY(v_tpl_ids) THEN
+        RAISE EXCEPTION 'The same weekly slot (% %) was chosen twice — pick a different day or time for weekly lesson %',
+          c_days[v_x.day_of_week + 1], to_char(v_x.start_time, 'HH24:MI'), v_n;
+      END IF;
+      IF v_x.instrument_id IS NOT NULL AND COALESCE(v_tpl.instrument_id, p_instrument_id) IS NOT NULL
+         AND v_x.instrument_id <> COALESCE(v_tpl.instrument_id, p_instrument_id) THEN
+        RAISE EXCEPTION 'Weekly lesson %: that slot is for a different instrument — all weekly lessons of a class are the same instrument', v_n;
+      END IF;
+      v_tpl_ids  := v_tpl_ids || v_x.id;
+      v_joinable := v_joinable || true;
+      v_days     := v_days || v_x.day_of_week::INTEGER;
+      v_starts   := v_starts || v_x.start_time;
+      v_ends     := v_ends || COALESCE(v_x.end_time, (v_x.start_time + INTERVAL '45 minutes')::TIME);
+      v_new_ends := v_new_ends || v_x.end_time;
+    ELSE
+      BEGIN
+        v_x_day := (v_item ->> 'day_of_week')::INTEGER;
+        v_x_start := NULLIF(v_item ->> 'start_time', '')::TIME;
+        v_x_end := NULLIF(v_item ->> 'end_time', '')::TIME;
+      EXCEPTION WHEN others THEN
+        RAISE EXCEPTION 'Weekly lesson %: the day or time is not valid', v_n;
+      END;
+      IF v_x_day IS NULL OR v_x_day NOT BETWEEN 0 AND 6 OR v_x_start IS NULL THEN
+        RAISE EXCEPTION 'Weekly lesson %: choose a day and start time', v_n;
+      END IF;
+      IF v_x_end IS NOT NULL AND v_x_end <= v_x_start THEN
+        RAISE EXCEPTION 'Weekly lesson %: end time must be after the start time', v_n;
+      END IF;
+      v_tpl_ids  := v_tpl_ids || NULL::UUID;
+      v_joinable := v_joinable || false;
+      v_days     := v_days || v_x_day;
+      v_starts   := v_starts || v_x_start;
+      v_ends     := v_ends || COALESCE(v_x_end, (v_x_start + INTERVAL '45 minutes')::TIME);
+      v_new_ends := v_new_ends || v_x_end;
+    END IF;
+  END LOOP;
+
+  -- No two weekly lessons of the class may overlap (same day, overlapping times).
+  FOR v_i IN 1 .. v_slot_count LOOP
+    FOR v_j IN v_i + 1 .. v_slot_count LOOP
+      IF v_days[v_i] = v_days[v_j] AND v_starts[v_i] < v_ends[v_j] AND v_starts[v_j] < v_ends[v_i] THEN
+        RAISE EXCEPTION 'Weekly lessons % and % overlap on % (% and %) — choose different days or times',
+          v_i, v_j, c_days[v_days[v_i] + 1], to_char(v_starts[v_i], 'HH24:MI'), to_char(v_starts[v_j], 'HH24:MI');
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- Create the new extra slots / put the student on the existing ones.
+  FOR v_i IN 2 .. v_slot_count LOOP
+    IF v_tpl_ids[v_i] IS NULL THEN
+      INSERT INTO teacher_schedule_templates
+        (teacher_id, day_of_week, start_time, end_time, location_id, instrument_id, title, student_ids,
+         is_active, counts_toward_lessons)
+      VALUES
+        (p_teacher_id, v_days[v_i], v_starts[v_i], v_new_ends[v_i], COALESCE(v_tpl.location_id, p_location_id),
+         COALESCE(v_tpl.instrument_id, p_instrument_id), COALESCE(NULLIF(v_tpl.title, ''), 'Lesson'),
+         ARRAY[p_student_id], true, COALESCE(v_tpl.counts_toward_lessons, true))
+      RETURNING id INTO v_x_id;
+      v_tpl_ids[v_i] := v_x_id;
+    ELSE
+      UPDATE teacher_schedule_templates
+        SET student_ids = array_append(COALESCE(student_ids, '{}'), p_student_id), updated_at = now()
+        WHERE id = v_tpl_ids[v_i] AND NOT (p_student_id = ANY(COALESCE(student_ids, '{}')));
+    END IF;
+  END LOOP;
+
   v_location := COALESCE(v_tpl.location_id, p_location_id,
                          (SELECT location_id FROM students WHERE id = p_student_id));
-  v_end_time := COALESCE(v_tpl.end_time, v_tpl.start_time + INTERVAL '45 minutes');
 
   -- ── enrolment ──
   INSERT INTO student_enrolments (
     student_id, academic_year, lesson_rate_id, total_lessons, lessons_used, start_date,
     payment_plan, rate_per_lesson, total_fee, registration_fee, instrument_id,
-    discount_primary, discount_multilesson, discount_value, template_id
+    discount_primary, discount_multilesson, discount_value, template_id, extra_template_ids
   ) VALUES (
     p_student_id, COALESCE(NULLIF(p_academic_year, ''), to_char(p_start_date, 'YYYY')), p_lesson_rate_id,
     p_total_lessons, 0, p_start_date, p_payment_plan, p_rate_per_lesson, p_total_fee,
     COALESCE(p_registration_fee, 0), COALESCE(v_tpl.instrument_id, p_instrument_id),
     COALESCE(p_discount_primary, 'none'), COALESCE(p_discount_multilesson, false),
     CASE WHEN p_discount_primary = 'special' THEN COALESCE(p_discount_value, 0) ELSE 0 END,
-    v_tpl.id  -- year rollover: remember the class's weekly slot
+    v_tpl.id,                         -- the class's first weekly slot
+    v_tpl_ids[2:v_slot_count]         -- its 2nd/3rd weekly slots ('{}' at 1× per week)
   ) RETURNING id INTO v_enrolment_id;
 
-  -- ── lessons: weekly on the slot's day, from start date, until enough ──
-  FOR v_date IN
-    SELECT d::date FROM generate_series(p_start_date, p_end_date, INTERVAL '1 day') AS d
-    WHERE EXTRACT(DOW FROM d) = v_tpl.day_of_week
-    ORDER BY d
+  -- ── lessons: every weekly occurrence, in date order, until the total is reached ──
+  FOR v_occ IN
+    SELECT d::date AS lesson_date, o.joinable, o.ord,
+           t.id AS tpl_id, t.start_time, t.end_time, t.title, t.instrument_id, t.location_id,
+           t.counts_toward_lessons
+    FROM unnest(v_tpl_ids, v_joinable) WITH ORDINALITY AS o(tpl_id, joinable, ord)
+    JOIN teacher_schedule_templates t ON t.id = o.tpl_id
+    JOIN generate_series(p_start_date, p_end_date, INTERVAL '1 day') AS d
+      ON EXTRACT(DOW FROM d) = t.day_of_week
+    ORDER BY d, t.start_time, o.ord
   LOOP
     EXIT WHEN v_created + v_joined >= p_total_lessons;
+    v_end_time := COALESCE(v_occ.end_time, v_occ.start_time + INTERVAL '45 minutes');
 
     -- Same slot already has a lesson that day (e.g. a group class): join it.
     SELECT l.id, l.instrument_id INTO v_existing
     FROM lessons l
-    WHERE l.teacher_id = p_teacher_id AND l.date = v_date AND l.start_time = v_tpl.start_time
+    WHERE l.teacher_id = p_teacher_id AND l.date = v_occ.lesson_date AND l.start_time = v_occ.start_time
       AND l.status <> 'cancelled'
     LIMIT 1;
 
     IF FOUND THEN
       -- Only join when the coordinator deliberately picked an existing slot;
       -- a NEW slot at an occupied time is a clash (never merge into someone's 1:1).
-      IF p_template_id IS NOT NULL AND v_existing.instrument_id IS NOT DISTINCT FROM v_tpl.instrument_id THEN
+      IF v_occ.joinable AND v_existing.instrument_id IS NOT DISTINCT FROM v_occ.instrument_id THEN
         INSERT INTO lesson_students (lesson_id, student_id, enrolment_id)
         VALUES (v_existing.id, p_student_id, v_enrolment_id)
         ON CONFLICT (lesson_id, student_id) DO UPDATE SET enrolment_id = EXCLUDED.enrolment_id;
         v_joined := v_joined + 1;
       ELSE
         v_conflicts := v_conflicts + 1;
-        v_conflict_dates := array_append(v_conflict_dates, v_date::text);
+        v_conflict_dates := array_append(v_conflict_dates, v_occ.lesson_date::text);
       END IF;
       CONTINUE;
     END IF;
@@ -923,19 +1090,20 @@ BEGIN
     -- Teacher busy with a different lesson overlapping this time: don't double-book.
     IF EXISTS (
       SELECT 1 FROM lessons l
-      WHERE l.teacher_id = p_teacher_id AND l.date = v_date AND l.status <> 'cancelled'
+      WHERE l.teacher_id = p_teacher_id AND l.date = v_occ.lesson_date AND l.status <> 'cancelled'
         AND l.start_time < v_end_time
-        AND COALESCE(l.end_time, l.start_time + INTERVAL '45 minutes') > v_tpl.start_time
+        AND COALESCE(l.end_time, l.start_time + INTERVAL '45 minutes') > v_occ.start_time
     ) THEN
       v_conflicts := v_conflicts + 1;
-      v_conflict_dates := array_append(v_conflict_dates, v_date::text);
+      v_conflict_dates := array_append(v_conflict_dates, v_occ.lesson_date::text);
       CONTINUE;
     END IF;
 
     INSERT INTO lessons (teacher_id, location_id, instrument_id, lesson_type, date, start_time, end_time, title,
                          template_id, is_charged)
-    VALUES (p_teacher_id, v_location, v_tpl.instrument_id, 'regular', v_date, v_tpl.start_time, v_tpl.end_time,
-            COALESCE(NULLIF(v_tpl.title, ''), 'Lesson'), v_tpl.id, COALESCE(v_tpl.counts_toward_lessons, true))
+    VALUES (p_teacher_id, COALESCE(v_occ.location_id, v_location), v_occ.instrument_id, 'regular',
+            v_occ.lesson_date, v_occ.start_time, v_occ.end_time,
+            COALESCE(NULLIF(v_occ.title, ''), 'Lesson'), v_occ.tpl_id, COALESCE(v_occ.counts_toward_lessons, true))
     RETURNING id INTO v_lesson_id;
 
     INSERT INTO lesson_students (lesson_id, student_id, enrolment_id)
@@ -943,12 +1111,14 @@ BEGIN
     v_created := v_created + 1;
   END LOOP;
 
-  -- ── instalments ──
+  -- ── instalments (one schedule for the whole class) ──
   PERFORM generate_instalments(v_enrolment_id);
 
   RETURN jsonb_build_object(
     'enrolment_id', v_enrolment_id,
     'template_id', v_tpl.id,
+    'extra_template_ids', to_jsonb(v_tpl_ids[2:v_slot_count]),
+    'slots', v_slot_count,
     'lessons_created', v_created,
     'lessons_joined', v_joined,
     'lessons_scheduled', v_created + v_joined,
@@ -1018,6 +1188,22 @@ BEGIN
       to_char(v_clash.start_time, 'HH24:MI'), to_char(NEW.date, 'DD Mon'), v_clash.title;
   END IF;
   RETURN NEW;
+END;
+$$;
+
+--
+-- Name: fn_enrolments_forget_deleted_slot(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_enrolments_forget_deleted_slot() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  UPDATE student_enrolments
+    SET extra_template_ids = array_remove(extra_template_ids, OLD.id)
+    WHERE OLD.id = ANY(extra_template_ids);
+  RETURN OLD;
 END;
 $$;
 
@@ -1103,6 +1289,29 @@ END;
 $$;
 
 --
+-- Name: fn_profiles_link_students_on_approval(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_profiles_link_students_on_approval() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.role = 'student' AND NEW.approved IS TRUE
+     AND (TG_OP = 'INSERT' OR OLD.approved IS DISTINCT FROM TRUE OR OLD.role IS DISTINCT FROM 'student')
+     AND COALESCE(btrim(NEW.email), '') <> ''
+     AND EXISTS (SELECT 1 FROM auth.users u
+                 WHERE u.id = NEW.id AND u.email_confirmed_at IS NOT NULL
+                   AND lower(btrim(u.email)) = lower(btrim(NEW.email))) THEN
+    UPDATE students
+    SET user_id = NEW.id, updated_at = now()
+    WHERE user_id IS NULL AND lower(btrim(email)) = lower(btrim(NEW.email));
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+--
 -- Name: fn_recompute_lessons_used(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1127,6 +1336,24 @@ BEGIN
       updated_at = now()
   WHERE se.student_id = p_student_id
     AND se.academic_year = p_acad_year;
+END;
+$$;
+
+--
+-- Name: fn_students_link_login_by_email(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_students_link_login_by_email() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.user_id IS NULL
+     AND COALESCE(btrim(NEW.email), '') <> ''
+     AND (TG_OP = 'INSERT' OR lower(btrim(NEW.email)) IS DISTINCT FROM lower(btrim(COALESCE(OLD.email, '')))) THEN
+    NEW.user_id := _approved_login_for_email(NEW.email);
+  END IF;
+  RETURN NEW;
 END;
 $$;
 
@@ -1231,6 +1458,7 @@ CREATE FUNCTION public.get_student_id() RETURNS uuid
   FROM students s
   JOIN profiles p ON p.id = s.user_id
   WHERE s.user_id = auth.uid() AND p.role = 'student' AND p.approved IS TRUE
+  ORDER BY s.created_at, s.id
   LIMIT 1;
 $$;
 
@@ -1242,7 +1470,9 @@ CREATE FUNCTION public.get_student_lesson_ids() RETURNS SETOF uuid
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-  SELECT ls.lesson_id FROM lesson_students ls WHERE ls.student_id = get_student_id();
+  SELECT DISTINCT ls.lesson_id
+  FROM lesson_students ls
+  WHERE ls.student_id IN (SELECT my_student_ids());
 $$;
 
 --
@@ -1370,7 +1600,12 @@ CREATE FUNCTION public.link_or_create_student(p_user_id uuid, p_email text, p_fu
 DECLARE
   v_student_id uuid;
 BEGIN
-  SELECT id INTO v_student_id FROM students WHERE user_id = p_user_id LIMIT 1;
+  -- user_id is no longer unique: serialise per login so a double submit
+  -- can't create two records.
+  PERFORM pg_advisory_xact_lock(hashtextextended('link_or_create_student:' || p_user_id::text, 0));
+
+  SELECT id INTO v_student_id FROM students WHERE user_id = p_user_id
+  ORDER BY created_at, id LIMIT 1;
   IF v_student_id IS NOT NULL THEN
     RETURN v_student_id;
   END IF;
@@ -1380,28 +1615,28 @@ BEGIN
        WHERE u.id = p_user_id
          AND lower(u.email) = lower(p_email)
          AND u.email_confirmed_at IS NOT NULL) THEN
-    SELECT id INTO v_student_id
-    FROM students
-    WHERE lower(email) = lower(p_email) AND user_id IS NULL
-    LIMIT 1
-    FOR UPDATE;
-    IF v_student_id IS NOT NULL THEN
-      UPDATE students
+    WITH matched AS (
+      SELECT id FROM students
+      WHERE lower(btrim(email)) = lower(btrim(p_email)) AND user_id IS NULL
+      FOR UPDATE
+    ), linked AS (
+      UPDATE students s
       SET user_id = p_user_id,
-          full_name = COALESCE(NULLIF(trim(full_name), ''), p_full_name),
+          full_name = COALESCE(NULLIF(trim(s.full_name), ''), p_full_name),
           updated_at = now()
-      WHERE id = v_student_id;
+      FROM matched
+      WHERE s.id = matched.id
+      RETURNING s.id, s.created_at
+    )
+    SELECT id INTO v_student_id FROM linked ORDER BY created_at, id LIMIT 1;
+    IF v_student_id IS NOT NULL THEN
       RETURN v_student_id;
     END IF;
   END IF;
 
-  BEGIN
-    INSERT INTO students (full_name, email, user_id, is_active, payment_plan)
-    VALUES (p_full_name, COALESCE(p_email, ''), p_user_id, true, 'trial')
-    RETURNING id INTO v_student_id;
-  EXCEPTION WHEN unique_violation THEN
-    SELECT id INTO v_student_id FROM students WHERE user_id = p_user_id LIMIT 1;
-  END;
+  INSERT INTO students (full_name, email, user_id, is_active, payment_plan)
+  VALUES (p_full_name, COALESCE(p_email, ''), p_user_id, true, 'trial')
+  RETURNING id INTO v_student_id;
   RETURN v_student_id;
 END;
 $$;
@@ -1419,6 +1654,21 @@ BEGIN
   VALUES (NEW.id, 'marked_paid', NEW.amount, NEW.paid_date, auth.uid());
   RETURN NULL;
 END;
+$$;
+
+--
+-- Name: my_student_ids(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.my_student_ids() RETURNS SETOF uuid
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT s.id
+  FROM students s
+  WHERE s.user_id = auth.uid()
+    AND EXISTS (SELECT 1 FROM profiles p
+                WHERE p.id = auth.uid() AND p.role = 'student' AND p.approved IS TRUE);
 $$;
 
 --
@@ -1672,7 +1922,15 @@ BEGIN
              GROUP BY l.teacher_id ORDER BY count(*) DESC, l.teacher_id LIMIT 1)) AS cls_teacher_id,
            t.id AS t_id, t.day_of_week, t.start_time, t.end_time, t.is_active AS t_active,
            t.is_group, t.title AS t_title, t.instrument_id AS t_instrument_id, t.teacher_id AS t_teacher_id,
-           (se.student_id = ANY(COALESCE(t.student_ids, '{}'))) AS t_on_slot
+           (se.student_id = ANY(COALESCE(t.student_ids, '{}'))) AS t_on_slot,
+           COALESCE((
+             SELECT jsonb_agg(jsonb_build_object(
+                      'id', x.id, 'teacher_id', x.teacher_id, 'day_of_week', x.day_of_week,
+                      'start_time', x.start_time, 'end_time', x.end_time, 'is_active', x.is_active,
+                      'is_group', x.is_group, 'title', x.title, 'instrument_id', x.instrument_id,
+                      'student_on_slot', se.student_id = ANY(COALESCE(x.student_ids, '{}'))) ORDER BY u.ord)
+             FROM unnest(COALESCE(se.extra_template_ids, '{}')) WITH ORDINALITY AS u(tid, ord)
+             JOIN teacher_schedule_templates x ON x.id = u.tid), '[]'::jsonb) AS x_slots
     FROM student_enrolments se
     JOIN students s ON s.id = se.student_id AND s.is_active
     LEFT JOIN teacher_schedule_templates t ON t.id = se.template_id
@@ -1692,6 +1950,8 @@ BEGIN
                         'start_time', c.start_time, 'end_time', c.end_time, 'is_active', c.t_active,
                         'is_group', c.is_group, 'title', c.t_title, 'instrument_id', c.t_instrument_id,
                         'student_on_slot', c.t_on_slot) END,
+             'extra_slots', c.x_slots,
+             'times_per_week', 1 + jsonb_array_length(c.x_slots),
              'rate_per_lesson', c.rate_per_lesson,
              'payment_plan', c.payment_plan,
              'lesson_rate_id', c.lesson_rate_id,
@@ -1715,7 +1975,8 @@ BEGIN
            'renewed', COALESCE((
              SELECT jsonb_agg(jsonb_build_object(
                       'enrolment_id', n.id, 'instrument_id', n.instrument_id, 'instrument_name', ni.name,
-                      'template_id', n.template_id, 'rate_per_lesson', n.rate_per_lesson,
+                      'template_id', n.template_id, 'extra_template_ids', to_jsonb(COALESCE(n.extra_template_ids, '{}')),
+                      'rate_per_lesson', n.rate_per_lesson,
                       'payment_plan', n.payment_plan, 'total_fee', n.total_fee) ORDER BY n.created_at, n.id)
              FROM student_enrolments n LEFT JOIN instruments ni ON ni.id = n.instrument_id
              WHERE n.student_id = s.id AND n.academic_year = p_to_year), '[]'::jsonb)
@@ -1782,15 +2043,16 @@ END;
 $$;
 
 --
--- Name: request_absence(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: request_absence(uuid, text, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.request_absence(p_lesson_id uuid, p_reason text) RETURNS jsonb
+CREATE FUNCTION public.request_absence(p_lesson_id uuid, p_reason text, p_student_id uuid DEFAULT NULL::uuid) RETURNS jsonb
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
-  v_student UUID := get_student_id();
+  v_student UUID;
+  v_n INTEGER;
   v_student_name TEXT;
   v_reason TEXT := btrim(COALESCE(p_reason, ''));
   v_lesson lessons%ROWTYPE;
@@ -1798,15 +2060,29 @@ DECLARE
   v_late BOOLEAN;
   v_id UUID;
 BEGIN
-  IF v_student IS NULL THEN
+  IF NOT EXISTS (SELECT 1 FROM my_student_ids()) THEN
     RAISE EXCEPTION 'Only enrolled students can request an absence' USING ERRCODE = '42501';
+  END IF;
+  IF p_student_id IS NOT NULL AND p_student_id NOT IN (SELECT my_student_ids()) THEN
+    RAISE EXCEPTION 'That student isn''t on your account' USING ERRCODE = '42501';
   END IF;
   IF v_reason = '' THEN RAISE EXCEPTION 'Please tell us why you can''t attend'; END IF;
   IF char_length(v_reason) > 300 THEN RAISE EXCEPTION 'Please keep the reason under 300 characters'; END IF;
 
-  SELECT l.* INTO v_lesson FROM lessons l
-  WHERE l.id = p_lesson_id
-    AND EXISTS (SELECT 1 FROM lesson_students ls WHERE ls.lesson_id = l.id AND ls.student_id = v_student);
+  -- Which of the caller's children on this lesson is it for?
+  SELECT count(*), min(ls.student_id::text)::uuid INTO v_n, v_student
+  FROM lesson_students ls
+  WHERE ls.lesson_id = p_lesson_id
+    AND ls.student_id IN (SELECT my_student_ids())
+    AND (p_student_id IS NULL OR ls.student_id = p_student_id);
+  IF v_n = 0 THEN
+    RAISE EXCEPTION 'Lesson not found' USING ERRCODE = '42501';
+  END IF;
+  IF v_n > 1 THEN
+    RAISE EXCEPTION 'More than one of your children is in this lesson — choose which one can''t attend';
+  END IF;
+
+  SELECT l.* INTO v_lesson FROM lessons l WHERE l.id = p_lesson_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Lesson not found' USING ERRCODE = '42501';
   END IF;
@@ -1842,7 +2118,7 @@ BEGIN
          CASE WHEN v_late THEN ' (late notice)' ELSE '' END || ': ' || v_reason
   FROM profiles p WHERE p.role = 'coordinator';
 
-  RETURN jsonb_build_object('id', v_id, 'late_notice', v_late);
+  RETURN jsonb_build_object('id', v_id, 'late_notice', v_late, 'student_id', v_student);
 END;
 $$;
 
@@ -1920,7 +2196,8 @@ BEGIN
     RAISE EXCEPTION 'Only coordinators can renew enrolments' USING ERRCODE = '42501';
   END IF;
   IF EXISTS (SELECT 1 FROM student_enrolments
-             WHERE student_id = p_student_id AND template_id = p_template_id
+             WHERE student_id = p_student_id
+               AND (template_id = p_template_id OR p_template_id = ANY(COALESCE(extra_template_ids, '{}')))
                AND academic_year >= p_to_year) THEN
     RETURN false;
   END IF;
@@ -1990,6 +2267,49 @@ BEGIN
   INSERT INTO lesson_students (lesson_id, student_id) SELECT v_lesson, s FROM unnest(v_members) s;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN jsonb_build_object('lesson_id', v_lesson, 'students', v_n);
+END;
+$$;
+
+--
+-- Name: set_student_login(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_student_login(p_student_id uuid, p_user_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_profile profiles%ROWTYPE;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can change a student''s login' USING ERRCODE = '42501';
+  END IF;
+
+  PERFORM 1 FROM students WHERE id = p_student_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Student not found'; END IF;
+
+  IF p_user_id IS NOT NULL THEN
+    SELECT * INTO v_profile FROM profiles WHERE id = p_user_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'That login no longer exists'; END IF;
+    IF v_profile.role <> 'student' THEN
+      RAISE EXCEPTION 'Only a student / parent login can be linked (this login is a %)', v_profile.role;
+    END IF;
+    IF v_profile.approved IS NOT TRUE THEN
+      RAISE EXCEPTION 'This login isn''t approved yet — approve it first, then link it';
+    END IF;
+  END IF;
+
+  UPDATE students SET user_id = p_user_id, updated_at = now() WHERE id = p_student_id;
+
+  RETURN jsonb_build_object(
+    'student_id', p_student_id,
+    'login', CASE WHEN p_user_id IS NULL THEN NULL ELSE
+      jsonb_build_object('id', v_profile.id, 'full_name', v_profile.full_name, 'email', v_profile.email) END,
+    'children', CASE WHEN p_user_id IS NULL THEN '[]'::jsonb ELSE COALESCE((
+      SELECT jsonb_agg(jsonb_build_object('id', s.id, 'full_name', s.full_name, 'is_active', s.is_active)
+                       ORDER BY s.full_name, s.id)
+      FROM students s WHERE s.user_id = p_user_id), '[]'::jsonb) END
+  );
 END;
 $$;
 
@@ -2117,14 +2437,13 @@ CREATE FUNCTION public.withdraw_absence_request(p_request_id uuid) RETURNS void
     SET search_path TO 'public'
     AS $$
 DECLARE
-  v_student UUID := get_student_id();
   v_status TEXT;
 BEGIN
-  IF v_student IS NULL THEN
+  IF NOT EXISTS (SELECT 1 FROM my_student_ids()) THEN
     RAISE EXCEPTION 'Only enrolled students can withdraw a request' USING ERRCODE = '42501';
   END IF;
   SELECT status INTO v_status FROM absence_requests
-  WHERE id = p_request_id AND student_id = v_student FOR UPDATE;
+  WHERE id = p_request_id AND student_id IN (SELECT my_student_ids()) FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Request not found' USING ERRCODE = '42501'; END IF;
   IF v_status <> 'pending' THEN
     RAISE EXCEPTION 'This request has already been %', v_status;
@@ -2444,6 +2763,7 @@ CREATE TABLE public.student_enrolments (
     discount_multilesson boolean DEFAULT false NOT NULL,
     instrument_id uuid,
     template_id uuid,
+    extra_template_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
     CONSTRAINT enrolment_fee_non_negative CHECK ((total_fee >= (0)::numeric)),
     CONSTRAINT enrolment_lessons_non_negative CHECK ((lessons_used >= 0)),
     CONSTRAINT student_enrolments_discount_kind_check CHECK ((discount_kind = ANY (ARRAY['percent'::text, 'amount'::text]))),
@@ -2732,13 +3052,6 @@ ALTER TABLE ONLY public.student_pieces
 
 ALTER TABLE ONLY public.students
     ADD CONSTRAINT students_pkey PRIMARY KEY (id);
-
---
--- Name: students students_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.students
-    ADD CONSTRAINT students_user_id_key UNIQUE (user_id);
 
 --
 -- Name: teacher_schedule_templates teacher_schedule_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -3090,6 +3403,12 @@ CREATE TRIGGER trg_cascade_lesson_category_rename AFTER UPDATE OF name ON public
 CREATE TRIGGER trg_check_teacher_double_booking BEFORE INSERT OR UPDATE ON public.lessons FOR EACH ROW EXECUTE FUNCTION public.fn_check_teacher_double_booking();
 
 --
+-- Name: teacher_schedule_templates trg_enrolments_forget_deleted_slot; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_enrolments_forget_deleted_slot AFTER DELETE ON public.teacher_schedule_templates FOR EACH ROW EXECUTE FUNCTION public.fn_enrolments_forget_deleted_slot();
+
+--
 -- Name: lesson_students trg_guard_lesson_students_update; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -3120,10 +3439,22 @@ CREATE TRIGGER trg_lessons_recompute_used AFTER UPDATE ON public.lessons FOR EAC
 CREATE TRIGGER trg_payment_marked_paid AFTER UPDATE OF paid_date ON public.payment_records FOR EACH ROW WHEN (((old.paid_date IS NULL) AND (new.paid_date IS NOT NULL))) EXECUTE FUNCTION public.log_payment_marked_paid();
 
 --
+-- Name: profiles trg_profiles_link_students_on_approval; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_profiles_link_students_on_approval AFTER INSERT OR UPDATE OF approved, role ON public.profiles FOR EACH ROW EXECUTE FUNCTION public.fn_profiles_link_students_on_approval();
+
+--
 -- Name: lesson_students trg_resolve_pending_on_makeup; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_resolve_pending_on_makeup AFTER INSERT ON public.lesson_students FOR EACH ROW EXECUTE FUNCTION public.resolve_pending_on_makeup();
+
+--
+-- Name: students trg_students_link_login_by_email; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_students_link_login_by_email BEFORE INSERT OR UPDATE OF email ON public.students FOR EACH ROW EXECUTE FUNCTION public.fn_students_link_login_by_email();
 
 --
 -- Name: absence_requests absence_requests_decided_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -3639,81 +3970,81 @@ CREATE POLICY "Insert own or coordinator notifications" ON public.notifications 
 -- Name: profiles Students can view teacher profiles; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students can view teacher profiles" ON public.profiles FOR SELECT USING (((( SELECT public.get_student_id() AS get_student_id) IS NOT NULL) AND (role = 'teacher'::public.user_role) AND (approved IS TRUE)));
+CREATE POLICY "Students can view teacher profiles" ON public.profiles FOR SELECT USING (((EXISTS ( SELECT 1
+   FROM public.my_student_ids() my_student_ids(my_student_ids))) AND (role = 'teacher'::public.user_role) AND (approved IS TRUE)));
 
 --
 -- Name: lesson_rates Students read lesson_rates; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students read lesson_rates" ON public.lesson_rates FOR SELECT USING ((( SELECT public.get_student_id() AS get_student_id) IS NOT NULL));
+CREATE POLICY "Students read lesson_rates" ON public.lesson_rates FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.my_student_ids() my_student_ids(my_student_ids))));
 
 --
 -- Name: absence_requests Students read own absence requests; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students read own absence requests" ON public.absence_requests FOR SELECT USING ((student_id = ( SELECT public.get_student_id() AS get_student_id)));
+CREATE POLICY "Students read own absence requests" ON public.absence_requests FOR SELECT USING ((student_id IN ( SELECT public.my_student_ids() AS my_student_ids)));
 
 --
 -- Name: scheduled_breaks Students read own breaks; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students read own breaks" ON public.scheduled_breaks FOR SELECT USING ((( SELECT public.get_student_id() AS get_student_id) = ANY (student_ids)));
+CREATE POLICY "Students read own breaks" ON public.scheduled_breaks FOR SELECT USING ((student_ids && ARRAY( SELECT public.my_student_ids() AS my_student_ids)));
 
 --
 -- Name: student_enrolments Students read own enrolments; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students read own enrolments" ON public.student_enrolments FOR SELECT USING (((( SELECT public.get_user_role() AS v) = 'student'::public.user_role) AND (student_id = ( SELECT public.get_student_id() AS v))));
+CREATE POLICY "Students read own enrolments" ON public.student_enrolments FOR SELECT USING (((( SELECT public.get_user_role() AS get_user_role) = 'student'::public.user_role) AND (student_id IN ( SELECT public.my_student_ids() AS my_student_ids))));
 
 --
 -- Name: invoices Students read own invoices; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students read own invoices" ON public.invoices FOR SELECT USING (((( SELECT public.get_user_role() AS v) = 'student'::public.user_role) AND (student_id = ( SELECT public.get_student_id() AS v))));
+CREATE POLICY "Students read own invoices" ON public.invoices FOR SELECT USING (((( SELECT public.get_user_role() AS get_user_role) = 'student'::public.user_role) AND (student_id IN ( SELECT public.my_student_ids() AS my_student_ids))));
 
 --
 -- Name: media_uploads Students read own lesson media; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students read own lesson media" ON public.media_uploads FOR SELECT USING (((( SELECT public.jwt_role() AS v) = 'student'::text) AND (lesson_id IN ( SELECT ls.lesson_id
-   FROM public.lesson_students ls
-  WHERE (ls.student_id = ( SELECT public.get_student_id() AS v))))));
+CREATE POLICY "Students read own lesson media" ON public.media_uploads FOR SELECT USING (((( SELECT public.jwt_role() AS jwt_role) = 'student'::text) AND (lesson_id IN ( SELECT public.get_student_lesson_ids() AS get_student_lesson_ids))));
 
 --
 -- Name: lessons Students see enrolled lessons; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students see enrolled lessons" ON public.lessons FOR SELECT USING (((( SELECT public.jwt_role() AS v) = 'student'::text) AND (id IN ( SELECT public.get_student_lesson_ids() AS get_student_lesson_ids))));
+CREATE POLICY "Students see enrolled lessons" ON public.lessons FOR SELECT USING (((( SELECT public.jwt_role() AS jwt_role) = 'student'::text) AND (id IN ( SELECT public.get_student_lesson_ids() AS get_student_lesson_ids))));
 
 --
 -- Name: lesson_students Students see own enrollments; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students see own enrollments" ON public.lesson_students FOR SELECT USING (((( SELECT public.jwt_role() AS v) = 'student'::text) AND (student_id = ( SELECT public.get_student_id() AS v))));
+CREATE POLICY "Students see own enrollments" ON public.lesson_students FOR SELECT USING (((( SELECT public.jwt_role() AS jwt_role) = 'student'::text) AND (student_id IN ( SELECT public.my_student_ids() AS my_student_ids))));
 
 --
 -- Name: payment_records Students see own payments; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students see own payments" ON public.payment_records FOR SELECT USING (((( SELECT public.jwt_role() AS v) = 'student'::text) AND (student_id = ( SELECT public.get_student_id() AS v))));
+CREATE POLICY "Students see own payments" ON public.payment_records FOR SELECT USING (((( SELECT public.jwt_role() AS jwt_role) = 'student'::text) AND (student_id IN ( SELECT public.my_student_ids() AS my_student_ids))));
 
 --
 -- Name: student_pieces Students see own pieces; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students see own pieces" ON public.student_pieces FOR SELECT USING ((student_id = ( SELECT public.get_student_id() AS v)));
+CREATE POLICY "Students see own pieces" ON public.student_pieces FOR SELECT USING ((student_id IN ( SELECT public.my_student_ids() AS my_student_ids)));
 
 --
 -- Name: students Students see own record; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students see own record" ON public.students FOR SELECT USING ((id = ( SELECT public.get_student_id() AS get_student_id)));
+CREATE POLICY "Students see own record" ON public.students FOR SELECT USING ((id IN ( SELECT public.my_student_ids() AS my_student_ids)));
 
 --
 -- Name: student_instruments Students view own instruments; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Students view own instruments" ON public.student_instruments FOR SELECT USING (((( SELECT public.jwt_role() AS v) = 'student'::text) AND (student_id = ( SELECT public.get_student_id() AS v))));
+CREATE POLICY "Students view own instruments" ON public.student_instruments FOR SELECT USING (((( SELECT public.jwt_role() AS jwt_role) = 'student'::text) AND (student_id IN ( SELECT public.my_student_ids() AS my_student_ids))));
 
 --
 -- Name: profiles Teachers can view teacher profiles; Type: POLICY; Schema: public; Owner: -
@@ -4025,6 +4356,13 @@ GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
 
 --
+-- Name: FUNCTION _approved_login_for_email(p_email text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public._approved_login_for_email(p_email text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public._approved_login_for_email(p_email text) TO service_role;
+
+--
 -- Name: FUNCTION _generate_group_sessions(p_group_id uuid, p_from date, p_to date); Type: ACL; Schema: public; Owner: -
 --
 
@@ -4165,12 +4503,12 @@ GRANT ALL ON FUNCTION public.end_group(p_group_id uuid, p_from_date date) TO aut
 GRANT ALL ON FUNCTION public.end_group(p_group_id uuid, p_from_date date) TO service_role;
 
 --
--- Name: FUNCTION enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid); Type: ACL; Schema: public; Owner: -
+-- Name: FUNCTION enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid, p_extra_slots jsonb); Type: ACL; Schema: public; Owner: -
 --
 
-REVOKE ALL ON FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid) TO authenticated;
-GRANT ALL ON FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid, p_extra_slots jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid, p_extra_slots jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.enrol_student(p_student_id uuid, p_teacher_id uuid, p_payment_plan public.payment_plan, p_start_date date, p_end_date date, p_total_lessons integer, p_rate_per_lesson numeric, p_total_fee numeric, p_registration_fee numeric, p_lesson_rate_id uuid, p_academic_year text, p_discount_primary text, p_discount_multilesson boolean, p_discount_value numeric, p_template_id uuid, p_day_of_week integer, p_start_time time without time zone, p_end_time time without time zone, p_instrument_id uuid, p_title text, p_location_id uuid, p_extra_slots jsonb) TO service_role;
 
 --
 -- Name: FUNCTION extend_group_schedule(p_group_id uuid, p_end_date date); Type: ACL; Schema: public; Owner: -
@@ -4187,6 +4525,13 @@ GRANT ALL ON FUNCTION public.extend_group_schedule(p_group_id uuid, p_end_date d
 GRANT ALL ON FUNCTION public.fn_check_teacher_double_booking() TO anon;
 GRANT ALL ON FUNCTION public.fn_check_teacher_double_booking() TO authenticated;
 GRANT ALL ON FUNCTION public.fn_check_teacher_double_booking() TO service_role;
+
+--
+-- Name: FUNCTION fn_enrolments_forget_deleted_slot(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.fn_enrolments_forget_deleted_slot() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.fn_enrolments_forget_deleted_slot() TO service_role;
 
 --
 -- Name: FUNCTION fn_increment_lessons_used(); Type: ACL; Schema: public; Owner: -
@@ -4213,11 +4558,25 @@ GRANT ALL ON FUNCTION public.fn_lessons_recompute_used() TO authenticated;
 GRANT ALL ON FUNCTION public.fn_lessons_recompute_used() TO service_role;
 
 --
+-- Name: FUNCTION fn_profiles_link_students_on_approval(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.fn_profiles_link_students_on_approval() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.fn_profiles_link_students_on_approval() TO service_role;
+
+--
 -- Name: FUNCTION fn_recompute_lessons_used(p_student_id uuid, p_acad_year text); Type: ACL; Schema: public; Owner: -
 --
 
 REVOKE ALL ON FUNCTION public.fn_recompute_lessons_used(p_student_id uuid, p_acad_year text) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.fn_recompute_lessons_used(p_student_id uuid, p_acad_year text) TO service_role;
+
+--
+-- Name: FUNCTION fn_students_link_login_by_email(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.fn_students_link_login_by_email() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.fn_students_link_login_by_email() TO service_role;
 
 --
 -- Name: FUNCTION generate_instalments(p_enrolment_id uuid); Type: ACL; Schema: public; Owner: -
@@ -4314,6 +4673,15 @@ REVOKE ALL ON FUNCTION public.log_payment_marked_paid() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.log_payment_marked_paid() TO service_role;
 
 --
+-- Name: FUNCTION my_student_ids(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.my_student_ids() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.my_student_ids() TO anon;
+GRANT ALL ON FUNCTION public.my_student_ids() TO authenticated;
+GRANT ALL ON FUNCTION public.my_student_ids() TO service_role;
+
+--
 -- Name: FUNCTION new_calendar_token(); Type: ACL; Schema: public; Owner: -
 --
 
@@ -4360,12 +4728,12 @@ GRANT ALL ON FUNCTION public.reports_summary(p_today date) TO authenticated;
 GRANT ALL ON FUNCTION public.reports_summary(p_today date) TO service_role;
 
 --
--- Name: FUNCTION request_absence(p_lesson_id uuid, p_reason text); Type: ACL; Schema: public; Owner: -
+-- Name: FUNCTION request_absence(p_lesson_id uuid, p_reason text, p_student_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
-REVOKE ALL ON FUNCTION public.request_absence(p_lesson_id uuid, p_reason text) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.request_absence(p_lesson_id uuid, p_reason text) TO authenticated;
-GRANT ALL ON FUNCTION public.request_absence(p_lesson_id uuid, p_reason text) TO service_role;
+REVOKE ALL ON FUNCTION public.request_absence(p_lesson_id uuid, p_reason text, p_student_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.request_absence(p_lesson_id uuid, p_reason text, p_student_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.request_absence(p_lesson_id uuid, p_reason text, p_student_id uuid) TO service_role;
 
 --
 -- Name: FUNCTION reset_calendar_token(); Type: ACL; Schema: public; Owner: -
@@ -4398,6 +4766,14 @@ GRANT ALL ON FUNCTION public.rollover_release_slot(p_student_id uuid, p_template
 REVOKE ALL ON FUNCTION public.schedule_group_session(p_title text, p_teacher_id uuid, p_date date, p_start_time time without time zone, p_end_time time without time zone, p_student_ids uuid[], p_counts_toward_lessons boolean, p_group_id uuid, p_instrument_id uuid, p_location_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.schedule_group_session(p_title text, p_teacher_id uuid, p_date date, p_start_time time without time zone, p_end_time time without time zone, p_student_ids uuid[], p_counts_toward_lessons boolean, p_group_id uuid, p_instrument_id uuid, p_location_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.schedule_group_session(p_title text, p_teacher_id uuid, p_date date, p_start_time time without time zone, p_end_time time without time zone, p_student_ids uuid[], p_counts_toward_lessons boolean, p_group_id uuid, p_instrument_id uuid, p_location_id uuid) TO service_role;
+
+--
+-- Name: FUNCTION set_student_login(p_student_id uuid, p_user_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.set_student_login(p_student_id uuid, p_user_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.set_student_login(p_student_id uuid, p_user_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.set_student_login(p_student_id uuid, p_user_id uuid) TO service_role;
 
 --
 -- Name: FUNCTION teaches_lesson(p_lesson_id uuid); Type: ACL; Schema: public; Owner: -
@@ -4662,6 +5038,7 @@ SET search_path = public, extensions;
 -- Supabase auto-grants new functions/tables to anon/authenticated. Internal and
 -- coordinator-only functions must NOT be callable by everyone, so the exact
 -- permissions from the verified database are re-applied here.
+REVOKE EXECUTE ON FUNCTION public._approved_login_for_email(text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public._generate_group_sessions(uuid,date,date) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public._lesson_when_label(date,time without time zone) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public._require_group(uuid,boolean) FROM PUBLIC, anon, authenticated;
@@ -4675,22 +5052,27 @@ REVOKE EXECUTE ON FUNCTION public.dashboard_summary(date) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.decide_absence_request(uuid,boolean,boolean,text) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.delete_enrolment(uuid) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.end_group(uuid,date) FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.enrol_student(uuid,uuid,payment_plan,date,date,integer,numeric,numeric,numeric,uuid,text,text,boolean,numeric,uuid,integer,time without time zone,time without time zone,uuid,text,uuid) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.enrol_student(uuid,uuid,payment_plan,date,date,integer,numeric,numeric,numeric,uuid,text,text,boolean,numeric,uuid,integer,time without time zone,time without time zone,uuid,text,uuid,jsonb) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.extend_group_schedule(uuid,date) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.fn_enrolments_forget_deleted_slot() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.fn_profiles_link_students_on_approval() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.fn_recompute_lessons_used(uuid,text) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.fn_students_link_login_by_email() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.get_calendar_token() FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.link_or_create_student(uuid,text,text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.log_payment_marked_paid() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.my_student_ids() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.new_calendar_token() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.next_invoice_number() FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.reassign_lessons(uuid[],uuid,time without time zone,text) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.remove_group_member(uuid,uuid,date) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.renewal_candidates(text,text) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.reports_summary(date) FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.request_absence(uuid,text) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.request_absence(uuid,text,uuid) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.reset_calendar_token() FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.rollover_release_slot(uuid,uuid,text) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.schedule_group_session(text,uuid,date,time without time zone,time without time zone,uuid[],boolean,uuid,uuid,uuid) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.set_student_login(uuid,uuid) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.teaches_lesson(uuid) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.teaches_student(uuid) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.undo_payment(uuid) FROM PUBLIC, anon;
@@ -4717,7 +5099,7 @@ CREATE POLICY "Coordinators manage invoice files" ON storage.objects AS PERMISSI
 CREATE POLICY "Service role manages invoice files" ON storage.objects AS PERMISSIVE FOR ALL TO public USING (((bucket_id = 'invoices'::text) AND (auth.role() = 'service_role'::text))) WITH CHECK (((bucket_id = 'invoices'::text) AND (auth.role() = 'service_role'::text)));
 CREATE POLICY "Students read own invoice files" ON storage.objects AS PERMISSIVE FOR SELECT TO public USING (((bucket_id = 'invoices'::text) AND (EXISTS ( SELECT 1
    FROM invoices i
-  WHERE ((i.pdf_path = objects.name) AND (i.student_id = ( SELECT get_student_id() AS get_student_id)))))));
+  WHERE ((i.pdf_path = objects.name) AND (i.student_id IN ( SELECT my_student_ids() AS my_student_ids)))))));
 CREATE POLICY "Students read own lesson media files" ON storage.objects AS PERMISSIVE FOR SELECT TO public USING (((bucket_id = 'lesson-media'::text) AND (EXISTS ( SELECT 1
    FROM media_uploads m
   WHERE ((m.supabase_path = objects.name) AND (m.lesson_id IN ( SELECT get_student_lesson_ids() AS get_student_lesson_ids)))))));
@@ -4750,39 +5132,39 @@ END
 $rt$;
 
 -- ── Part 5: starter reference data ──────────────────────────────────────────
-INSERT INTO public.instruments VALUES ('32287820-8af3-4683-bdaa-ce856339675e', 'Piano', '🎹', '2026-11-03 16:58:30.550965+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.instruments VALUES ('0ca7f458-022f-456f-844b-6fa0ed6004c2', 'Violin', '🎻', '2026-11-03 16:58:30.550965+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.instruments VALUES ('6b41c8fd-82f2-475c-aaca-f0d6b0864911', 'Guitar', '🎸', '2026-11-03 16:58:30.550965+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.instruments VALUES ('506b5cf7-8d72-4acd-8ade-374dfbf321a9', 'Cello', '🎻', '2026-11-03 16:58:30.550965+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.instruments VALUES ('aaca4ace-56b5-4b40-84b5-1a07078bf37a', 'Voice', '🎤', '2026-11-03 16:58:30.550965+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.instruments VALUES ('9d99d868-63bb-49d1-a5ee-f84ba55ae9fa', 'Viola', NULL, '2026-11-03 16:58:30.694956+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.instruments VALUES ('f5992107-af3b-4add-8c0b-920ea075789d', 'IGCSE Music', NULL, '2026-11-03 16:58:31.112349+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.instruments VALUES ('f2c9da46-0582-4621-91f8-6a720d8864ec', 'Music Theory', NULL, '2026-11-03 16:58:31.112349+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('026f4b69-4b41-4229-abf4-bdec1978c6cc', '1:1 Instrumental', 1, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('d62c35b7-f91f-40d8-932a-db62c37745cc', '1:1 Theory', 2, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('1e10c0f0-fe47-467b-879b-7deef84aeb35', '1:1 Vocals', 3, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('7a3c1e27-c861-4c39-a908-1d9460a71920', 'IGCSE Music', 4, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('078faa7b-fb40-45d9-b1d5-800047cc07ab', 'Music Theory', 5, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('1a504664-d97f-49c7-a8f6-13d3b05cb8f2', 'Group: Strings', 6, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('deaa73f8-b750-44ac-a1c1-e792985e7bef', 'Group: Guitar', 7, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('d51dc1f4-b7b7-45d0-b5db-fd6e51cc8539', 'Group: Vocals', 8, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_categories VALUES ('95ac0f0e-76f0-44b8-9b08-4f99311c5c9e', 'Group: Theory', 9, '2026-11-03 16:58:30.997461+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.locations VALUES ('9765c439-a4e5-488c-ad4b-9e0d54b67122', 'Online', 'Online', '', '', '2026-11-03 16:58:31.226605+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.locations VALUES ('088e4ad6-52b0-49a2-be0c-6d69753bd75d', 'Student''s Home', '', '', '', '2026-11-03 16:58:31.315991+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.locations VALUES ('6826b1c2-2d72-4805-9965-0e96a2ddb3d2', 'Links', '', '', '', '2026-11-03 16:58:31.315991+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.locations VALUES ('d1f1f9bc-485a-412f-a30d-a1b160aa5e4e', 'Edvin', '', '', '', '2026-11-03 16:58:31.315991+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('30981c39-3478-4048-ac0f-2be957d748ae', NULL, NULL, 'demo', 1000.00, false, '2025', '2026-11-03 16:58:30.693665+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('2d531191-25ea-457f-a0e0-7620e679d49d', NULL, NULL, '1:1 Instrumental', 1500.00, false, '2025', '2026-11-03 16:58:30.693863+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('75f968ba-c17c-4d35-8cd7-9600de2ea29d', NULL, NULL, '1:1 Instrumental', 1350.00, true, '2025', '2026-11-03 16:58:30.694019+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('544c2dc7-a771-466a-b3d8-2408b5fd77fc', NULL, NULL, '1:1 Theory', 1155.00, true, '2025', '2026-11-03 16:58:30.693141+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('9bdb59e4-d64d-4bcb-9aa5-be1a3eed79c2', NULL, NULL, '1:1 Theory', 1350.00, false, '2025', '2026-11-03 16:58:30.693268+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('fa055c4e-9e04-416c-8d7f-4c07cdc39904', NULL, NULL, '1:1 Vocals', 1850.00, false, '2025', '2026-11-03 16:58:30.693415+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('bb5f8874-0129-4617-85a0-52a7e8b69cd0', NULL, NULL, '1:1 Vocals', 1650.00, true, '2025', '2026-11-03 16:58:30.693526+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('8b8ba2f4-9bdc-45ba-b2d2-b3e59f4fa849', NULL, NULL, 'Group: Strings', 1200.00, false, '2025', '2026-11-03 16:58:30.692105+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('8d1980a9-2403-488d-a66a-955feec226fc', NULL, NULL, 'Group: Guitar', 1000.00, false, '2025', '2026-11-03 16:58:30.692616+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('5fa3d807-23c9-4b23-94c2-6ba50f8df062', NULL, NULL, 'Group: Vocals', 1000.00, false, '2025', '2026-11-03 16:58:30.692783+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('5dda1a61-c987-4998-8457-35c64bbaa3cf', NULL, NULL, 'Group: Theory', 700.00, false, '2025', '2026-11-03 16:58:30.692918+00') ON CONFLICT DO NOTHING;
-INSERT INTO public.lesson_rates VALUES ('0405d125-ff44-4545-936d-062720e679c8', NULL, NULL, 'Group: Theory', 750.00, true, '2025', '2026-11-03 16:58:30.693029+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('649cb33d-843f-458c-a7a6-321416c6ff1f', 'Piano', '🎹', '2026-11-03 18:41:28.344003+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('46aca164-de3e-45c8-a33b-e98b5736b8dd', 'Violin', '🎻', '2026-11-03 18:41:28.344003+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('fcc6fec1-2cff-4552-853a-e33c17c58c27', 'Guitar', '🎸', '2026-11-03 18:41:28.344003+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('ff706aab-e637-4a81-8b0e-c012e9226cb2', 'Cello', '🎻', '2026-11-03 18:41:28.344003+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('343ea0fb-97fb-4b9c-9509-9ed48c6c86f3', 'Voice', '🎤', '2026-11-03 18:41:28.344003+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('3abf530c-2ab1-4fed-ad75-b34da8a5b48f', 'Viola', NULL, '2026-11-03 18:41:28.507175+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('68feb754-d830-48c1-8e46-a7922db67c4e', 'IGCSE Music', NULL, '2026-11-03 18:41:28.971997+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.instruments VALUES ('200b9373-0c8c-4422-a3cf-0e990c9bae4b', 'Music Theory', NULL, '2026-11-03 18:41:28.971997+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('f377a218-ffa2-48a4-b8fc-d3311f3358f8', '1:1 Instrumental', 1, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('c3822c4b-f5cd-4b7b-b972-0be3c86d201b', '1:1 Theory', 2, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('6f1c1997-e745-4a62-b86e-cff81e94adf5', '1:1 Vocals', 3, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('9ad55ce0-2d56-4a2b-a1e9-53e2dd620adf', 'IGCSE Music', 4, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('00b72f6b-b691-4c37-8f50-5b36095385e2', 'Music Theory', 5, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('31b34b2e-68f3-4f4f-9f49-d46fb13755b0', 'Group: Strings', 6, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('87c83af7-a73f-420f-9127-55c2a87b0ea4', 'Group: Guitar', 7, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('0dbc6c85-0ab0-42e9-ac1e-b8046ea37992', 'Group: Vocals', 8, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_categories VALUES ('7997ffb3-4d12-4562-91fe-38bd0caaa279', 'Group: Theory', 9, '2026-11-03 18:41:28.846562+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.locations VALUES ('af60961f-6aec-4809-ab4d-2dfeb66cd7b4', 'Online', 'Online', '', '', '2026-11-03 18:41:29.106522+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.locations VALUES ('039c63da-ca26-4350-8ddb-991fdf5d3cae', 'Student''s Home', '', '', '', '2026-11-03 18:41:29.193999+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.locations VALUES ('a62fb639-c41b-437b-b78d-5e87339846ab', 'Links', '', '', '', '2026-11-03 18:41:29.193999+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.locations VALUES ('4bf46cea-20b1-4d0e-9943-31014c043375', 'Edvin', '', '', '', '2026-11-03 18:41:29.193999+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('bc542ae4-19fe-42ff-a8c5-2ddc95bc7964', NULL, NULL, 'demo', 1000.00, false, '2025', '2026-11-03 18:41:28.506417+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('9d5cae03-cd50-4175-979b-6460c45d7689', NULL, NULL, '1:1 Instrumental', 1500.00, false, '2025', '2026-11-03 18:41:28.506528+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('cf9e0468-61f5-4580-944e-0233dc156511', NULL, NULL, '1:1 Instrumental', 1350.00, true, '2025', '2026-11-03 18:41:28.506627+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('f697320d-8f99-4140-96a6-30e7b85a523b', NULL, NULL, '1:1 Theory', 1155.00, true, '2025', '2026-11-03 18:41:28.505854+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('93d56449-719e-4612-8a92-bffabceed519', NULL, NULL, '1:1 Theory', 1350.00, false, '2025', '2026-11-03 18:41:28.506044+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('847d1381-40fb-4e41-87b6-3a32094f341e', NULL, NULL, '1:1 Vocals', 1850.00, false, '2025', '2026-11-03 18:41:28.506193+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('06a31a3f-8276-42ba-97c9-3970ebe20917', NULL, NULL, '1:1 Vocals', 1650.00, true, '2025', '2026-11-03 18:41:28.506303+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('0081e1cc-f670-4ba6-ab6e-6f44edc2e01a', NULL, NULL, 'Group: Strings', 1200.00, false, '2025', '2026-11-03 18:41:28.504536+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('c42c0c67-86fc-4f92-9d8a-f09e464de49a', NULL, NULL, 'Group: Guitar', 1000.00, false, '2025', '2026-11-03 18:41:28.505195+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('d30753bc-c14f-4ff0-a86c-ce06429cd1c5', NULL, NULL, 'Group: Vocals', 1000.00, false, '2025', '2026-11-03 18:41:28.505427+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('d6792101-aafe-43ab-a7de-979c0c103aee', NULL, NULL, 'Group: Theory', 700.00, false, '2025', '2026-11-03 18:41:28.505591+00') ON CONFLICT DO NOTHING;
+INSERT INTO public.lesson_rates VALUES ('006c8cb1-f40a-4638-bfe8-132860909bfc', NULL, NULL, 'Group: Theory', 750.00, true, '2025', '2026-11-03 18:41:28.505723+00') ON CONFLICT DO NOTHING;
 
 -- ── Part 6: first coordinator ───────────────────────────────────────────────
 -- 1. Supabase → Authentication → Users → Add user (email + strong password,

@@ -25,6 +25,10 @@ export interface RenewalClass {
   teacher_id: string | null;
   teacher_name: string | null;
   slot: RenewalSlot | null;
+  /** The class's 2nd/3rd weekly slots (2× / 3× per week), in order. */
+  extra_slots?: RenewalSlot[];
+  /** 1 + extra_slots.length. */
+  times_per_week?: number;
   rate_per_lesson: number;
   payment_plan: string;
   lesson_rate_id: string | null;
@@ -42,6 +46,7 @@ export interface RenewedEnrolment {
   instrument_id: string | null;
   instrument_name: string | null;
   template_id: string | null;
+  extra_template_ids?: string[];
   rate_per_lesson: number;
   payment_plan: string;
   total_fee: number;
@@ -64,6 +69,17 @@ export interface EnrolResult {
   lessons_created: number;
   conflicts: number;
   conflict_dates: string[];
+  slots?: number;
+}
+
+/** How often a from-year class met each week. */
+export function classTimesPerWeek(cl: Pick<RenewalClass, 'extra_slots' | 'times_per_week'>): number {
+  return cl.times_per_week ?? 1 + (cl.extra_slots?.length ?? 0);
+}
+
+/** Every weekly slot of a class (first + extra) — all released when the class is dropped. */
+export function classSlotIds(cl: Pick<RenewalClass, 'template_id' | 'extra_slots'>): string[] {
+  return [cl.template_id, ...(cl.extra_slots ?? []).map(x => x.id)].filter((x): x is string => !!x);
 }
 
 export async function fetchRenewalCandidates(fromYear: string, toYear: string): Promise<RenewalCandidate[]> {
@@ -101,7 +117,8 @@ export function matchRenewed(c: Pick<RenewalCandidate, 'classes' | 'renewed'>) {
   return { byClass, extra: left };
 }
 
-export type EnrolParams = Record<string, string | number | boolean | null>;
+/** enrol_student arguments (p_extra_slots is an array of { template_id } | { day_of_week, start_time, end_time }). */
+export type EnrolParams = Record<string, string | number | boolean | null | object[]>;
 
 export async function enrolClass(params: EnrolParams): Promise<EnrolResult> {
   const { data, error } = await supabase.rpc('enrol_student', params);

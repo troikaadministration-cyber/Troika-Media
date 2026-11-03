@@ -3,6 +3,7 @@ import type { StudentLesson, AbsenceRequest } from '../../hooks/useStudentLesson
 
 export interface Enrolment {
   id: string;
+  student_id: string;
   academic_year: string;
   total_lessons: number;
   lessons_used: number;
@@ -15,6 +16,7 @@ export interface Enrolment {
 
 export interface Payment {
   id: string;
+  student_id: string;
   plan: string;
   amount: number;
   instalment_number: number;
@@ -23,10 +25,33 @@ export interface Payment {
   invoice?: { id: string; invoice_number: string; pdf_path: string | null } | null;
 }
 
+/** One student (child) on the signed-in login. */
+export interface Child {
+  id: string;
+  full_name: string;
+  /** Short name for chips / row labels (first name, unless siblings share it). */
+  label: string;
+}
+
 export interface StudentPortalValue {
-  studentId: string;
+  /** Name of the signed-in login (the parent on a family login). */
   studentName: string;
   email: string;
+  /** Every student on this login (one, or several for a family login). */
+  children: Child[];
+  /** True when the login has more than one child. */
+  isFamily: boolean;
+  /** Child chosen in the chips, or null = "All". Always null for one child. */
+  selectedChildId: string | null;
+  setSelectedChildId: (id: string | null) => void;
+  /** Students currently shown (the selected child, or all of them). */
+  visibleStudentIds: string[];
+  /**
+   * Child's name to label a row with — only while several children are shown
+   * ("All" on a family login); null otherwise, so one-child UIs are unchanged.
+   */
+  childLabel: (studentId: string) => string | null;
+  /** The rest below are already filtered to visibleStudentIds. */
   enrolments: Enrolment[];
   payments: Payment[];
   upcoming: StudentLesson[];
@@ -37,9 +62,9 @@ export interface StudentPortalValue {
   loadingLessons: boolean;
   loadingPast: boolean;
   lessonsError: string | null;
-  /** Latest absence request per lesson id (withdrawn ones omitted). */
+  /** Latest absence request per absenceKey(lesson, student) (withdrawn ones omitted). */
   absences: Record<string, AbsenceRequest>;
-  requestAbsence: (lessonId: string, reason: string) => Promise<{ id: string; late_notice: boolean }>;
+  requestAbsence: (lessonId: string, studentId: string, reason: string) => Promise<{ id: string; late_notice: boolean }>;
   withdrawAbsence: (requestId: string) => Promise<void>;
   refresh: () => Promise<void>;
 }
