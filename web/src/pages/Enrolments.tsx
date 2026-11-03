@@ -3,14 +3,18 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useQuery, invalidateQueries, errorMessage } from '../lib/queryCache';
 import { fetchAll } from '../lib/fetchAll';
-import { useActiveStudentsList, useInstruments, useTeachersList } from '../hooks/useReference';
+import { useActiveStudentsList, useInstruments, useTeachersList, useLocationsList } from '../hooks/useReference';
 import { invalidateLessonViews } from '../hooks/useLessons';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorBanner } from '../components/ErrorBanner';
-import { SlotPicker, weeklySlotsError, extraSlotParam } from '../components/SlotPicker';
-import type { SelectedSlot } from '../components/SlotPicker';
+import { useTeacherTemplates, weeklySlotsError, type SelectedSlot } from '../components/SlotPicker';
+import { checkWeeklyTime } from '../lib/weeklyClash';
 import { Plus, X, BookOpen, ChevronRight, CalendarPlus } from 'lucide-react';
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+interface LessonTime { day: number; start: string; end: string }
+const DEFAULT_TIMES: LessonTime[] = [{ day: 1, start: '09:00', end: '09:45' }, { day: 4, start: '09:00', end: '09:45' }, { day: 6, start: '09:00', end: '09:45' }];
 import { RenewalWizard } from '../components/RenewalWizard';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -70,6 +74,9 @@ function emptyForm() {
     registration_fee: 0,
     rate_text: '',        // typed by the coordinator for every enrolment — never pre-filled
     times_per_week: 1,
+    teacher_id: '',
+    instrument_id: '',
+    location_id: '',
     discount_primary: 'none' as DiscountPrimary,
     discount_special: 0,
     discount_multilesson: false,
@@ -104,6 +111,7 @@ export function EnrolmentsPage() {
   const { students } = useActiveStudentsList();
   const { teachers } = useTeachersList(); // approved only
   const { instruments } = useInstruments();
+  const { locations } = useLocationsList();
   const enrolments = enrolmentsQ.data ?? [];
 
   const [modal, setModal] = useState(false);
@@ -113,10 +121,8 @@ export function EnrolmentsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [showErrors, setShowErrors] = useState(false); // inline field errors after "Next"
   const [confirmDelete, setConfirmDelete] = useState<Enrolment | null>(null);
-  const [step, setStep] = useState<1 | 2>(1);
-  // One weekly slot per lesson of the week (2× per week = 2 slots), same teacher.
-  const [slots, setSlots] = useState<(SelectedSlot | null)[]>([null]);
-  const [manualTeacherId, setManualTeacherId] = useState('');
+  // Day + start + end for each lesson of the week (2× per week = 2 lines).
+  const [times, setTimes] = useState<LessonTime[]>([DEFAULT_TIMES[0]]);
   const [result, setResult] = useState<{ text: string; warning: string | null } | null>(null);
   const [classDone, setClassDone] = useState(false);   // a class was just created; offer "add another"
   const [addedCount, setAddedCount] = useState(0);      // classes created this session
@@ -142,23 +148,52 @@ export function EnrolmentsPage() {
   const tuitionDiscount = discount.discountAmount;
   // total_fee stores discounted tuition; registration fee is separate.
   const totalFee = discount.discounted;
-  const teacherId = manualTeacherId;
+  const teacherId = form.teacher_id;
   const teacherName = teachers.find(t => t.id === teacherId)?.full_name || '';
 
-  // A slot belongs to one teacher: forget them whenever the teacher changes.
-  useEffect(() => { setSlots(prev => prev.map(() => null)); }, [teacherId]);
-  // One slot per weekly lesson: grow/shrink with "times per week" (keeping what's picked).
+  // One line per weekly lesson: grow/shrink with "times per week" (keeping what's typed).
   useEffect(() => {
-    setSlots(prev => (prev.length === timesPerWeek ? prev
-      : Array.from({ length: timesPerWeek }, (_, i) => prev[i] ?? null)));
+    setTimes(prev => (prev.length === timesPerWeek ? prev
+      : Array.from({ length: timesPerWeek }, (_, i) => prev[i] ?? DEFAULT_TIMES[i])));
   }, [timesPerWeek]);
-  const slotsError = weeklySlotsError(slots);
-  const mainSlot = slots[0];
-  const setSlotAt = (i: number, s: SelectedSlot | null) => setSlots(prev => prev.map((x, j) => (j === i ? s : x)));
+  const setTimeAt = (i: number, patch: Partial<LessonTime>) =>
+    setTimes(prev => prev.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+
+  // The teacher's existing weekly classes: a brother/sister's class at the same time is
+  // shared (joined); anyone else's overlapping class is a clash that blocks saving.
+  const { data: teacherSlots } = useTeacherTemplates(teacherId || null);
+  const isFamily = (id: string) => {
+    if (!selectedStudent) return false;
+    if (id === selectedStudent.id) return true;
+    const other = students.find(s => s.id === id);
+    if (!other) return false;
+    if (selectedStudent.user_id && other.user_id === selectedStudent.user_id) return true;
+    const em = (selectedStudent.email ?? '').trim().toLowerCase();
+    return !!em && (other.email ?? '').trim().toLowerCase() === em;
+  };
+  const checks = times.map(x => checkWeeklyTime({
+    slots: teacherSlots ?? [], teacherId, teacherName, instrumentId: form.instrument_id || null,
+    day: x.day, start: x.start, end: x.end, isFamily,
+    nameOf: id => students.find(s => s.id === id)?.full_name,
+  }));
+  // As SelectedSlots so the shared overlap/same-slot checks apply.
+  const asSlots: SelectedSlot[] = times.map((x, i) => (checks[i].join
+    ? { mode: 'existing', templateId: checks[i].join!.id, dayOfWeek: x.day, startTime: checks[i].join!.start_time,
+        endTime: checks[i].join!.end_time, instrumentId: checks[i].join!.instrument_id, title: checks[i].join!.title }
+    : { mode: 'new', dayOfWeek: x.day, startTime: x.start, endTime: x.end, instrumentId: form.instrument_id || null, title: '' }));
+  const timesError = (() => {
+    for (const x of times) {
+      if (!x.start) return 'Choose a start time for every lesson';
+      if (x.end && x.end <= x.start) return 'End time must be after the start time';
+    }
+    return weeklySlotsError(asSlots) ?? checks.find(c => c.clash)?.clash ?? null;
+  })();
 
   // Client-side checks mirroring enrol_student (negative values flag immediately).
   const fieldErrors = {
     student: !form.student_id ? 'Please select a student' : null,
+    teacher: !form.teacher_id ? 'Choose the teacher' : null,
+    instrument: !form.instrument_id ? 'Choose the instrument' : null,
     rate: !Number.isFinite(effectiveRate) || effectiveRate < 0 ? 'Rate cannot be negative'
       : !isTrial && !(effectiveRate > 0) ? 'Enter the rate per lesson (₹) — or choose the Trial plan'
       : null,
@@ -170,25 +205,18 @@ export function EnrolmentsPage() {
   const fieldError = (k: keyof typeof fieldErrors) =>
     (showErrors || k === 'registration' || k === 'discount') ? fieldErrors[k] : null;
 
-  function handleStep1Next() {
-    setShowErrors(true);
-    if (hasFieldErrors) return;
-    setFormError(null);
-    setStep(2);
-  }
-
   // Reset only the class-specific fields, keeping the student, dates and plan, so
   // the coordinator can add another class (e.g. Violin after Guitar) in one pass.
   function resetForNextClass() {
-    setStep(1);
-    setSlots([null]);
-    setManualTeacherId('');
+    setTimes([DEFAULT_TIMES[0]]);
     setResult(null);
     setFormError(null);
     setShowErrors(false);
     setClassDone(false);
     setForm(f => ({
       ...f,
+      teacher_id: '',
+      instrument_id: '',
       rate_text: '',
       times_per_week: 1,
       registration_fee: 0,
@@ -200,9 +228,7 @@ export function EnrolmentsPage() {
 
   function closeModal() {
     setModal(false);
-    setStep(1);
-    setSlots([null]);
-    setManualTeacherId('');
+    setTimes([DEFAULT_TIMES[0]]);
     setResult(null);
     setFormError(null);
     setShowErrors(false);
@@ -214,11 +240,14 @@ export function EnrolmentsPage() {
   // One transactional call: enrolment + weekly slot + lessons + instalments.
   async function handleCreate() {
     if (saving) return;
-    if (hasFieldErrors) { setStep(1); setShowErrors(true); return; }
-    if (!teacherId) { setFormError('Please choose the teacher'); return; }
-    if (slotsError || !mainSlot) { setFormError(slotsError); return; }
-    const slot = mainSlot;
-    const extras = (slots.slice(1) as SelectedSlot[]).map(extraSlotParam);
+    setShowErrors(true);
+    if (hasFieldErrors) { setFormError('Fill in the fields marked in red'); return; }
+    if (timesError) { setFormError(timesError); return; }
+    const main = asSlots[0];
+    const instrName = instrumentName(form.instrument_id) ?? '';
+    const extras = asSlots.slice(1).map(sl => (sl.mode === 'existing'
+      ? { template_id: sl.templateId }
+      : { day_of_week: sl.dayOfWeek, start_time: sl.startTime, end_time: sl.endTime || null }));
 
     setSaving(true);
     setFormError(null);
@@ -239,22 +268,22 @@ export function EnrolmentsPage() {
         p_discount_primary: form.discount_primary,
         p_discount_multilesson: form.discount_multilesson,
         p_discount_value: form.discount_primary === 'special' ? (form.discount_special || 0) : 0,
-        p_location_id: selectedStudent?.location_id ?? null,
-        ...(slot.mode === 'existing'
-          ? { p_template_id: slot.templateId }
+        p_location_id: form.location_id || selectedStudent?.location_id || null,
+        ...(main.mode === 'existing'
+          ? { p_template_id: main.templateId }
           : {
-              p_day_of_week: slot.dayOfWeek,
-              p_start_time: slot.startTime,
-              p_end_time: slot.endTime || null,
-              p_instrument_id: slot.instrumentId,
-              p_title: slot.title.trim() || null,
+              p_day_of_week: main.dayOfWeek,
+              p_start_time: main.startTime,
+              p_end_time: main.endTime || null,
+              p_instrument_id: form.instrument_id,
+              p_title: `${selectedStudent?.full_name ?? 'Lesson'}${instrName ? ` – ${instrName}` : ''}`,
             }),
         p_extra_slots: extras, // 2× / 3× per week: the class's other weekly lessons
       });
       if (error) throw error;
       const r = data as EnrolResult;
 
-      const name = instrumentName(slot.instrumentId) || 'Class';
+      const name = instrName || 'Class';
       const joined = r.lessons_joined > 0 ? ` (${r.lessons_joined} in an existing class)` : '';
       let warning: string | null = null;
       if (r.lessons_scheduled < r.lessons_expected || r.conflicts > 0) {
@@ -425,25 +454,16 @@ export function EnrolmentsPage() {
         onCancel={() => { if (!deleting) setConfirmDelete(null); }}
       />
 
-      {/* Create Modal */}
+      {/* Create Modal — everything on one form */}
       {modal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-black/5 shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4">
-            {/* Header */}
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-semibold text-navy text-lg">Enrol Student</h3>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Step {step} of 2 — {step === 1 ? 'Enrolment Details' : 'Assign Schedule Slot'}
-                </p>
+                <p className="text-xs text-gray-400 mt-0.5">Put an existing student in a class</p>
               </div>
               <button onClick={closeModal} disabled={saving} className="text-gray-400 hover:text-navy disabled:opacity-50"><X size={20} /></button>
-            </div>
-
-            {/* Step indicator */}
-            <div className="flex items-center gap-2">
-              <div className={`flex-1 h-1 rounded-full ${step >= 1 ? 'bg-teal' : 'bg-gray-200'}`} />
-              <div className={`flex-1 h-1 rounded-full ${step >= 2 ? 'bg-teal' : 'bg-gray-200'}`} />
             </div>
 
             {formError && (
@@ -452,312 +472,230 @@ export function EnrolmentsPage() {
               </div>
             )}
 
-            {/* ── STEP 1 ── */}
-            {step === 1 && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Student</label>
-                  <select
-                    required
-                    value={form.student_id}
-                    onChange={(e) => setForm({ ...form, student_id: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="">Select student...</option>
-                    {availableStudents.map((s) => {
-                      const instr = instrumentName(s.instrument_id);
-                      return <option key={s.id} value={s.id}>{s.full_name}{instr ? ` (${instr})` : ''}</option>;
-                    })}
-                  </select>
-                  {fieldError('student') && <p className="text-xs text-coral mt-1">{fieldError('student')}</p>}
-                  {availableStudents.length === 0 && (
-                    <p className="text-xs text-gray-400 mt-1">No active students found</p>
-                  )}
-                </div>
+            <fieldset disabled={classDone || saving} className="space-y-4">
+              {/* Student */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Student <span className="text-coral">*</span></label>
+                <select
+                  id="enrol-student"
+                  value={form.student_id}
+                  onChange={(e) => {
+                    const st = students.find(s => s.id === e.target.value);
+                    setForm(f => ({ ...f, student_id: e.target.value, location_id: st?.location_id ?? f.location_id }));
+                  }}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                >
+                  <option value="">Select student...</option>
+                  {availableStudents.map((s) => <option key={s.id} value={s.id}>{s.full_name}</option>)}
+                </select>
+                {fieldError('student') && <p className="text-xs text-coral mt-1">{fieldError('student')}</p>}
+                {availableStudents.length === 0 && <p className="text-xs text-gray-400 mt-1">No active students found</p>}
+              </div>
 
+              {/* The class */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                <p className="text-xs font-bold text-gray-400 uppercase">Class</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label htmlFor="enrol-rate" className="block text-xs font-medium text-gray-500 mb-1">
-                      Rate per lesson (₹){!isTrial && <span className="text-coral"> *</span>}
-                    </label>
-                    <input
-                      id="enrol-rate"
-                      type="number"
-                      min={0}
-                      inputMode="decimal"
-                      value={form.rate_text}
-                      onChange={(e) => setForm({ ...form, rate_text: e.target.value })}
-                      className={`w-full border rounded-lg px-3 py-2 text-sm ${fieldError('rate') ? 'border-coral/60' : 'border-gray-200'}`}
-                      placeholder="e.g. 1200"
-                    />
+                    <label htmlFor="enrol-teacher" className="block text-xs font-medium text-gray-500 mb-1">Teacher <span className="text-coral">*</span></label>
+                    <select id="enrol-teacher" value={form.teacher_id} onChange={(e) => setForm({ ...form, teacher_id: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+                      <option value="">Select teacher...</option>
+                      {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                    </select>
+                    {fieldError('teacher') && <p className="text-xs text-coral mt-1">{fieldError('teacher')}</p>}
+                  </div>
+                  <div>
+                    <label htmlFor="enrol-instrument" className="block text-xs font-medium text-gray-500 mb-1">Instrument <span className="text-coral">*</span></label>
+                    <select id="enrol-instrument" value={form.instrument_id} onChange={(e) => setForm({ ...form, instrument_id: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+                      <option value="">Select instrument...</option>
+                      {instruments.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                    </select>
+                    {fieldError('instrument') && <p className="text-xs text-coral mt-1">{fieldError('instrument')}</p>}
                   </div>
                   <div>
                     <label htmlFor="enrol-times" className="block text-xs font-medium text-gray-500 mb-1">Times per week</label>
-                    <select
-                      id="enrol-times"
-                      value={timesPerWeek}
-                      onChange={(e) => setForm({ ...form, times_per_week: Number(e.target.value) })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                    >
-                      {TIMES_PER_WEEK_OPTIONS.map(t => <option key={t} value={t}>{t}× per week</option>)}
-                    </select>
-                  </div>
-                </div>
-                {fieldError('rate') && <p className="text-xs text-coral -mt-2">{fieldError('rate')}</p>}
-                {timesPerWeek > 1 && (
-                  <p className="text-xs text-gray-500 -mt-2">
-                    One class, {timesPerWeek} lessons a week — you'll pick a day and time for each on the next step.
-                  </p>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Payment Plan</label>
-                    <select
-                      value={form.payment_plan}
-                      onChange={(e) => setForm({ ...form, payment_plan: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    >
-                      {PLAN_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                    <select id="enrol-times" value={timesPerWeek} onChange={(e) => setForm({ ...form, times_per_week: Number(e.target.value) })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+                      {TIMES_PER_WEEK_OPTIONS.map(n => <option key={n} value={n}>{n}× per week</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Academic Year</label>
-                    <input
-                      type="text"
-                      readOnly
-                      value={academicYear}
-                      title="Follows the start date"
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
-                    />
+                    <label htmlFor="enrol-location" className="block text-xs font-medium text-gray-500 mb-1">Location</label>
+                    <select id="enrol-location" value={form.location_id} onChange={(e) => setForm({ ...form, location_id: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+                      <option value="">— Select location —</option>
+                      {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Start Date</label>
-                    <input
-                      type="date"
-                      value={form.start_date}
-                      onChange={(e) => setForm({ ...form, start_date: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    />
+                {/* One line per weekly lesson: Day · Start · End */}
+                <div className="space-y-2">
+                  <div className="hidden sm:grid grid-cols-[4.5rem_1fr_1fr_1fr] gap-2 text-xs font-medium text-gray-500">
+                    <span /><span>Day</span><span>Start</span><span>End</span>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">End Date</label>
-                    <input
-                      type="date"
-                      value={form.end_date}
-                      onChange={(e) => setForm({ ...form, end_date: e.target.value })}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    />
-                  </div>
+                  {times.map((x, i) => {
+                    const mini = 'block sm:hidden text-[11px] font-medium text-gray-500 mb-0.5';
+                    const f = 'w-full min-w-0 border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white';
+                    return (
+                      <div key={i} className="grid grid-cols-2 sm:grid-cols-[4.5rem_1fr_1fr_1fr] gap-2 sm:items-center" data-testid="lesson-time">
+                        <span className="col-span-2 sm:col-span-1 text-xs font-semibold text-navy">{timesPerWeek > 1 ? `Lesson ${i + 1}` : 'Weekly'}</span>
+                        <label className="col-span-2 sm:col-span-1">
+                          <span className={mini}>Day</span>
+                          <select aria-label={`Lesson ${i + 1} day`} value={x.day} onChange={(e) => setTimeAt(i, { day: Number(e.target.value) })} className={f}>
+                            {DAYS.map((d, k) => <option key={k} value={k}>{d}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span className={mini}>Start</span>
+                          <input type="time" aria-label={`Lesson ${i + 1} start`} value={x.start} onChange={(e) => setTimeAt(i, { start: e.target.value })} className={f} />
+                        </label>
+                        <label>
+                          <span className={mini}>End</span>
+                          <input type="time" aria-label={`Lesson ${i + 1} end`} value={x.end} onChange={(e) => setTimeAt(i, { end: e.target.value })} className={f} />
+                        </label>
+                      </div>
+                    );
+                  })}
+                  {checks.map((c, i) => c.join && (
+                    <p key={`j${i}`} className="text-xs text-teal bg-teal/5 rounded-lg px-3 py-2" data-testid="shared-class">
+                      {timesPerWeek > 1 ? `Lesson ${i + 1}: ` : ''}shared with{' '}
+                      {(c.join.student_ids ?? []).filter(isFamily).map(id => students.find(s => s.id === id)?.full_name).filter(Boolean).join(', ') || 'a family member'}
+                      {' '}(same family) — they sit in the same class. Each child pays for their own place.
+                    </p>
+                  ))}
+                  {form.teacher_id && timesError && <p className="text-xs text-coral" data-testid="slots-error">{timesError}</p>}
                 </div>
-                {fieldError('dates') && <p className="text-xs text-coral -mt-2">{fieldError('dates')}</p>}
 
+                <div>
+                  <label htmlFor="enrol-rate" className="block text-xs font-medium text-gray-500 mb-1">
+                    Rate per lesson (₹){!isTrial && <span className="text-coral"> *</span>}
+                  </label>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <input id="enrol-rate" type="number" min={0} inputMode="decimal" value={form.rate_text}
+                      onChange={(e) => setForm({ ...form, rate_text: e.target.value })}
+                      className={`w-32 border rounded-lg px-3 py-2 text-sm bg-white ${fieldError('rate') ? 'border-coral/60' : 'border-gray-200'}`}
+                      placeholder="e.g. 1200" />
+                    {effectiveRate > 0 && (
+                      <span className="text-xs text-teal font-semibold">
+                        ₹{effectiveRate.toLocaleString('en-IN')} × {lessonsBreakdown(form.payment_plan, form.start_date, timesPerWeek)}
+                      </span>
+                    )}
+                  </div>
+                  {fieldError('rate') && <p className="text-xs text-coral mt-1">{fieldError('rate')}</p>}
+                </div>
+              </div>
+
+              {/* Plan and dates */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Payment Plan</label>
+                  <select value={form.payment_plan} onChange={(e) => setForm({ ...form, payment_plan: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+                    {PLAN_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                  </select>
+                </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Registration Fee (₹)</label>
-                  <input
-                    type="number"
-                    value={form.registration_fee}
+                  <input type="number" min={0} value={form.registration_fee}
                     onChange={(e) => setForm({ ...form, registration_fee: Number(e.target.value) })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    placeholder="500"
-                    min={0}
-                  />
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" placeholder="0" />
                   {fieldError('registration') && <p className="text-xs text-coral mt-1">{fieldError('registration')}</p>}
                 </div>
-
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Discount (optional)</label>
-                  <select
-                    value={form.discount_primary}
-                    onChange={(e) => setForm({ ...form, discount_primary: e.target.value as DiscountPrimary })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                  >
-                    <option value="none">No discount</option>
-                    <option value="plan">Plan discount (auto)</option>
-                    <option value="legacy">Legacy student (25%)</option>
-                    <option value="special">Flat ₹ special</option>
-                  </select>
-                  {form.discount_primary === 'special' && (
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.discount_special}
-                      onChange={(e) => setForm({ ...form, discount_special: Number(e.target.value) })}
-                      className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      placeholder="Flat ₹ amount"
-                    />
-                  )}
-                  {fieldError('discount') && <p className="text-xs text-coral mt-1">{fieldError('discount')}</p>}
-                  <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={form.discount_multilesson}
-                      onChange={(e) => setForm({ ...form, discount_multilesson: e.target.checked })}
-                      className="rounded border-gray-300 text-teal focus:ring-teal"
-                    />
-                    Multi-lesson (+5%)
-                  </label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Start Date</label>
+                  <input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" />
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">End Date</label>
+                  <input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" />
+                </div>
+              </div>
+              {fieldError('dates') && <p className="text-xs text-coral -mt-2">{fieldError('dates')}</p>}
 
-                {/* Fee Summary */}
-                {!isTrial && effectiveRate > 0 && (
-                  <div className="bg-gray-50 rounded-xl p-4 space-y-2" data-testid="fee-summary">
-                    <h4 className="text-xs font-semibold text-gray-500 uppercase">Fee Summary</h4>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">₹{effectiveRate.toLocaleString('en-IN')} × {lessonsBreakdown(form.payment_plan, form.start_date, timesPerWeek)}</span>
-                      <span className="font-medium text-navy">₹{tuition.toLocaleString('en-IN')}</span>
-                    </div>
-                    {tuitionDiscount > 0 && (
-                      <div className="flex justify-between text-sm text-teal">
-                        <span>Discount{discount.pct > 0 ? ` (${discount.pct}%${discount.flat > 0 ? ' + ₹' + discount.flat.toLocaleString('en-IN') : ''})` : discount.flat > 0 ? ` (₹${discount.flat.toLocaleString('en-IN')})` : ''}</span>
-                        <span>−₹{tuitionDiscount.toLocaleString('en-IN')}</span>
-                      </div>
-                    )}
-                    {form.registration_fee > 0 && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-500">Registration fee</span>
-                        <span className="font-medium text-navy">₹{form.registration_fee.toLocaleString('en-IN')}</span>
-                      </div>
-                    )}
-                    <div className="border-t pt-2 flex justify-between text-sm font-bold">
-                      <span className="text-navy">Total</span>
-                      <span className="text-navy">₹{(totalFee + form.registration_fee).toLocaleString('en-IN')}</span>
-                    </div>
-                    <p className="text-xs text-gray-400">
-                      {form.payment_plan === '1_instalment' && '1 payment at start'}
-                      {form.payment_plan === '3_instalments' && '3 payments: start, +4 months, +8 months'}
-                      {form.payment_plan === '10_instalments' && '10 monthly payments'}
-                    </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Discount (optional)</label>
+                <select value={form.discount_primary} onChange={(e) => setForm({ ...form, discount_primary: e.target.value as DiscountPrimary })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+                  <option value="none">No discount</option>
+                  <option value="plan">Plan discount (auto)</option>
+                  <option value="legacy">Legacy student (25%)</option>
+                  <option value="special">Flat ₹ special</option>
+                </select>
+                {form.discount_primary === 'special' && (
+                  <input type="number" min={0} value={form.discount_special}
+                    onChange={(e) => setForm({ ...form, discount_special: Number(e.target.value) })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white mt-2" placeholder="Flat ₹ amount" />
+                )}
+                {fieldError('discount') && <p className="text-xs text-coral mt-1">{fieldError('discount')}</p>}
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-600">
+                  <input type="checkbox" checked={form.discount_multilesson}
+                    onChange={(e) => setForm({ ...form, discount_multilesson: e.target.checked })}
+                    className="rounded border-gray-300 text-teal focus:ring-teal" />
+                  Multi-lesson (+5%)
+                </label>
+              </div>
+            </fieldset>
+
+            {/* Fee Summary */}
+            {!isTrial && effectiveRate > 0 && (
+              <div className="bg-gray-50 rounded-xl p-4 space-y-2" data-testid="fee-summary">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase">Fee Summary</h4>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">₹{effectiveRate.toLocaleString('en-IN')} × {lessonsBreakdown(form.payment_plan, form.start_date, timesPerWeek)}</span>
+                  <span className="font-medium text-navy">₹{tuition.toLocaleString('en-IN')}</span>
+                </div>
+                {tuitionDiscount > 0 && (
+                  <div className="flex justify-between text-sm text-teal">
+                    <span>Discount{discount.pct > 0 ? ` (${discount.pct}%${discount.flat > 0 ? ' + ₹' + discount.flat.toLocaleString('en-IN') : ''})` : discount.flat > 0 ? ` (₹${discount.flat.toLocaleString('en-IN')})` : ''}</span>
+                    <span>−₹{tuitionDiscount.toLocaleString('en-IN')}</span>
                   </div>
                 )}
-
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={closeModal}
-                    className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleStep1Next}
-                    className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 flex items-center justify-center gap-2"
-                  >
-                    Next <ChevronRight size={16} />
-                  </button>
+                {form.registration_fee > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">Registration fee</span>
+                    <span className="font-medium text-navy">₹{form.registration_fee.toLocaleString('en-IN')}</span>
+                  </div>
+                )}
+                <div className="border-t pt-2 flex justify-between text-sm font-bold">
+                  <span className="text-navy">Total</span>
+                  <span className="text-navy">₹{(totalFee + form.registration_fee).toLocaleString('en-IN')}</span>
                 </div>
+                <p className="text-xs text-gray-400">
+                  {form.payment_plan === '1_instalment' && '1 payment at start'}
+                  {form.payment_plan === '3_instalments' && '3 payments: start, +4 months, +8 months'}
+                  {form.payment_plan === '10_instalments' && '10 monthly payments'}
+                </p>
               </div>
             )}
 
-            {/* ── STEP 2 ── */}
-            {step === 2 && (
-              <div className="space-y-4">
-                {/* Teacher: always chosen here, by the coordinator */}
-                <div>
-                  <label htmlFor="enrol-teacher" className="block text-xs font-medium text-gray-500 mb-1">
-                    Teacher <span className="text-coral">*</span>
-                  </label>
-                  <select
-                    id="enrol-teacher"
-                    value={manualTeacherId}
-                    onChange={(e) => setManualTeacherId(e.target.value)}
-                    disabled={classDone}
-                    className={`w-full border rounded-lg px-3 py-2 text-sm ${!teacherId ? 'border-coral/50' : 'border-gray-200'}`}
-                  >
-                    <option value="">Select teacher...</option>
-                    {teachers.map(t => (
-                      <option key={t.id} value={t.id}>{t.full_name}</option>
-                    ))}
-                  </select>
-                  {!teacherId && <p className="text-xs text-gray-500 mt-1">Choose the teacher — their weekly slots appear below.</p>}
-                </div>
+            {result && (
+              <div className="rounded-lg p-3 text-sm font-medium bg-teal/10 text-teal">
+                {result.text}
+                {addedCount > 1 && <span className="text-teal/70"> ({addedCount} classes added so far)</span>}
+              </div>
+            )}
+            {result?.warning && (
+              <div className="rounded-lg p-3 text-sm bg-yellow-50 border border-yellow-200 text-yellow-800">⚠ {result.warning}</div>
+            )}
 
-                {/* One slot picker per weekly lesson — only once the teacher is known */}
-                {teacherId && slots.map((value, i) => {
-                  const others = slots.filter((x, j) => j !== i && x?.mode === 'existing')
-                    .map(x => (x as Extract<SelectedSlot, { mode: 'existing' }>).templateId);
-                  return (
-                    <div key={i} data-testid="weekly-slot">
-                      <label className="block text-xs font-medium text-gray-500 mb-2">
-                        {timesPerWeek > 1 ? `Weekly lesson ${i + 1} of ${timesPerWeek} — schedule slot` : 'Schedule Slot'}
-                        {i > 0 && <span className="text-gray-400 font-normal"> (same teacher and instrument)</span>}
-                      </label>
-                      <SlotPicker
-                        teacherId={teacherId}
-                        instruments={instruments}
-                        value={value}
-                        onChange={(sl) => setSlotAt(i, sl)}
-                        excludeTemplateIds={others}
-                        timeOnly={i > 0}
-                        inherit={i > 0 ? { instrumentId: mainSlot?.instrumentId ?? null, title: mainSlot?.title ?? '' } : undefined}
-                      />
-                    </div>
-                  );
-                })}
-                {teacherId && slotsError && slots.every(Boolean) && (
-                  <p className="text-xs text-coral" data-testid="slots-error">{slotsError}</p>
-                )}
-                {teacherId && !isTrial && effectiveRate > 0 && (
-                  <p className="text-xs text-gray-500">
-                    ₹{effectiveRate.toLocaleString('en-IN')} × {lessonsBreakdown(form.payment_plan, form.start_date, timesPerWeek)}
-                    {' '}= ₹{tuition.toLocaleString('en-IN')} before discounts
-                  </p>
-                )}
-
-                {result && (
-                  <div className="rounded-lg p-3 text-sm font-medium bg-teal/10 text-teal">
-                    {result.text}
-                    {addedCount > 1 && <span className="text-teal/70"> ({addedCount} classes added so far)</span>}
-                  </div>
-                )}
-                {result?.warning && (
-                  <div className="rounded-lg p-3 text-sm bg-yellow-50 border border-yellow-200 text-yellow-800">
-                    ⚠ {result.warning}
-                  </div>
-                )}
-
-                {classDone ? (
-                  <div className="flex gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={resetForNextClass}
-                      className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90"
-                    >
-                      + Add another class for {selectedStudent?.full_name?.split(' ')[0] || 'this student'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={closeModal}
-                      className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200"
-                    >
-                      Done
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => { setStep(1); setFormError(null); setResult(null); }}
-                      disabled={saving}
-                      className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200 disabled:opacity-50"
-                    >
-                      ← Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCreate}
-                      disabled={saving || !teacherId || !!slotsError}
-                      title={!teacherId ? 'Choose the teacher' : slotsError ?? undefined}
-                      className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50"
-                    >
-                      {saving ? 'Creating...' : 'Save & Generate Lessons'}
-                    </button>
-                  </div>
-                )}
+            {classDone ? (
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={resetForNextClass}
+                  className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90">
+                  + Add another class for {selectedStudent?.full_name?.split(' ')[0] || 'this student'}
+                </button>
+                <button type="button" onClick={closeModal}
+                  className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200">
+                  Done
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={closeModal} disabled={saving}
+                  className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200 disabled:opacity-50">
+                  Cancel
+                </button>
+                <button type="button" onClick={handleCreate} disabled={saving}
+                  className="flex-1 bg-teal text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-teal/90 disabled:opacity-50">
+                  {saving ? 'Saving...' : 'Save & Schedule Lessons'}
+                </button>
               </div>
             )}
           </div>
