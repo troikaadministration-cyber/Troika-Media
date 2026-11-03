@@ -471,6 +471,10 @@ REVOKE ALL ON FUNCTION next_invoice_number() FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION next_invoice_number() TO service_role;
 
 
+-- (Columns used below; section 27 documents them.)
+ALTER TABLE teacher_schedule_templates ADD COLUMN IF NOT EXISTS counts_toward_lessons BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE lessons ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES teacher_schedule_templates(id) ON DELETE SET NULL;
+
 -- ── 12. enrol_student: the whole enrolment in ONE transaction ─────────────
 -- Replaces 6–120 separate browser requests (with hand-written rollback) by a
 -- single call. Creates the enrolment, attaches the student to the weekly slot,
@@ -636,9 +640,10 @@ BEGIN
       CONTINUE;
     END IF;
 
-    INSERT INTO lessons (teacher_id, location_id, instrument_id, lesson_type, date, start_time, end_time, title)
+    INSERT INTO lessons (teacher_id, location_id, instrument_id, lesson_type, date, start_time, end_time, title,
+                         template_id, is_charged)
     VALUES (p_teacher_id, v_location, v_tpl.instrument_id, 'regular', v_date, v_tpl.start_time, v_tpl.end_time,
-            COALESCE(NULLIF(v_tpl.title, ''), 'Lesson'))
+            COALESCE(NULLIF(v_tpl.title, ''), 'Lesson'), v_tpl.id, COALESCE(v_tpl.counts_toward_lessons, true))
     RETURNING id INTO v_lesson_id;
 
     INSERT INTO lesson_students (lesson_id, student_id, enrolment_id)
@@ -1344,3 +1349,370 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.create_break(TEXT, DATE, DATE, UUID[], BOOLEAN) FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.create_break(TEXT, DATE, DATE, UUID[], BOOLEAN) TO authenticated;
+
+
+-- ── 27. Group classes ───────────────────────────────────────────────────────
+-- A group is a weekly class (teacher_schedule_templates.is_group) with a member
+-- list. Its sessions are lessons with template_id = the group. Each group (and
+-- each one-time session) says whether attending counts toward students'
+-- lesson allotment (lessons.is_charged → enrolment lessons_used).
+ALTER TABLE teacher_schedule_templates
+  ADD COLUMN IF NOT EXISTS is_group BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS counts_toward_lessons BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS max_students INTEGER;
+ALTER TABLE teacher_schedule_templates DROP CONSTRAINT IF EXISTS teacher_schedule_templates_max_students_check;
+ALTER TABLE teacher_schedule_templates
+  ADD CONSTRAINT teacher_schedule_templates_max_students_check CHECK (max_students IS NULL OR max_students > 0);
+
+ALTER TABLE lessons
+  ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES teacher_schedule_templates(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_lessons_template_date ON lessons(template_id, date);
+
+CREATE OR REPLACE FUNCTION public._today_ist() RETURNS DATE
+LANGUAGE sql STABLE AS $$ SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date $$;
+
+-- Internal: weekly sessions for a group between two dates (skips dates that
+-- already have a session; reports clashes with the teacher's other lessons).
+CREATE OR REPLACE FUNCTION public._generate_group_sessions(p_group_id UUID, p_from DATE, p_to DATE)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  g teacher_schedule_templates%ROWTYPE;
+  v_end TIME;
+  v_date DATE;
+  v_lesson UUID;
+  v_created INTEGER := 0;
+  v_conflicts INTEGER := 0;
+  v_conflict_dates TEXT[] := '{}';
+BEGIN
+  SELECT * INTO g FROM teacher_schedule_templates WHERE id = p_group_id;
+  v_end := COALESCE(g.end_time, g.start_time + INTERVAL '45 minutes');
+  FOR v_date IN
+    SELECT d::date FROM generate_series(p_from, p_to, INTERVAL '1 day') d
+    WHERE EXTRACT(DOW FROM d) = g.day_of_week ORDER BY d
+  LOOP
+    CONTINUE WHEN EXISTS (SELECT 1 FROM lessons WHERE template_id = g.id AND date = v_date);
+    IF EXISTS (
+      SELECT 1 FROM lessons l
+      WHERE l.teacher_id = g.teacher_id AND l.date = v_date AND l.status <> 'cancelled'
+        AND l.start_time < v_end AND COALESCE(l.end_time, l.start_time + INTERVAL '45 minutes') > g.start_time
+    ) THEN
+      v_conflicts := v_conflicts + 1;
+      v_conflict_dates := array_append(v_conflict_dates, v_date::text);
+      CONTINUE;
+    END IF;
+    INSERT INTO lessons (teacher_id, location_id, instrument_id, lesson_type, date, start_time, end_time,
+                         title, is_charged, template_id)
+    VALUES (g.teacher_id, g.location_id, g.instrument_id, 'regular', v_date, g.start_time, g.end_time,
+            g.title, g.counts_toward_lessons, g.id)
+    RETURNING id INTO v_lesson;
+    INSERT INTO lesson_students (lesson_id, student_id)
+    SELECT v_lesson, s FROM unnest(COALESCE(g.student_ids, '{}')) s
+    ON CONFLICT DO NOTHING;
+    v_created := v_created + 1;
+  END LOOP;
+  RETURN jsonb_build_object('lessons_created', v_created, 'conflicts', v_conflicts,
+                            'conflict_dates', to_jsonb(v_conflict_dates));
+END;
+$$;
+REVOKE ALL ON FUNCTION public._generate_group_sessions(UUID, DATE, DATE) FROM public, anon, authenticated;
+
+-- Internal: load an active group or fail.
+CREATE OR REPLACE FUNCTION public._require_group(p_group_id UUID, p_active BOOLEAN DEFAULT true)
+RETURNS teacher_schedule_templates
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE g teacher_schedule_templates%ROWTYPE;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can manage groups' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO g FROM teacher_schedule_templates WHERE id = p_group_id AND is_group FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Group not found'; END IF;
+  IF p_active AND NOT g.is_active THEN RAISE EXCEPTION 'This group has ended'; END IF;
+  RETURN g;
+END;
+$$;
+REVOKE ALL ON FUNCTION public._require_group(UUID, BOOLEAN) FROM public, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.create_group(
+  p_name TEXT,
+  p_teacher_id UUID,
+  p_day_of_week INTEGER,
+  p_start_time TIME,
+  p_end_time TIME,
+  p_start_date DATE,
+  p_end_date DATE,
+  p_student_ids UUID[] DEFAULT '{}',
+  p_counts_toward_lessons BOOLEAN DEFAULT true,
+  p_instrument_id UUID DEFAULT NULL,
+  p_location_id UUID DEFAULT NULL,
+  p_max_students INTEGER DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_members UUID[] := ARRAY(SELECT DISTINCT s FROM unnest(COALESCE(p_student_ids, '{}')) s);
+  v_id UUID;
+  v_result JSONB;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can manage groups' USING ERRCODE = '42501';
+  END IF;
+  IF COALESCE(trim(p_name), '') = '' THEN RAISE EXCEPTION 'Please give the group a name'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = p_teacher_id AND role = 'teacher' AND approved IS TRUE) THEN
+    RAISE EXCEPTION 'Please choose an approved teacher';
+  END IF;
+  IF p_day_of_week IS NULL OR p_day_of_week NOT BETWEEN 0 AND 6 OR p_start_time IS NULL THEN
+    RAISE EXCEPTION 'Choose a day and start time';
+  END IF;
+  IF p_end_time IS NOT NULL AND p_end_time <= p_start_time THEN
+    RAISE EXCEPTION 'End time must be after the start time';
+  END IF;
+  IF p_start_date IS NULL OR p_end_date IS NULL OR p_end_date < p_start_date THEN
+    RAISE EXCEPTION 'End date must be on or after the start date';
+  END IF;
+  IF p_end_date - p_start_date > 400 THEN RAISE EXCEPTION 'Schedule at most about a year at a time'; END IF;
+  IF p_max_students IS NOT NULL AND p_max_students < COALESCE(array_length(v_members, 1), 0) THEN
+    RAISE EXCEPTION 'More members than the group''s maximum (%)', p_max_students;
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_members) s WHERE NOT EXISTS (SELECT 1 FROM students WHERE id = s)) THEN
+    RAISE EXCEPTION 'One of the selected students no longer exists';
+  END IF;
+
+  INSERT INTO teacher_schedule_templates (teacher_id, day_of_week, start_time, end_time, location_id, instrument_id,
+                                          title, student_ids, is_active, is_group, counts_toward_lessons, max_students)
+  VALUES (p_teacher_id, p_day_of_week, p_start_time, p_end_time, p_location_id, p_instrument_id,
+          trim(p_name), v_members, true, true, COALESCE(p_counts_toward_lessons, true), p_max_students)
+  RETURNING id INTO v_id;
+
+  v_result := _generate_group_sessions(v_id, p_start_date, p_end_date);
+  RETURN v_result || jsonb_build_object('group_id', v_id);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.update_group(
+  p_group_id UUID,
+  p_name TEXT DEFAULT NULL,
+  p_counts_toward_lessons BOOLEAN DEFAULT NULL,
+  p_max_students INTEGER DEFAULT NULL,
+  p_location_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  g teacher_schedule_templates%ROWTYPE := _require_group(p_group_id, false);
+  v_n INTEGER;
+BEGIN
+  IF p_name IS NOT NULL AND trim(p_name) = '' THEN RAISE EXCEPTION 'Please give the group a name'; END IF;
+  IF p_max_students IS NOT NULL AND p_max_students < COALESCE(array_length(g.student_ids, 1), 0) THEN
+    RAISE EXCEPTION 'The group already has % members', array_length(g.student_ids, 1);
+  END IF;
+  UPDATE teacher_schedule_templates SET
+    title = COALESCE(NULLIF(trim(p_name), ''), title),
+    counts_toward_lessons = COALESCE(p_counts_toward_lessons, counts_toward_lessons),
+    max_students = COALESCE(p_max_students, max_students),
+    location_id = COALESCE(p_location_id, location_id),
+    updated_at = now()
+  WHERE id = g.id RETURNING * INTO g;
+
+  UPDATE lessons SET title = g.title, is_charged = g.counts_toward_lessons,
+                     location_id = COALESCE(p_location_id, location_id)
+  WHERE template_id = g.id AND status = 'scheduled' AND date >= _today_ist() AND lesson_type = 'regular';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('future_sessions_updated', v_n);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.add_group_members(p_group_id UUID, p_student_ids UUID[], p_from_date DATE DEFAULT NULL)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  g teacher_schedule_templates%ROWTYPE := _require_group(p_group_id);
+  v_new UUID[];
+  v_joined INTEGER;
+BEGIN
+  v_new := ARRAY(SELECT DISTINCT s FROM unnest(COALESCE(p_student_ids, '{}')) s
+                 WHERE NOT (s = ANY(COALESCE(g.student_ids, '{}'))));
+  IF COALESCE(array_length(v_new, 1), 0) = 0 THEN
+    RETURN jsonb_build_object('added', 0, 'sessions_joined', 0);
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_new) s WHERE NOT EXISTS (SELECT 1 FROM students WHERE id = s)) THEN
+    RAISE EXCEPTION 'One of the selected students no longer exists';
+  END IF;
+  IF g.max_students IS NOT NULL
+     AND COALESCE(array_length(g.student_ids, 1), 0) + array_length(v_new, 1) > g.max_students THEN
+    RAISE EXCEPTION 'This group is full (maximum % students)', g.max_students;
+  END IF;
+
+  UPDATE teacher_schedule_templates SET student_ids = COALESCE(student_ids, '{}') || v_new, updated_at = now()
+  WHERE id = g.id;
+
+  INSERT INTO lesson_students (lesson_id, student_id)
+  SELECT l.id, s FROM lessons l CROSS JOIN unnest(v_new) s
+  WHERE l.template_id = g.id AND l.status = 'scheduled' AND l.date >= COALESCE(p_from_date, _today_ist())
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_joined = ROW_COUNT;
+  RETURN jsonb_build_object('added', array_length(v_new, 1), 'sessions_joined', v_joined);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.remove_group_member(p_group_id UUID, p_student_id UUID, p_from_date DATE DEFAULT NULL)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  g teacher_schedule_templates%ROWTYPE := _require_group(p_group_id, false);
+  v_left INTEGER;
+BEGIN
+  UPDATE teacher_schedule_templates SET student_ids = array_remove(student_ids, p_student_id), updated_at = now()
+  WHERE id = g.id;
+  -- Leave not-yet-held sessions; past attendance stays on record.
+  DELETE FROM lesson_students ls USING lessons l
+  WHERE ls.lesson_id = l.id AND ls.student_id = p_student_id AND l.template_id = g.id
+    AND l.status = 'scheduled' AND l.date >= COALESCE(p_from_date, _today_ist());
+  GET DIAGNOSTICS v_left = ROW_COUNT;
+  RETURN jsonb_build_object('sessions_left', v_left);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.extend_group_schedule(p_group_id UUID, p_end_date DATE)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  g teacher_schedule_templates%ROWTYPE := _require_group(p_group_id);
+  v_from DATE;
+BEGIN
+  v_from := GREATEST(_today_ist(),
+                     COALESCE((SELECT max(date) + 1 FROM lessons WHERE template_id = g.id), _today_ist()));
+  IF p_end_date IS NULL OR p_end_date < v_from THEN
+    RAISE EXCEPTION 'Sessions are already scheduled up to that date';
+  END IF;
+  IF p_end_date - v_from > 400 THEN RAISE EXCEPTION 'Schedule at most about a year at a time'; END IF;
+  RETURN _generate_group_sessions(g.id, v_from, p_end_date);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.schedule_group_session(
+  p_title TEXT,
+  p_teacher_id UUID,
+  p_date DATE,
+  p_start_time TIME,
+  p_end_time TIME DEFAULT NULL,
+  p_student_ids UUID[] DEFAULT '{}',
+  p_counts_toward_lessons BOOLEAN DEFAULT false,
+  p_group_id UUID DEFAULT NULL,
+  p_instrument_id UUID DEFAULT NULL,
+  p_location_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  g teacher_schedule_templates%ROWTYPE;
+  v_teacher UUID := p_teacher_id;
+  v_members UUID[] := COALESCE(p_student_ids, '{}');
+  v_end TIME;
+  v_clash RECORD;
+  v_lesson UUID;
+  v_n INTEGER;
+BEGIN
+  IF jwt_role() IS DISTINCT FROM 'coordinator' THEN
+    RAISE EXCEPTION 'Only coordinators can schedule sessions' USING ERRCODE = '42501';
+  END IF;
+  IF p_group_id IS NOT NULL THEN
+    g := _require_group(p_group_id);
+    v_teacher := COALESCE(p_teacher_id, g.teacher_id);
+    v_members := COALESCE(g.student_ids, '{}') || v_members;
+  END IF;
+  v_members := ARRAY(SELECT DISTINCT s FROM unnest(v_members) s);
+
+  IF COALESCE(trim(p_title), '') = '' THEN RAISE EXCEPTION 'Please give the session a title'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = v_teacher AND role = 'teacher' AND approved IS TRUE) THEN
+    RAISE EXCEPTION 'Please choose an approved teacher';
+  END IF;
+  IF p_date IS NULL OR p_start_time IS NULL THEN RAISE EXCEPTION 'Choose a date and start time'; END IF;
+  IF p_end_time IS NOT NULL AND p_end_time <= p_start_time THEN
+    RAISE EXCEPTION 'End time must be after the start time';
+  END IF;
+  IF COALESCE(array_length(v_members, 1), 0) = 0 THEN RAISE EXCEPTION 'Add at least one student'; END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_members) s WHERE NOT EXISTS (SELECT 1 FROM students WHERE id = s)) THEN
+    RAISE EXCEPTION 'One of the selected students no longer exists';
+  END IF;
+
+  v_end := COALESCE(p_end_time, p_start_time + INTERVAL '45 minutes');
+  SELECT start_time, title INTO v_clash FROM lessons l
+  WHERE l.teacher_id = v_teacher AND l.date = p_date AND l.status <> 'cancelled'
+    AND l.start_time < v_end AND COALESCE(l.end_time, l.start_time + INTERVAL '45 minutes') > p_start_time
+  LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'The teacher already has "%" at % that day', v_clash.title, to_char(v_clash.start_time, 'HH24:MI');
+  END IF;
+
+  INSERT INTO lessons (teacher_id, location_id, instrument_id, lesson_type, date, start_time, end_time,
+                       title, is_charged, template_id)
+  VALUES (v_teacher, COALESCE(p_location_id, g.location_id), COALESCE(p_instrument_id, g.instrument_id),
+          'one_time', p_date, p_start_time, p_end_time, trim(p_title), COALESCE(p_counts_toward_lessons, false),
+          p_group_id)
+  RETURNING id INTO v_lesson;
+  INSERT INTO lesson_students (lesson_id, student_id) SELECT v_lesson, s FROM unnest(v_members) s;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('lesson_id', v_lesson, 'students', v_n);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.end_group(p_group_id UUID, p_from_date DATE DEFAULT NULL)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  g teacher_schedule_templates%ROWTYPE := _require_group(p_group_id, false);
+  v_n INTEGER;
+BEGIN
+  UPDATE teacher_schedule_templates SET is_active = false, updated_at = now() WHERE id = g.id;
+  DELETE FROM lessons
+  WHERE template_id = g.id AND status = 'scheduled' AND date >= COALESCE(p_from_date, _today_ist());
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('sessions_removed', v_n);
+END;
+$$;
+
+DO $$
+DECLARE f TEXT;
+BEGIN
+  FOREACH f IN ARRAY ARRAY[
+    'create_group(text,uuid,integer,time,time,date,date,uuid[],boolean,uuid,uuid,integer)',
+    'update_group(uuid,text,boolean,integer,uuid)',
+    'add_group_members(uuid,uuid[],date)',
+    'remove_group_member(uuid,uuid,date)',
+    'extend_group_schedule(uuid,date)',
+    'schedule_group_session(text,uuid,date,time,time,uuid[],boolean,uuid,uuid,uuid)',
+    'end_group(uuid,date)'
+  ] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM public, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
