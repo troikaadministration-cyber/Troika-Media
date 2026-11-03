@@ -68,6 +68,7 @@ body {
 /* Hairline borders read as light-on-dark in dark mode. */
 .dark .border-black\/5 { border-color: rgba(255,255,255,0.08) !important; }
 .dark .border-black\/10 { border-color: rgba(255,255,255,0.12) !important; }
+.dark .border-black\/15 { border-color: rgba(255,255,255,0.16) !important; }
 
 /* The logo is a dark raster asset — invert it to white in dark mode so it's visible. */
 .dark img[src*="logo"] { filter: brightness(0) invert(1); }

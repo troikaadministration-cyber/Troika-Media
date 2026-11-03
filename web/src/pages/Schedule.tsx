@@ -568,13 +568,13 @@ export function SchedulePage() {
       {viewMode === 'week' && (
         <div className="bg-white rounded-xl shadow-sm border border-black/5 overflow-hidden">
           {/* Day header row */}
-          <div className="flex border-b border-black/5">
-            <div className="w-14 flex-shrink-0 border-r border-black/5 bg-gray-50" />
+          <div className="flex border-b border-black/15">
+            <div className="w-14 flex-shrink-0 border-r border-black/15 bg-gray-50" />
             {getWeekDays(selectedDate).map((day) => {
               const d = new Date(day + 'T00:00');
               const isToday = day === todayStr;
               return (
-                <div key={day} className={`flex-1 text-center py-2 border-r last:border-r-0 border-black/5 ${isToday ? 'bg-coral/5' : 'bg-gray-50'}`}>
+                <div key={day} className={`flex-1 text-center py-2 border-r last:border-r-0 border-black/15 ${isToday ? 'bg-coral/5' : 'bg-gray-50'}`}>
                   <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">
                     {d.toLocaleDateString('en-US', { weekday: 'short' })}
                   </p>
@@ -589,7 +589,7 @@ export function SchedulePage() {
           {/* Scrollable time grid */}
           <div className="flex overflow-y-auto max-h-[680px]">
             {/* Hour labels */}
-            <div className="w-14 flex-shrink-0 relative border-r border-black/5 bg-gray-50/50" style={{ height: GRID_HEIGHT }}>
+            <div className="w-14 flex-shrink-0 relative border-r border-black/15 bg-gray-50/50" style={{ height: GRID_HEIGHT }}>
               {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => {
                 const hour = START_HOUR + i;
                 const label = hour < 12 ? `${hour}am` : hour === 12 ? '12pm' : `${hour - 12}pm`;
@@ -614,14 +614,14 @@ export function SchedulePage() {
               return (
                 <div
                   key={day}
-                  className={`flex-1 relative border-r last:border-r-0 border-black/5 ${isToday ? 'bg-coral/[0.03]' : ''}`}
+                  className={`flex-1 relative border-r last:border-r-0 border-black/15 ${isToday ? 'bg-coral/[0.03]' : ''}`}
                   style={{ height: GRID_HEIGHT }}
                 >
                   {/* Hour lines */}
                   {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
                     <div
                       key={i}
-                      className="absolute left-0 right-0 border-t border-black/5"
+                      className="absolute left-0 right-0 border-t border-black/15"
                       style={{ top: i * HOUR_HEIGHT }}
                     />
                   ))}
