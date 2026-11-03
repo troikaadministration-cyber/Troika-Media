@@ -104,13 +104,18 @@ export function setQueryData<T>(key: string, updater: (prev: T | undefined) => T
   update(e, { data: updater(e.snapshot.data as T | undefined) });
 }
 
-/** Mark every key starting with `prefix` stale; mounted ones refetch now. */
-export function invalidateQueries(prefix: string) {
+/**
+ * Mark every key starting with `prefix` stale; mounted ones refetch now.
+ * Resolves when those refetches finish.
+ */
+export function invalidateQueries(prefix: string): Promise<void> {
+  const pending: Promise<void>[] = [];
   for (const [key, e] of store) {
     if (!key.startsWith(prefix)) continue;
     e.updatedAt = 0;
-    if (e.listeners.size > 0 && e.fetcher) fetchQuery(key, e.fetcher, true);
+    if (e.listeners.size > 0 && e.fetcher) pending.push(fetchQuery(key, e.fetcher, true));
   }
+  return Promise.all(pending).then(() => undefined);
 }
 
 /** Wipe all cached data (sign-out). In-flight responses are discarded. */

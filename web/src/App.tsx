@@ -207,8 +207,8 @@ export default function App() {
 
   return (
     <Layout>
-      {/* Keyed by path so a crash on one page clears when navigating away. */}
-      <ErrorBoundary key={location.pathname}>
+      {/* A crash on one page clears when navigating away (without remounting every page). */}
+      <ErrorBoundary resetKey={location.pathname}>
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {profile.role === 'coordinator' ? (

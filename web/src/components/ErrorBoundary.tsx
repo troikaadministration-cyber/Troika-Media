@@ -1,7 +1,7 @@
 import { Logo } from './Logo';
 import { Component, type ReactNode } from 'react';
 
-interface Props { children: ReactNode }
+interface Props { children: ReactNode; /** When this changes, a shown error is cleared (e.g. the route). */ resetKey?: string }
 interface State { hasError: boolean }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -9,6 +9,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError() {
     return { hasError: true };
+  }
+
+  componentDidUpdate(prev: Props) {
+    if (this.state.hasError && prev.resetKey !== this.props.resetKey) this.setState({ hasError: false });
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {

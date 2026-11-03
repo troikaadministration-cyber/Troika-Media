@@ -48,10 +48,8 @@ export function useTeacherLessons(teacherId: string | undefined, date: string) {
     };
   }, [teacherId, date, refresh]);
 
-  async function afterChange() {
-    invalidateLessonViews();
-    await refresh();
-  }
+  // Refetches every mounted lesson view once (including this one).
+  const afterChange = () => invalidateLessonViews();
 
   async function setStatus(lessonId: string, status: 'completed' | 'scheduled') {
     const { error: err } = await supabase.from('lessons').update({ status }).eq('id', lessonId);

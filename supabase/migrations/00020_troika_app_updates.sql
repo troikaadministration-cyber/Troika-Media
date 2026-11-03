@@ -1096,3 +1096,60 @@ CREATE POLICY "Anyone can view resource tags" ON curriculum_resource_tags FOR SE
 DROP POLICY IF EXISTS "Teachers read lesson_rates" ON lesson_rates;
 CREATE POLICY "Teachers read lesson_rates" ON lesson_rates FOR SELECT
   USING ((SELECT is_approved_teacher()));
+
+
+-- ── 20. A makeup resolves the lesson it replaces (not the oldest pending) ─
+-- Rescheduling a specific cancelled lesson used to clear the student's OLDEST
+-- pending lesson, so the wrong one could stay in the reschedule list.
+ALTER TABLE lessons
+  ADD COLUMN IF NOT EXISTS makeup_for_lesson_id UUID REFERENCES lessons(id) ON DELETE SET NULL;
+
+CREATE OR REPLACE FUNCTION resolve_pending_on_makeup()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_lesson lessons%ROWTYPE;
+BEGIN
+  SELECT * INTO v_lesson FROM lessons WHERE id = NEW.lesson_id;
+  IF v_lesson.lesson_type <> 'makeup' OR v_lesson.status <> 'scheduled' THEN
+    RETURN NEW;
+  END IF;
+
+  IF v_lesson.makeup_for_lesson_id IS NOT NULL THEN
+    UPDATE lessons SET pending_reschedule = false
+    WHERE id = v_lesson.makeup_for_lesson_id AND pending_reschedule = true;
+    RETURN NEW;
+  END IF;
+
+  -- Makeups not tied to a specific lesson clear the oldest outstanding one.
+  UPDATE lessons
+  SET pending_reschedule = false
+  WHERE id = (
+    SELECT l.id
+    FROM lessons l
+    JOIN lesson_students ls ON ls.lesson_id = l.id
+    WHERE ls.student_id = NEW.student_id
+      AND l.pending_reschedule = true
+      AND l.id <> NEW.lesson_id
+    ORDER BY l.date, l.start_time
+    LIMIT 1
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+
+-- ── 21. Renaming a lesson category keeps its rates attached ──────────────
+-- Rates reference categories by name; a rename used to orphan them.
+CREATE OR REPLACE FUNCTION public.cascade_lesson_category_rename()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.name IS DISTINCT FROM OLD.name THEN
+    UPDATE lesson_rates SET category = NEW.name WHERE category = OLD.name;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_cascade_lesson_category_rename ON lesson_categories;
+CREATE TRIGGER trg_cascade_lesson_category_rename
+  AFTER UPDATE OF name ON lesson_categories
+  FOR EACH ROW EXECUTE FUNCTION cascade_lesson_category_rename();

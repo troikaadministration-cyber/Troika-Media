@@ -11,12 +11,14 @@ const LESSON_DETAILS = `
 `;
 
 /** Invalidate every cached lesson view (schedule, teacher views, dashboard…). */
-export function invalidateLessonViews() {
-  invalidateQueries('lessons:');
-  invalidateQueries('teacher-lessons:');
-  invalidateQueries('student-lessons:');
-  invalidateQueries('dashboard:');
-  invalidateQueries('reports:');
+export function invalidateLessonViews(): Promise<void> {
+  return Promise.all([
+    invalidateQueries('lessons:'),
+    invalidateQueries('teacher-lessons:'),
+    invalidateQueries('student-lessons:'),
+    invalidateQueries('dashboard:'),
+    invalidateQueries('reports:'),
+  ]).then(() => undefined);
 }
 
 /**
@@ -44,10 +46,8 @@ export function useLessons(filters: {
     return unwrap(await query, []) as LessonWithDetails[];
   });
 
-  async function afterChange() {
-    invalidateLessonViews();
-    await refresh();
-  }
+  // Refetches every mounted lesson view once (including this one).
+  const afterChange = () => invalidateLessonViews();
 
   async function createLesson(lesson: {
     teacher_id: string;
