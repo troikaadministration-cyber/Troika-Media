@@ -787,3 +787,142 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.complete_profile_setup(TEXT, TEXT) FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.complete_profile_setup(TEXT, TEXT) TO authenticated;
+
+
+-- ── 16. Pin search_path on every SECURITY DEFINER / trigger function ──────
+-- Without it, handle_new_user() can't find `profiles` when the auth service
+-- (search_path = auth) creates a user ("Database error saving new user"), and
+-- SECURITY DEFINER functions could be tricked into using look-alike objects.
+DO $$
+DECLARE f RECORD;
+BEGIN
+  FOR f IN
+    SELECT p.oid::regprocedure AS sig
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN ('handle_new_user', 'get_student_id', 'get_student_lesson_ids', 'get_user_role',
+                        'is_approved_teacher', 'jwt_role', 'link_or_create_student',
+                        'fn_check_teacher_double_booking', 'fn_lessons_recompute_used',
+                        'fn_recompute_lessons_used', 'update_updated_at', 'generate_instalments')
+  LOOP
+    EXECUTE format('ALTER FUNCTION %s SET search_path = public', f.sig);
+  END LOOP;
+END $$;
+
+
+-- ── 17. RLS performance: evaluate role checks once per query ──────────────
+-- Policies called jwt_role()/auth.uid()/is_approved_teacher() for EVERY row,
+-- and the teacher policies rebuilt "all of this teacher's lesson students"
+-- (nested, each row re-checking RLS) for every query. A teacher's one-day
+-- schedule took ~0.5 s on a modest dataset and grew with history. Same rules,
+-- now: role checks run once per statement, and teacher ownership is an
+-- indexed lookup per row.
+
+-- Indexed ownership checks (bypass nested RLS; the caller is always auth.uid()).
+CREATE OR REPLACE FUNCTION public.teaches_lesson(p_lesson_id UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM lessons WHERE id = p_lesson_id AND teacher_id = auth.uid());
+$$;
+
+CREATE OR REPLACE FUNCTION public.teaches_student(p_student_id UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM lesson_students ls JOIN lessons l ON l.id = ls.lesson_id
+    WHERE ls.student_id = p_student_id AND l.teacher_id = auth.uid()
+  );
+$$;
+REVOKE ALL ON FUNCTION public.teaches_lesson(UUID), public.teaches_student(UUID) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.teaches_lesson(UUID), public.teaches_student(UUID) TO authenticated;
+
+DROP POLICY IF EXISTS "Teachers see own lesson students" ON lesson_students;
+CREATE POLICY "Teachers see own lesson students" ON lesson_students FOR SELECT
+  USING ((SELECT jwt_role()) = 'teacher' AND (SELECT is_approved_teacher()) AND teaches_lesson(lesson_id));
+
+DROP POLICY IF EXISTS "Teachers update own lesson students" ON lesson_students;
+CREATE POLICY "Teachers update own lesson students" ON lesson_students FOR UPDATE
+  USING ((SELECT jwt_role()) = 'teacher' AND (SELECT is_approved_teacher()) AND teaches_lesson(lesson_id));
+
+DROP POLICY IF EXISTS "Teachers insert own lesson students" ON lesson_students;
+CREATE POLICY "Teachers insert own lesson students" ON lesson_students FOR INSERT
+  WITH CHECK ((SELECT jwt_role()) = 'teacher' AND (SELECT is_approved_teacher()) AND teaches_lesson(lesson_id));
+
+DROP POLICY IF EXISTS "Teachers see their lesson students" ON students;
+CREATE POLICY "Teachers see their lesson students" ON students FOR SELECT
+  USING ((SELECT jwt_role()) = 'teacher' AND (SELECT is_approved_teacher()) AND teaches_student(id));
+
+DROP POLICY IF EXISTS "Teachers read own students enrolments" ON student_enrolments;
+CREATE POLICY "Teachers read own students enrolments" ON student_enrolments FOR SELECT
+  USING ((SELECT jwt_role()) = 'teacher' AND (SELECT is_approved_teacher()) AND teaches_student(student_id));
+
+DROP POLICY IF EXISTS "Coordinators manage scheduled_breaks" ON scheduled_breaks;
+CREATE POLICY "Coordinators manage scheduled_breaks" ON scheduled_breaks FOR ALL
+  USING ((SELECT jwt_role()) = 'coordinator') WITH CHECK ((SELECT jwt_role()) = 'coordinator');
+
+DROP POLICY IF EXISTS "Coordinators manage schedule templates" ON teacher_schedule_templates;
+CREATE POLICY "Coordinators manage schedule templates" ON teacher_schedule_templates FOR ALL
+  USING ((SELECT jwt_role()) = 'coordinator') WITH CHECK ((SELECT jwt_role()) = 'coordinator');
+
+-- Every other public policy: wrap per-row helper calls in a scalar subquery so
+-- Postgres evaluates them once per statement (idempotent: already-wrapped
+-- calls are preceded by "SELECT " and skipped).
+DO $$
+DECLARE
+  p RECORD;
+  re CONSTANT TEXT := '(?<!SELECT )\m(auth\.uid|auth\.jwt|jwt_role|get_user_role|is_approved_teacher|get_student_id)\(\)';
+  new_qual TEXT;
+  new_check TEXT;
+  stmt TEXT;
+BEGIN
+  FOR p IN
+    SELECT schemaname, tablename, policyname, qual, with_check
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND (COALESCE(qual, '') ~ re OR COALESCE(with_check, '') ~ re)
+  LOOP
+    new_qual := regexp_replace(p.qual, re, '( SELECT \1() AS v)', 'g');
+    new_check := regexp_replace(p.with_check, re, '( SELECT \1() AS v)', 'g');
+    stmt := format('ALTER POLICY %I ON %I.%I', p.policyname, p.schemaname, p.tablename);
+    IF new_qual IS NOT NULL THEN stmt := stmt || ' USING (' || new_qual || ')'; END IF;
+    IF new_check IS NOT NULL THEN stmt := stmt || ' WITH CHECK (' || new_check || ')'; END IF;
+    EXECUTE stmt;
+  END LOOP;
+END $$;
+
+
+-- ── 18. Users can't approve themselves or change their own role ──────────
+-- "Users can update own profile" only pinned `role`, so a pending user could
+-- set approved = true on their own row and skip coordinator approval.
+-- Only coordinators (or server-side functions) may change role/approved.
+CREATE OR REPLACE FUNCTION public.guard_profile_privileged_columns()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  -- Server-side code (SECURITY DEFINER functions, service role, SQL editor) is trusted.
+  IF current_user NOT IN ('authenticated', 'anon') THEN
+    RETURN NEW;
+  END IF;
+  IF jwt_role() = 'coordinator' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.role IS DISTINCT FROM OLD.role
+     OR NEW.approved IS DISTINCT FROM OLD.approved
+     OR NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'Only a coordinator can change account role or approval' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_profile_privileged_columns ON profiles;
+CREATE TRIGGER trg_guard_profile_privileged_columns
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION guard_profile_privileged_columns();
+
+-- The old WITH CHECK re-queried `profiles` from inside a `profiles` policy
+-- (infinite recursion → every self-update failed). The trigger above now
+-- protects role/approved, so the policy only needs to pin the row owner.
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
+CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE
+  USING (id = (SELECT auth.uid())) WITH CHECK (id = (SELECT auth.uid()));

@@ -15,7 +15,7 @@ export function useStudents(filters?: {
       fetchAll<Student>((from, to) => {
         let query = supabase
           .from('students')
-          .select('*, location:locations(*), instrument:instruments(*)')
+          .select('*, location:locations(*), instrument:instruments!students_instrument_id_fkey(*)')
           .order('full_name')
           .order('id')
           .range(from, to);
