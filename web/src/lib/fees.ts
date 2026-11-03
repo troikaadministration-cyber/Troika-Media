@@ -50,8 +50,9 @@ export function computeDiscount(tuition: number, d: DiscountInput): DiscountResu
   if (d.multilesson) pct += MULTILESSON_DISCOUNT_PCT;
 
   const afterPct = tuition * (1 - pct / 100);
-  const discounted = Math.max(0, afterPct - flat);
-  return { pct, flat, discounted, discountAmount: tuition - discounted };
+  // Round to paise so fees stored/invoiced never carry floating-point noise.
+  const discounted = Math.round(Math.max(0, afterPct - flat) * 100) / 100;
+  return { pct, flat, discounted, discountAmount: Math.round((tuition - discounted) * 100) / 100 };
 }
 
 export const PRIMARY_LABELS: Record<DiscountPrimary, string> = {
