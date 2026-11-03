@@ -36,6 +36,12 @@ permanently deletes all existing app data** (students, lessons, payments…).
 5. [ ] Optional: **Storage** → empty the `invoices` and `lesson-media`
        buckets (old files from before the reset).
 
+**Already installed and just updating?** Run only the newest file(s) in
+`supabase/upgrades/` (each says which date it is for). They keep all data and
+are safe to re-run. 3 Nov 2026: `2026-11-03_family_accounts_and_weekly_classes.sql`
+(family logins, classes 2×/3× a week, typed-in rate) — then redeploy
+`calendar-feed`.
+
 (Alternative, if you ever need to keep existing data instead: skip the reset
 and run `supabase/migrations/00020_troika_app_updates.sql` — it upgrades in
 place to the same end state.)

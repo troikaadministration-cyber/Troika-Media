@@ -19,6 +19,7 @@ Open it whenever you are stuck or want to know how to do something.
 **Students**
 - [How do I add a new student?](#how-do-i-add-a-new-student)
 - [How do I approve someone who signed up?](#how-do-i-approve-someone-who-signed-up)
+- [Brothers and sisters: one login for a family](#brothers-and-sisters-one-login-for-a-family)
 - [How do I find a student and see their details?](#how-do-i-find-a-student-and-see-their-details)
 - [How do I put a student in a class, or add a second class?](#how-do-i-put-a-student-in-a-class-or-add-a-second-class)
 - [How do I mark a student absent?](#how-do-i-mark-a-student-absent)
@@ -107,12 +108,13 @@ On a phone, the menu is hidden: tap the **☰** button at the top left to open i
 1. Click **Students** in the menu, then **+ Add Student**.
 2. Fill in **Full Name** (required), **Phone**, **Email**, **Location** (where they usually learn) and **Address**. Click **Next: Payment & Classes**.
 3. Choose the **Payment Plan** (1, 3 or 10 instalments, or **Trial (no payment)**). Type a **Registration Fee (₹)** if there is one. Choose a **Discount (optional)** if they get one.
-4. Under **Class Schedule**, choose the **Teacher**, **Instrument**, **Category**, **Day**, **Start** and **End** time, and the **Location** for this class.
-5. Check the **Rate per lesson (₹)**. It fills in by itself from [Lesson Rates](#how-do-i-set-a-teachers-prices) for that teacher, category and place. You can type a different price for this student.
-6. Learning a second instrument? Click **+ Add another class** and fill in the second class the same way. Each class can be at a different place (for example guitar at home, piano at Edvin).
-7. Check the **Fee Summary** at the bottom, then click **Confirm & Finish**. The app creates the lessons and the payment instalments.
+4. Under **Class Schedule**, choose the **Teacher**, **Instrument**, **Location** for this class, and **Times per week** (1×, 2× or 3×).
+5. Choose the **Day**, **Start** and **End** time. For 2× or 3× a week, fill in a day and time for **Lesson 2** (and **Lesson 3**) too. Each lesson must be on a different day or time.
+6. Type the **Rate per lesson (₹)**, the price of **one** lesson for this student (for example 1200). The box starts empty; you always type the price yourself. **Confirm & Finish** stays grey until every class has a teacher and a rate.
+7. Learning a second instrument? Click **+ Add another class** and fill in the second class the same way. Each class can be at a different place (for example guitar at home, piano at Edvin).
+8. Check the **Fee Summary** at the bottom, then click **Confirm & Finish**. The app creates the lessons and the payment instalments.
 
-> **Good to know:** The total is *rate per lesson × number of lessons for the year*, minus any discount, plus the registration fee. The number of lessons depends on the month the student joins (see [Fees and lessons at a glance](#fees-and-lessons-at-a-glance)). Not ready to choose classes? Click **Skip for now**. The student is saved without classes or bills.
+> **Good to know:** The total is *rate per lesson × number of lessons for the year*. A class twice a week has twice the lessons, so twice the fee (for example *₹1,200 × 78 lessons (39 × 2 per week)*). Minus any discount, plus the registration fee. The number of lessons depends on the month the student joins (see [Fees and lessons at a glance](#fees-and-lessons-at-a-glance)). Not ready to choose classes? Click **Skip for now**. The student is saved without classes or bills.
 
 ---
 
@@ -126,14 +128,41 @@ Students, parents and teachers can sign up on their own, but they see only a "wa
 
 1. Click **Students**. A yellow box at the top says how many students are **waiting for approval**.
 2. Click **Review →** next to the name.
-3. The **Approve & Onboard** form opens. It is the same as adding a new student (see [How do I add a new student?](#how-do-i-add-a-new-student)). Their name and email are already filled in.
-4. Add their classes and click **Confirm & Finish**. You can also click **Skip for now** to approve them without classes.
+3. The **Approve & Onboard** form opens. It is the same as adding a new student (see [How do I add a new student?](#how-do-i-add-a-new-student)). Their email is already filled in.
+4. Check **Child's (student's) full name**. A parent often types their **own** name when signing up, so change it to the child's name.
+5. Add their classes and click **Confirm & Finish**. You can also click **Skip for now** to approve them without classes.
+6. Has the parent got another child at Troika? Click **Add another child to this login**. See [Brothers and sisters](#brothers-and-sisters-one-login-for-a-family).
 
 **A teacher:**
 
 1. Click **Teachers**. A box at the top says how many teachers are **waiting for approval**.
 2. Click **Review →**.
 3. Check their **Full Name** and **Phone**, then click **Approve Teacher**. If you don't know this person, click **Deny**.
+
+---
+
+## Brothers and sisters: one login for a family
+
+A parent with two or three children at Troika signs up **once**, with one email. All the children sit under that one login. Each child still has their **own** classes, rate, lessons left, instalments, payments and invoices. Only the login is shared.
+
+**When the parent signs up:**
+
+1. Approve them as usual: **Students → Review → Approve & Onboard**. Type the **first child's name** and add their classes. Click **Confirm & Finish**.
+2. The last screen lists the children set up so far. Click **Add another child to this login (parent's email)**.
+3. The form opens again with the parent's email, phone and location already filled in. Type the **second child's name** and add their classes. Click **Confirm & Finish**.
+4. Repeat for a third child, then click **Done**.
+
+**Adding a brother or sister later:** click **+ Add Student** and type the **same parent email**. The child joins the family login by itself.
+
+**What the parent sees:** a button for each child (and **All**) at the top of the app. Each lesson and payment shows the child's name. In "can't attend" requests the parent picks which child.
+
+**Fixing a mistake (the Family login box):**
+
+1. Open the child's page (**Students → the child's name**). On **Overview**, the **Family login** box shows which login this child is under, and the other children on it.
+2. Wrong login? Click **Change** and search for the right parent by name or email. To take the child off the login, click **Unlink**.
+3. Confirm. The change is immediate.
+
+> **Good to know:** On the **Payments** page each child appears separately, with their own instalments. A family pays per child.
 
 ---
 
@@ -157,9 +186,9 @@ Use this for a student who is **already in the app**. (For a brand-new student, 
 ![Choosing a weekly slot for the class](manual-images/enrol-step2.png)
 
 1. Click **Enrolments**, then **Enrol Student**.
-2. Choose the **Student** and the **Lesson Rate** (the list shows type of class, price and teacher; ★ means a price for the student's location). Check the **Rate per lesson (₹) — editable for this student**.
+2. Choose the **Student**, the **Times per week** (1×, 2× or 3×), and type the **Rate per lesson (₹)**, the price of one lesson for this student. The box starts empty.
 3. Choose the **Payment Plan**, **Start Date**, **End Date**, **Registration Fee (₹)** and **Discount (optional)**. Check the **Fee Summary**, then click **Next**.
-4. Under **Schedule Slot**, choose one:
+4. Choose the **Teacher**. Then, under **Schedule Slot**, choose one for each weekly lesson (one for 1×, two for 2×, three for 3×):
    - an **existing time** for that teacher (the student joins that class, so this is how you join a group), or
    - **+ Create new slot**: choose the **Day**, **Start**, **End**, **Instrument** and a **Title**.
 5. Click **Save & Generate Lessons**.
@@ -331,7 +360,7 @@ Lessons cancelled by a break (or an approved "not charged" absence) wait in **Pe
 4. Type the price of one lesson next to each type of class. Press **Tab** or **Enter** to save. Clear the box to remove a price.
 5. Repeat for each place this teacher teaches.
 
-> **Good to know:** These prices fill in **Rate per lesson** by themselves when you add a student. Changing a price here does **not** change what existing students pay. To add a new instrument, type of class or place, click **Manage**.
+> **Good to know:** This page is a price list for you to look at. The app does **not** fill in prices by itself: you type the **Rate per lesson** for each student when you add them. Changing a price here does **not** change what existing students pay. To add a new instrument, type of class or place, click **Manage**.
 
 ---
 
@@ -397,8 +426,8 @@ Use this near the end of the year to put everyone into the new year's classes in
 
 1. Click **Enrolments**, then **Renew for next year**.
 2. At the top, check the **From year**, the **Start date** and the **End date**. Choose the **Payment plan** (**Keep each student's plan**, or one plan for everyone), any **Rate change** (**+ % increase** or **+ ₹ per lesson**), and the **Registration fee (₹, per student)**.
-3. Go down the list of students. For each class, click **Keep** or **Drop**. You can change the **New rate ₹** and the plan, or click **Change slot** to move the class to another time.
-4. Click **Add a class** to give a student a new class. Click **Skip this student** for anyone who is leaving.
+3. Go down the list of students. For each class, click **Keep** or **Drop**. You can change the **New rate ₹** and the plan, or click **Change slot** to move the class to another time or change how many times a week it runs. A twice-a-week class keeps both its days.
+4. Click **Add a class** to give a student a new class (type its rate; the box starts empty). Click **Skip this student** for anyone who is leaving.
 5. Click **Review**. If you see **Fix these first**, go **Back** and fix those lines.
 6. Click **Renew [number] students**. Keep the window open until it finishes, then click **Done**.
 
@@ -453,6 +482,8 @@ Tell the teacher or parent to:
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Lessons | 39 | 39 | 35 | 31 | 28 | 24 | 21 | 17 | 13 | 10 | 6 | 3 |
 
+**Twice a week?** Double it (for example 39 × 2 = 78 lessons if joining in January). Three times a week: × 3.
+
 A **Trial** is always 1 lesson, with no payment.
 
 **Payment plans**
@@ -472,7 +503,9 @@ A **Trial** is always 1 lesson, with no payment.
 
 ## What these words mean
 
-- **Rate per lesson:** the price of one lesson for this student, in ₹.
+- **Rate per lesson:** the price of one lesson for this student, in ₹. You type it in.
+- **Times per week:** how many lessons a week a class has (1×, 2× or 3×). Still one class, one bill.
+- **Family login:** one parent email that several children are under. Each child is billed separately.
 - **Instalment:** one part of the yearly fee. The fee is split into 1, 3 or 10 instalments.
 - **Enrolment (class):** one student learning one instrument with one teacher for the year. A student can have several.
 - **Charged absence:** the student missed the lesson but it still counts as used and paid for.
